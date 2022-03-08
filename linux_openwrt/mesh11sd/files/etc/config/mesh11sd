@@ -1,0 +1,12 @@
+
+config mesh11sd 'setup'
+	option enabled '1'
+	option debuglevel '1'
+	option checkinterval '15'
+	option interface_timeout '10'
+
+config mesh11sd 'mesh_params'
+	option mesh_fwding '1'
+	option mesh_rssi_threshold '-80'
+	option mesh_gate_announcements '1'
+	option mesh_hwmp_rootmode '3'
