@@ -118,7 +118,82 @@ write_to_syslog() {
 mesh11sdpid=$(pgrep -f "/bin/sh /usr/sbin/mesh11sd")
 get_current_setup
 
-if [ "$1" = "daemon" ]; then
+if [ -z "$1" ] || [ "$1" = "-h" ] || [ $1 = "--help" ] || [ $1 = "help" ]; then
+	echo "
+  Usage: mesh11sd [option] [argument...]]
+
+  Option: -h --help help
+  Returns: This help information
+
+  Option: -v --version version
+  Returns: The mesh11sd version
+
+  Option: debuglevel
+  Argument: 0 - silent, 1 - notice, 2 - info, 3 - debug
+  Returns: The mesh11sd debug level
+
+  Option: status
+  Returns: the mesh status in json format
+"
+
+elif [ "$1" = "-v" ] || [ $1 = "--version" ] || [ $1 = "version" ]; then
+	echo "mesh11sd version $version"
+
+elif [ "$1" = "debuglevel" ]; then
+
+	if [ -z "$2" ];then
+		echo "$debuglevel"
+	else
+
+		if [ "$2" -ge 0 ] && [ "$2" -le 3 ]; then
+			ucibatch="set mesh11sd.setup.debuglevel='$2'"
+			echo "$ucibatch" | uci batch
+			echo "$2"
+		else
+			echo "Invalid debuglevel requested"
+		fi
+	fi
+
+elif [ "$1" = "status" ]; then
+	# get list of interfaces
+	iflist=$(iw dev | awk -F "Interface " '$2>0{printf "%s " $2}')
+
+	echo "{"
+	echo "  \"setup\":{"
+	echo "    \"version\":\"$version\","
+	echo "    \"enabled\":\"$enabled\","
+	echo "    \"checkinterval\":\"$checkinterval\","
+	echo "    \"interface_timeout\":\"$interface_timeout\","
+	echo "    \"debuglevel\":\"$debuglevel\""
+	echo "  }"
+	echo "  \"interfaces\":{"
+
+	for iface in $iflist; do
+		wait_for_interface "$iface"
+
+		if [ "$ifstatus" = "down" ]; then
+			continue
+		fi
+
+		# get list of mesh parameters for this interface
+		params=$(iw dev $iface mesh_param dump 2> /dev/null | awk -F" " '{printf "      \"%s\":\"%s\",\n", $1, $3}')
+
+		if [ -z "$params" ]; then
+			# this is not a mesh interface
+			continue
+		else
+			echo "    \"$iface\":{"
+			echo "$params"
+			peers=$(iw dev mesh0 mpath dump | grep -c -w mesh0)
+			echo "      \"active_peers\":\"$peers\""
+			echo "    }"
+		fi
+	done
+
+	echo "  }"
+	echo "}"
+
+elif [ "$1" = "daemon" ]; then
 	debugtype="notice"
 	syslogmessage="mesh11sd v$version has started"
 	write_to_syslog
@@ -203,4 +278,7 @@ if [ "$1" = "daemon" ]; then
 	done
 
 	exit 0
+
+else
+	echo "Unrecognised command - For help, try mesh11sd --help "
 fi
