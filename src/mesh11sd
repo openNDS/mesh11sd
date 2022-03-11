@@ -65,8 +65,8 @@ get_current_setup () {
 
 	interface_timeout=$(uci get mesh11sd.setup.interface_timeout 2> /dev/null)
 
-	if [ -z "$interface_timeout" ] || [ "$interface_timeout" -lt 20 ]; then
-		interface_timeout=20
+	if [ -z "$interface_timeout" ] || [ "$interface_timeout" -lt 10 ]; then
+		interface_timeout=10
 	fi
 }
 
