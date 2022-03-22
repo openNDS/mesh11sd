@@ -132,6 +132,12 @@ if [ -z "$1" ] || [ "$1" = "-h" ] || [ $1 = "--help" ] || [ $1 = "help" ]; then
   Argument: 0 - silent, 1 - notice, 2 - info, 3 - debug
   Returns: The mesh11sd debug level
 
+  Option: enable
+  Returns: \"1\" and exit code 0 if successful, exit code 1 if was already enabled
+
+  Option: disable
+  Returns: \"0\" and exit code 0 if successful, exit code 1 if was already disabled
+
   Option: status
   Returns: the mesh status in json format
 "
@@ -152,6 +158,30 @@ elif [ "$1" = "debuglevel" ]; then
 		else
 			echo "Invalid debuglevel requested"
 		fi
+	fi
+
+elif [ "$1" = "enable" ]; then
+
+	if [ "$enabled" -eq 1 ]; then
+		echo "1"
+		exit 1
+	else
+		ucibatch="set mesh11sd.setup.enabled='1'"
+		echo "$ucibatch" | uci batch
+		echo "1"
+		exit 0
+	fi
+
+elif [ "$1" = "disable" ]; then
+
+	if [ "$enabled" -eq 0 ]; then
+		echo "0"
+		exit 1
+	else
+		ucibatch="set mesh11sd.setup.enabled='0'"
+		echo "$ucibatch" | uci batch
+		echo "0"
+		exit 0
 	fi
 
 elif [ "$1" = "status" ]; then
@@ -184,7 +214,17 @@ elif [ "$1" = "status" ]; then
 		else
 			echo "    \"$iface\":{"
 			echo "$params"
-			peers=$(iw dev mesh0 mpath dump | grep -c -w mesh0)
+
+			meshconfig=$(uci show wireless | grep "ifname='$iface'" | awk -F ".ifname='$iface'" '{printf "%s", $1}')
+
+			device=$(uci get $meshconfig.device 2> /dev/null)
+			channel=$(uci show wireless | grep "$device.channel" | awk -F "'" '{printf "%s", $2}')
+			meshid=$(uci get $meshconfig.mesh_id 2> /dev/null)
+			peers=$(iw dev $iface mpath dump | grep -c -w $iface)
+
+			echo "      \"mesh_id\":\"$meshid\","
+			echo "      \"device\":\"$device\","
+			echo "      \"channel\":\"$channel\","
 			echo "      \"active_peers\":\"$peers\""
 			echo "    }"
 		fi
@@ -195,10 +235,21 @@ elif [ "$1" = "status" ]; then
 
 elif [ "$1" = "daemon" ]; then
 	debugtype="notice"
-	syslogmessage="mesh11sd v$version has started"
+	syslogmessage="mesh11sd is in startup"
 	write_to_syslog
+	startup=1
+
+	# Wait one checkinterval before starting the main loop
+	sleep $checkinterval
 
 	while true; do
+
+		if [ "$startup" -eq 1 ]; then
+			debugtype="notice"
+			syslogmessage="mesh11sd v$version has started"
+			write_to_syslog
+		fi
+
 		meshindex=0
 		get_current_setup
 
@@ -206,75 +257,82 @@ elif [ "$1" = "daemon" ]; then
 			#get list of mesh configs
 			meshconfigs=$(uci show wireless 2> /dev/null | grep "mode='mesh'" | awk -F ".mode='mesh'" '{printf "%s " $1}')
 
-			for meshconfig in $meshconfigs; do
-				ifname=$(uci get $meshconfig.ifname 2> /dev/null)
+			if [ ! -z "$meshconfigs" ]; then
+				for meshconfig in $meshconfigs; do
+					ifname=$(uci get $meshconfig.ifname 2> /dev/null)
 
-				if [ -z "$ifname" ]; then
-					# No interface name in config, so add one
-					ucibatch="set $meshconfig.ifname='mesh$meshindex'"
-					echo "$ucibatch" | uci batch
-					syslogmessage="Setting mesh interface name to [ mesh$meshindex ]"
-					write_to_syslog
-					meshindex=$(($meshindex+1))
-				fi
-			done
+					if [ -z "$ifname" ] || [ "$ifname" != "mesh$meshindex" ]; then
+						# No interface name in config, so add one
+						ucibatch="set $meshconfig.ifname='mesh$meshindex'"
+						echo "$ucibatch" | uci batch
+						syslogmessage="Setting mesh interface name to [ mesh$meshindex ]"
+						write_to_syslog
+						meshindex=$(($meshindex+1))
+					fi
+				done
 
-			if [ $meshindex -gt 0 ]; then
-				restart_mesh
-				wait_for_interface "mesh0"
-
-				if [ "$ifstatus" = "down" ]; then
-					# Still down, try again
-					sleep $checkinterval
+				if [ $meshindex -gt 0 ] || [ "$startup" -eq 1 ]; then
+					startup=0
 					restart_mesh
 					wait_for_interface "mesh0"
-				fi
 
-				continue
-			fi
+					if [ "$ifstatus" = "down" ]; then
+						# Still down, try again
+						sleep $checkinterval
+						restart_mesh
+						wait_for_interface "mesh0"
+					fi
 
-			# get a list of interfaces
-			iflist=$(iw dev | awk -F "Interface " '$2>0{printf "%s " $2}')
-
-			for iface in $iflist; do
-				wait_for_interface "$iface"
-
-				if [ "$ifstatus" = "down" ]; then
 					continue
 				fi
 
-				debugtype="debug"
-				syslogmessage="interface $iface is $ifstatus"
-				write_to_syslog
+				# get a list of interfaces
+				iflist=$(iw dev | awk -F "Interface " '$2>0{printf "%s " $2}')
 
-				# get list of mesh parameters for this interface
-				params=$(iw dev $iface mesh_param dump 2> /dev/null | awk -F" " '{printf "%s " $1}')
+				for iface in $iflist; do
+					wait_for_interface "$iface"
 
-				if [ -z "$params" ]; then
-					# this is not a mesh interface
-					continue
-				else
-					# Check if this interface has a uci ifname
-					uciname=$(uci show wireless | grep "ifname='$iface'" | awk -F "." '{printf "wireless.%s" $2}')
-
-					if [ -z "$uciname" ]; then
-						# Error - No interface name in config, we should have added one
-						debugtype="err"
-						syslogmessage="Error getting mesh interface name"
-						write_to_syslog
+					if [ "$ifstatus" = "down" ]; then
 						continue
 					fi
-				fi
 
-				#configure parameters found in wireless config
-				check_mesh_params
-				#override wireless config and/or set parameters found in mesh11sd config
-				uciname="mesh11sd.mesh_params"
-				check_mesh_params
-			done
+					debugtype="debug"
+					syslogmessage="interface $iface is $ifstatus"
+					write_to_syslog
 
-			sleep $checkinterval
+					# get list of mesh parameters for this interface
+					params=$(iw dev $iface mesh_param dump 2> /dev/null | awk -F" " '{printf "%s " $1}')
+
+					if [ -z "$params" ]; then
+						# this is not a mesh interface
+						continue
+					else
+						# Check if this interface has a uci ifname
+						uciname=$(uci show wireless | grep "ifname='$iface'" | awk -F "." '{printf "wireless.%s" $2}')
+
+						if [ -z "$uciname" ]; then
+							# Error - No interface name in config, we should have added one
+							debugtype="err"
+							syslogmessage="Error getting mesh interface name"
+							write_to_syslog
+							continue
+						fi
+					fi
+
+					#configure parameters found in wireless config
+					check_mesh_params
+					#override wireless config and/or set parameters found in mesh11sd config
+					uciname="mesh11sd.mesh_params"
+					check_mesh_params
+				done
+			else
+				debugtype="info"
+				syslogmessage="No mesh interfaces detected yet...."
+				write_to_syslog
+			fi
 		fi
+
+		sleep $checkinterval
 	done
 
 	exit 0
