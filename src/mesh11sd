@@ -4,7 +4,52 @@
 #
 # mesh11sd daemon
 #
-version="1.0.0"
+version="1.1.0"
+
+check_mesh_phantom () {
+	nodelist=$(iw dev $iface mpath dump | awk '{printf "%s,%s ", $1, $2}')
+
+	debugtype="debug"
+	syslogmessage="nodelist [$nodelist]"
+	write_to_syslog
+
+	for node in $nodelist; do
+		phantom=$(echo "$node" | awk -F"," '$2 == "00:00:00:00:00:00" {printf $1 }')
+
+		if [ ! -z "$phantom" ]; then
+			debugtype="warn"
+			syslogmessage="Phantom meshnode detected [$phantom] - deleting"
+			write_to_syslog
+			iw dev $iface mpath del $phantom
+		fi
+	done
+}
+
+get_params () {
+	params=$(iw dev $iface mesh_param dump 2> /dev/null)
+
+	if [ "$?" != 0 ]; then
+		buffer="/tmp/"$(date | sha256sum | awk '{printf $1}')
+		param_list=$(iw dev $iface get mesh_param 2> /dev/null | grep " - " | awk -F" - " '{printf "%s ", $2}')
+		params=""
+
+
+		for param in $param_list; do
+			paramval=$(iw dev $iface get mesh_param $param 2> /dev/null)
+			if [ "$?" = 0 ]; then
+				paramline="$param = $paramval"
+				echo "$paramline" >> $buffer
+			fi
+		done
+
+
+
+		if [ -e "$buffer" ]; then
+			params=$(cat $buffer)
+			rm "$buffer"
+		fi
+	fi
+}
 
 check_mesh_params () {
 
@@ -206,12 +251,13 @@ elif [ "$1" = "status" ]; then
 		fi
 
 		# get list of mesh parameters for this interface
-		params=$(iw dev $iface mesh_param dump 2> /dev/null | awk -F" " '{printf "      \"%s\":\"%s\",\n", $1, $3}')
+		get_params
 
 		if [ -z "$params" ]; then
 			# this is not a mesh interface
 			continue
 		else
+			params=$(echo "$params" | awk -F" " '{printf "      \"%s\":\"%s\",\n", $1, $3}')
 			echo "    \"$iface\":{"
 			echo "$params"
 
@@ -301,7 +347,7 @@ elif [ "$1" = "daemon" ]; then
 					write_to_syslog
 
 					# get list of mesh parameters for this interface
-					params=$(iw dev $iface mesh_param dump 2> /dev/null | awk -F" " '{printf "%s " $1}')
+					get_params
 
 					if [ -z "$params" ]; then
 						# this is not a mesh interface
@@ -324,6 +370,7 @@ elif [ "$1" = "daemon" ]; then
 					#override wireless config and/or set parameters found in mesh11sd config
 					uciname="mesh11sd.mesh_params"
 					check_mesh_params
+					check_mesh_phantom
 				done
 			else
 				debugtype="info"
