@@ -1,3 +1,10 @@
+mesh11sd (1.1.0)
+
+  * Add - compatibility with iw < v5.16-1 [bluewavenet]
+  * Add - search and delete phantom meshnodes [bluewavenet]
+
+ -- Rob White <dot@blue-wave.net>  Mon, 16 May 2022 14:43:25 +0000
+
 mesh11sd (1.0.0)
 
   * This is the initial Open Source version based on proprietory software developed by BlueWave Projects and Services
