@@ -126,7 +126,9 @@ wait_for_interface () {
 		fi
 		sleep 1
 		if [ $i == $timeout ] ; then
-			echo "$ifname is not up - giving up for now."
+			syslogmessage="$ifname is not up - giving up for now."
+			debugtype="notice"
+			write_to_syslog
 			ifstatus="down"
 		fi
 	done
@@ -285,20 +287,34 @@ elif [ "$1" = "daemon" ]; then
 	syslogmessage="mesh11sd is in startup"
 	write_to_syslog
 	startup=1
+	statusmode=0
+	changed=0
 
 	# Wait one checkinterval before starting the main loop
 	sleep $checkinterval
 
 	while true; do
 
-		if [ "$startup" -eq 1 ]; then
-			debugtype="notice"
+		get_current_setup
+		syslogmessage=""
+
+		if [ "$startup" -eq 1 ] && [ "$statusmode" -eq 0 ] && [ "$enabled" = 1 ]; then
 			syslogmessage="mesh11sd v$version has started"
+		elif [ "$startup" -eq 1 ] && [ "$statusmode" -eq 0 ] && [ "$enabled" = 0 ]; then
+			startup=0
+			statusmode=1
+			syslogmessage="mesh11sd v$version has started in status only mode"
+		elif [ "$startup" -eq 0 ] && [ "$statusmode" -eq 1 ] && [ "$enabled" = 1 ]; then
+			statusmode=0
+			syslogmessage="mesh11sd v$version has started in active mode"
+		fi
+
+		if [ ! -z "$syslogmessage" ]; then
+			debugtype="notice"
 			write_to_syslog
 		fi
 
 		meshindex=0
-		get_current_setup
 
 		if [ "$enabled" = 1 ]; then
 			#get list of mesh configs
@@ -312,24 +328,17 @@ elif [ "$1" = "daemon" ]; then
 						# No interface name in config, so add one
 						ucibatch="set $meshconfig.ifname='mesh$meshindex'"
 						echo "$ucibatch" | uci batch
+						changed=1
 						syslogmessage="Setting mesh interface name to [ mesh$meshindex ]"
 						write_to_syslog
 					fi
 					meshindex=$(($meshindex+1))
 				done
 
-				if [ $meshindex -gt 0 ] || [ "$startup" -eq 1 ]; then
+				if [ "$changed" -eq 1 ]; then
 					startup=0
+					changed=0
 					restart_mesh
-					wait_for_interface "mesh0"
-
-					if [ "$ifstatus" = "down" ]; then
-						# Still down, try again
-						sleep $checkinterval
-						restart_mesh
-						wait_for_interface "mesh0"
-					fi
-
 					continue
 				fi
 
