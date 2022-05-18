@@ -4,7 +4,52 @@
 #
 # mesh11sd daemon
 #
-version="1.0.0"
+version="1.1.0"
+
+check_mesh_phantom () {
+	nodelist=$(iw dev $iface mpath dump | awk '{printf "%s,%s ", $1, $2}')
+
+	debugtype="debug"
+	syslogmessage="nodelist [$nodelist]"
+	write_to_syslog
+
+	for node in $nodelist; do
+		phantom=$(echo "$node" | awk -F"," '$2 == "00:00:00:00:00:00" {printf $1 }')
+
+		if [ ! -z "$phantom" ]; then
+			debugtype="warn"
+			syslogmessage="Phantom meshnode detected [$phantom] - deleting"
+			write_to_syslog
+			iw dev $iface mpath del $phantom
+		fi
+	done
+}
+
+get_params () {
+	params=$(iw dev $iface mesh_param dump 2> /dev/null)
+
+	if [ "$?" != 0 ]; then
+		buffer="/tmp/"$(date | sha256sum | awk '{printf $1}')
+		param_list=$(iw dev $iface get mesh_param 2> /dev/null | grep " - " | awk -F" - " '{printf "%s ", $2}')
+		params=""
+
+
+		for param in $param_list; do
+			paramval=$(iw dev $iface get mesh_param $param 2> /dev/null)
+			if [ "$?" = 0 ]; then
+				paramline="$param = $paramval"
+				echo "$paramline" >> $buffer
+			fi
+		done
+
+
+
+		if [ -e "$buffer" ]; then
+			params=$(cat $buffer)
+			rm "$buffer"
+		fi
+	fi
+}
 
 check_mesh_params () {
 
@@ -81,7 +126,9 @@ wait_for_interface () {
 		fi
 		sleep 1
 		if [ $i == $timeout ] ; then
-			echo "$ifname is not up - giving up for now."
+			syslogmessage="$ifname is not up - giving up for now."
+			debugtype="notice"
+			write_to_syslog
 			ifstatus="down"
 		fi
 	done
@@ -187,11 +234,13 @@ elif [ "$1" = "disable" ]; then
 elif [ "$1" = "status" ]; then
 	# get list of interfaces
 	iflist=$(iw dev | awk -F "Interface " '$2>0{printf "%s " $2}')
+	service=$(/etc/init.d/mesh11sd status)
 
 	echo "{"
 	echo "  \"setup\":{"
 	echo "    \"version\":\"$version\","
 	echo "    \"enabled\":\"$enabled\","
+	echo "    \"service\":\"$service\","
 	echo "    \"checkinterval\":\"$checkinterval\","
 	echo "    \"interface_timeout\":\"$interface_timeout\","
 	echo "    \"debuglevel\":\"$debuglevel\""
@@ -206,27 +255,33 @@ elif [ "$1" = "status" ]; then
 		fi
 
 		# get list of mesh parameters for this interface
-		params=$(iw dev $iface mesh_param dump 2> /dev/null | awk -F" " '{printf "      \"%s\":\"%s\",\n", $1, $3}')
+		get_params
 
 		if [ -z "$params" ]; then
 			# this is not a mesh interface
 			continue
 		else
+			params=$(echo "$params" | awk -F" " '{printf "      \"%s\":\"%s\",\n", $1, $3}')
 			echo "    \"$iface\":{"
 			echo "$params"
 
 			meshconfig=$(uci show wireless | grep "ifname='$iface'" | awk -F ".ifname='$iface'" '{printf "%s", $1}')
 
-			device=$(uci get $meshconfig.device 2> /dev/null)
-			channel=$(uci show wireless | grep "$device.channel" | awk -F "'" '{printf "%s", $2}')
-			meshid=$(uci get $meshconfig.mesh_id 2> /dev/null)
-			peers=$(iw dev $iface mpath dump | grep -c -w $iface)
+			if [ -z "$meshconfig" ]; then
+				echo "      \"interface\":\"unmanaged\""
+				echo "    }"
+			else
+				device=$(uci get $meshconfig.device 2> /dev/null)
+				channel=$(uci show wireless | grep "$device.channel" | awk -F "'" '{printf "%s", $2}')
+				meshid=$(uci get $meshconfig.mesh_id 2> /dev/null)
+				peers=$(iw dev $iface mpath dump | grep -c -w $iface)
 
-			echo "      \"mesh_id\":\"$meshid\","
-			echo "      \"device\":\"$device\","
-			echo "      \"channel\":\"$channel\","
-			echo "      \"active_peers\":\"$peers\""
-			echo "    }"
+				echo "      \"mesh_id\":\"$meshid\","
+				echo "      \"device\":\"$device\","
+				echo "      \"channel\":\"$channel\","
+				echo "      \"active_peers\":\"$peers\""
+				echo "    }"
+			fi
 		fi
 	done
 
@@ -238,20 +293,34 @@ elif [ "$1" = "daemon" ]; then
 	syslogmessage="mesh11sd is in startup"
 	write_to_syslog
 	startup=1
+	statusmode=0
+	changed=0
 
 	# Wait one checkinterval before starting the main loop
 	sleep $checkinterval
 
 	while true; do
 
-		if [ "$startup" -eq 1 ]; then
-			debugtype="notice"
+		get_current_setup
+		syslogmessage=""
+
+		if [ "$startup" -eq 1 ] && [ "$statusmode" -eq 0 ] && [ "$enabled" = 1 ]; then
 			syslogmessage="mesh11sd v$version has started"
+		elif [ "$startup" -eq 1 ] && [ "$statusmode" -eq 0 ] && [ "$enabled" = 0 ]; then
+			startup=0
+			statusmode=1
+			syslogmessage="mesh11sd v$version has started in status only mode"
+		elif [ "$startup" -eq 0 ] && [ "$statusmode" -eq 1 ] && [ "$enabled" = 1 ]; then
+			statusmode=0
+			syslogmessage="mesh11sd v$version has started in active mode"
+		fi
+
+		if [ ! -z "$syslogmessage" ]; then
+			debugtype="notice"
 			write_to_syslog
 		fi
 
 		meshindex=0
-		get_current_setup
 
 		if [ "$enabled" = 1 ]; then
 			#get list of mesh configs
@@ -265,24 +334,17 @@ elif [ "$1" = "daemon" ]; then
 						# No interface name in config, so add one
 						ucibatch="set $meshconfig.ifname='mesh$meshindex'"
 						echo "$ucibatch" | uci batch
+						changed=1
 						syslogmessage="Setting mesh interface name to [ mesh$meshindex ]"
 						write_to_syslog
-						meshindex=$(($meshindex+1))
 					fi
+					meshindex=$(($meshindex+1))
 				done
 
-				if [ $meshindex -gt 0 ] || [ "$startup" -eq 1 ]; then
+				if [ "$changed" -eq 1 ]; then
 					startup=0
+					changed=0
 					restart_mesh
-					wait_for_interface "mesh0"
-
-					if [ "$ifstatus" = "down" ]; then
-						# Still down, try again
-						sleep $checkinterval
-						restart_mesh
-						wait_for_interface "mesh0"
-					fi
-
 					continue
 				fi
 
@@ -301,7 +363,7 @@ elif [ "$1" = "daemon" ]; then
 					write_to_syslog
 
 					# get list of mesh parameters for this interface
-					params=$(iw dev $iface mesh_param dump 2> /dev/null | awk -F" " '{printf "%s " $1}')
+					get_params
 
 					if [ -z "$params" ]; then
 						# this is not a mesh interface
@@ -324,6 +386,7 @@ elif [ "$1" = "daemon" ]; then
 					#override wireless config and/or set parameters found in mesh11sd config
 					uciname="mesh11sd.mesh_params"
 					check_mesh_params
+					check_mesh_phantom
 				done
 			else
 				debugtype="info"
