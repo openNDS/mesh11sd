@@ -265,6 +265,7 @@ elif [ "$1" = "status" ]; then
 
 			device=$(uci get $meshconfig.device 2> /dev/null)
 			channel=$(uci show wireless | grep "$device.channel" | awk -F "'" '{printf "%s", $2}')
+
 			meshid=$(uci get $meshconfig.mesh_id 2> /dev/null)
 			peers=$(iw dev $iface mpath dump | grep -c -w $iface)
 
@@ -313,8 +314,8 @@ elif [ "$1" = "daemon" ]; then
 						echo "$ucibatch" | uci batch
 						syslogmessage="Setting mesh interface name to [ mesh$meshindex ]"
 						write_to_syslog
-						meshindex=$(($meshindex+1))
 					fi
+					meshindex=$(($meshindex+1))
 				done
 
 				if [ $meshindex -gt 0 ] || [ "$startup" -eq 1 ]; then
