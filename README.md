@@ -138,10 +138,12 @@ Mesh11sd is an OpenWrt service daemon and runs continuously in the background. I
 
 **Example status output:**
 
+
     {
        "setup":{
-         "version":"1.0.0",
+         "version":"1.1.0",
          "enabled":"1",
+         "service":"running",
          "checkinterval":"15",
          "interface_timeout":"10",
          "debuglevel":"1"
