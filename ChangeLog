@@ -1,7 +1,13 @@
+mesh11sd (1.1.1)
+
+  * Fix - repeated syslog messages - output only on mode change [bluewavenet]
+
+ -- Rob White <dot@blue-wave.net>  Wed, 18 May 2022 14:27:12 +0000
+
 mesh11sd (1.1.0)
 
-  * Add - Add - service status to json output [bluewavenet]
-  * Add - Add - support for multiple mesh interfaces [bluewavenet]
+  * Add - service status to json output [bluewavenet]
+  * Add - support for multiple mesh interfaces [bluewavenet]
   * Fix - duplicate ifname if more than one mesh interface [bluewavenet]
   * Add - compatibility with iw < v5.16-1 [bluewavenet]
   * Add - search and delete phantom meshnodes [bluewavenet]
