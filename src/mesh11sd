@@ -4,7 +4,7 @@
 #
 # mesh11sd daemon
 #
-version="1.1.0"
+version="1.1.1beta"
 
 check_mesh_phantom () {
 	nodelist=$(iw dev $iface mpath dump | awk '{printf "%s,%s ", $1, $2}')
@@ -289,12 +289,23 @@ elif [ "$1" = "status" ]; then
 	echo "}"
 
 elif [ "$1" = "daemon" ]; then
+	uci revert mesh11sd
 	debugtype="notice"
 	syslogmessage="mesh11sd is in startup"
 	write_to_syslog
-	startup=1
+
+	#Default flags
+	startup=4 # bit 2
+	statusmode=2 # bit 1
+	enabled=1 #bit 0
+
+	# Initial conditions
 	statusmode=0
 	changed=0
+
+	# Initial Mode Flag
+	mode=$(($startup + $statusmode + $enabled ))
+	lastmode=0
 
 	# Wait one checkinterval before starting the main loop
 	sleep $checkinterval
@@ -302,24 +313,59 @@ elif [ "$1" = "daemon" ]; then
 	while true; do
 
 		get_current_setup
+		mode=$(($startup + $statusmode + $enabled))
+
 		syslogmessage=""
 
-		if [ "$startup" -eq 1 ] && [ "$statusmode" -eq 0 ] && [ "$enabled" = 1 ]; then
-			syslogmessage="mesh11sd v$version has started"
-		elif [ "$startup" -eq 1 ] && [ "$statusmode" -eq 0 ] && [ "$enabled" = 0 ]; then
+		if [ $mode -eq 5 ]; then
+			# startup=4, statusmode=0, enabled=1
 			startup=0
-			statusmode=1
-			syslogmessage="mesh11sd v$version has started in status only mode"
-		elif [ "$startup" -eq 0 ] && [ "$statusmode" -eq 1 ] && [ "$enabled" = 1 ]; then
 			statusmode=0
-			syslogmessage="mesh11sd v$version has started in active mode"
+			mode=1
+			syslogmessage="mesh11sd v$version has started: mesh management mode $mode"
+
+		elif [ $mode -eq 4 ]; then
+			# startup=4, statusmode=0, enabled=0
+			startup=0
+			statusmode=2
+			mode=0
+			syslogmessage="mesh11sd v$version has started: mesh status mode $mode"
+
+		elif [ $mode -eq 3 ]; then
+			# startup=0, statusmode=2, enabled=1
+			startup=0
+			statusmode=0
+			mode=1
+			syslogmessage="mesh11sd v$version has started: mesh management mode $mode"
+
+		elif [ $mode -eq 2 ]; then
+			# startup=0, statusmode=2, enabled=0
+			startup=0
+			statusmode=2
+			mode=0
+			syslogmessage="mesh11sd v$version has started: mesh status mode $mode"
+
+		elif [ $mode -eq 1 ]; then
+			# startup=0, statusmode=0, enabled=1
+			startup=0
+			statusmode=0
+			mode=1
+			syslogmessage="mesh11sd v$version has started, mesh management mode $mode"
+
+		elif [ $mode -eq 0 ]; then
+			# startup=0, statusmode=0, enabled=0
+			startup=0
+			statusmode=2
+			mode=0
+			syslogmessage="mesh11sd v$version has started: mesh status mode $mode"
 		fi
 
-		if [ ! -z "$syslogmessage" ]; then
+		if [ $mode -ne $lastmode ]; then
 			debugtype="notice"
 			write_to_syslog
 		fi
 
+		lastmode=$mode
 		meshindex=0
 
 		if [ "$enabled" = 1 ]; then
@@ -342,7 +388,6 @@ elif [ "$1" = "daemon" ]; then
 				done
 
 				if [ "$changed" -eq 1 ]; then
-					startup=0
 					changed=0
 					restart_mesh
 					continue
