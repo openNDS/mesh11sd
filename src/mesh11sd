@@ -4,7 +4,7 @@
 #
 # mesh11sd daemon
 #
-version="1.1.1beta"
+version="1.1.1"
 
 check_mesh_phantom () {
 	nodelist=$(iw dev $iface mpath dump | awk '{printf "%s,%s ", $1, $2}')
