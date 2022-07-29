@@ -4,7 +4,20 @@
 #
 # mesh11sd daemon
 #
-version="1.1.1"
+version="1.2.0beta"
+
+get_mesh_iflist () {
+	iflist=""
+	all_ifcs=$(iw dev | awk -F "Interface " '$2>0{printf "%s " $2}')
+
+	for iface in $all_ifcs; do
+		iftype=$(iw dev $iface info | grep "type" | awk '{printf "%s", $2}')
+
+		if [ "$iftype" = "mesh" ]; then
+			iflist="$iflist $iface"
+		fi
+	done
+}
 
 check_mesh_phantom () {
 	nodelist=$(iw dev $iface mpath dump | awk '{printf "%s,%s ", $1, $2}')
@@ -233,7 +246,7 @@ elif [ "$1" = "disable" ]; then
 
 elif [ "$1" = "status" ]; then
 	# get list of interfaces
-	iflist=$(iw dev | awk -F "Interface " '$2>0{printf "%s " $2}')
+	get_mesh_iflist
 	service=$(/etc/init.d/mesh11sd status)
 
 	echo "{"
@@ -394,7 +407,7 @@ elif [ "$1" = "daemon" ]; then
 				fi
 
 				# get a list of interfaces
-				iflist=$(iw dev | awk -F "Interface " '$2>0{printf "%s " $2}')
+				get_mesh_iflist
 
 				for iface in $iflist; do
 					wait_for_interface "$iface"
