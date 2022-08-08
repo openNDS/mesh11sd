@@ -287,12 +287,67 @@ elif [ "$1" = "status" ]; then
 				device=$(uci get $meshconfig.device 2> /dev/null)
 				channel=$(uci show wireless | grep "$device.channel" | awk -F "'" '{printf "%s", $2}')
 				meshid=$(uci get $meshconfig.mesh_id 2> /dev/null)
-				peers=$(iw dev $iface mpath dump | grep -c -w $iface)
 
 				echo "      \"mesh_id\":\"$meshid\","
 				echo "      \"device\":\"$device\","
 				echo "      \"channel\":\"$channel\","
-				echo "      \"active_peers\":\"$peers\""
+
+				tx_packets=$(devstatus $iface | grep "tx_packets" | awk -F": " '{print $2}' | tr -d ",")
+				echo "      \"tx_packets\":\"$tx_packets\","
+
+				tx_bytes=$(devstatus $iface | grep "tx_bytes" | awk -F": " '{print $2}' | tr -d ",")
+				echo "      \"tx_bytes\":\"$tx_bytes\","
+
+				rx_packets=$(devstatus $iface | grep "rx_packets" | awk -F": " '{print $2}' | tr -d ",")
+				echo "      \"rx_packets\":\"$rx_packets\","
+
+				rx_bytes=$(devstatus $iface | grep "rx_bytes" | awk -F": " '{print $2}' | tr -d ",")
+				echo "      \"rx_bytes\":\"$rx_bytes\","
+
+				peernum=0
+				peers=$(iw dev $iface mpath dump | grep -c -w $iface)
+				macrouting=$(iw dev $iface mpath dump | awk -F" " 'NR>1 {printf "%s/%s ",$1,$2}')
+
+				echo "      \"active_peers\":\"$peers\","
+				echo "      \"peers\":{"
+
+				for peer in $macrouting; do
+					peernum=$((peernum+1))
+					peermac=$(echo "$peer" | awk -F"/" '{printf "%s", $1}')
+					echo "        \"$peermac\":{"
+					next_hop=$(echo "$peer" | awk -F"/" '{printf "%s", $2}')
+					echo "          \"next_hop\":\"$next_hop\""
+
+					if [ "$peers" = "$peernum" ]; then
+						echo "        }"
+					else
+						echo "        },"
+					fi
+				done
+				echo "      }"
+
+				stanum=0
+				stations=$(iw dev $iface mpp dump | grep -c -w $iface)
+				starouting=$(iw dev $iface mpp dump | awk -F" " 'NR>1 {printf "%s/%s ",$1,$2}')
+
+				echo "      \"active_stations\":\"$stations\","
+				echo "      \"stations\":{"
+
+				for sta in $starouting; do
+					stanum=$((stanum+1))
+					stamac=$(echo "$sta" | awk -F"/" '{printf "%s", $1}')
+					proxy_node=$(echo "$sta" | awk -F"/" '{printf "%s", $2}')
+
+					echo "        \"$stamac\":{"
+					echo "          \"proxy_node\":\"$proxy_node\""
+
+					if [ "$stations" = "$stanum" ]; then
+						echo "        }"
+					else
+						echo "        },"
+					fi
+				done
+				echo "      }"
 				echo "    }"
 			fi
 		fi
