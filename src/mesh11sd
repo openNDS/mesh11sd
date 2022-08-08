@@ -4,7 +4,7 @@
 #
 # mesh11sd daemon
 #
-version="1.2.0beta"
+version="1.2.0"
 
 get_mesh_iflist () {
 	iflist=""
