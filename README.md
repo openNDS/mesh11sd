@@ -138,16 +138,15 @@ Mesh11sd is an OpenWrt service daemon and runs continuously in the background. I
 
 **Example status output:**
 
-
     {
-       "setup":{
-         "version":"1.1.0",
-         "enabled":"1",
-         "service":"running",
-         "checkinterval":"15",
-         "interface_timeout":"10",
-         "debuglevel":"1"
-    }
+      "setup":{
+        "version":"1.2.0",
+        "enabled":"1",
+        "service":"running",
+        "checkinterval":"10",
+        "interface_timeout":"10",
+        "debuglevel":"2"
+      }
       "interfaces":{
         "mesh0":{
           "mesh_retry_timeout":"100",
@@ -179,10 +178,37 @@ Mesh11sd is an OpenWrt service daemon and runs continuously in the background. I
           "mesh_connected_to_gate":"0",
           "mesh_nolearn":"0",
           "mesh_connected_to_as":"0",
-          "mesh_id":"PublicFreeMesh",
+          "mesh_id":"-_-",
           "device":"radio0",
-          "channel":"11",
-          "active_peers":"17"
+          "channel":"9",
+          "tx_packets":"1789996",
+          "tx_bytes":"1643600110",
+          "rx_packets":"1996691",
+          "rx_bytes":"144717512",
+          "active_peers":"3",
+          "peers":{
+            "94:83:c4:08:09:f9":{
+              "next_hop":"94:83:c4:08:09:f9"
+            },
+            "e4:95:6e:42:4f:93":{
+              "next_hop":"e4:95:6e:42:4f:93"
+            },
+            "94:83:c4:09:5c:00":{
+              "next_hop":"94:83:c4:09:5c:00"
+            }
+          }
+          "active_stations":"3",
+          "stations":{
+            "dc:0e:a1:35:5c:43":{
+              "proxy_node":"94:83:c4:08:09:f9"
+            },
+            "74:de:2b:b1:70:33":{
+              "proxy_node":"e4:95:6e:42:4f:93"
+            },
+            "84:38:38:98:38:1a":{
+              "proxy_node":"94:83:c4:08:09:f9"
+            }
+          }
         }
       }
     }

@@ -1,3 +1,11 @@
+mesh11sd (1.2.0)
+  * Update README.md
+  * Add - Traffic volume, Peers and stations to status output [bluewavenet]
+  * Add - limit up-checks to mesh interfaces only [bluewavenet]
+
+ -- Rob White <dot@blue-wave.net>  Mon, 08 Aug 2022 13:40:31 +0000
+
+
 mesh11sd (1.1.1)
 
   * Fix - repeated syslog messages - output only on mode change [bluewavenet]
