@@ -494,9 +494,10 @@ elif [ "$1" = "daemon" ]; then
 						fi
 					fi
 
-					#configure parameters found in wireless config
-					check_mesh_params
-					#override wireless config and/or set parameters found in mesh11sd config
+					#Do NOT configure parameters found in wireless config
+					# so change the value of uciname before calling check_mesh_params.
+					#
+					#Override wireless config and/or set parameters to those found in mesh11sd config
 					uciname="mesh11sd.mesh_params"
 					check_mesh_params
 					check_mesh_phantom
