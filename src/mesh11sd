@@ -4,7 +4,7 @@
 #
 # mesh11sd daemon
 #
-version="1.2.1beta"
+version="1.3.0beta"
 
 get_mesh_iflist () {
 	iflist=""
@@ -125,6 +125,17 @@ get_current_setup () {
 
 	if [ -z "$interface_timeout" ] || [ "$interface_timeout" -lt 10 ]; then
 		interface_timeout=10
+	fi
+
+	mesh_basename=$(uci get mesh11sd.setup.mesh_basename 2> /dev/null)
+
+	if [ -z "$mesh_basename" ]; then
+		mesh_basename="m-11s-"
+	else
+		#remove non alphanumeric
+		mesh_basename=$(echo "$mesh_basename" | sed 's/[^a-zA-Z0-9]//g')
+		#get first 4 chars
+		mesh_basename="m-${mesh_basename:0:4}-"
 	fi
 }
 
@@ -247,13 +258,14 @@ elif [ "$1" = "disable" ]; then
 elif [ "$1" = "status" ]; then
 	# get list of interfaces
 	get_mesh_iflist
-	service=$(/etc/init.d/mesh11sd status)
+	procd_status=$(/etc/init.d/mesh11sd status)
 
 	echo "{"
 	echo "  \"setup\":{"
 	echo "    \"version\":\"$version\","
 	echo "    \"enabled\":\"$enabled\","
-	echo "    \"service\":\"$service\","
+	echo "    \"procd_status\":\"$procd_status\","
+	echo "    \"mesh_basename\":\"$mesh_basename\","
 	echo "    \"checkinterval\":\"$checkinterval\","
 	echo "    \"interface_timeout\":\"$interface_timeout\","
 	echo "    \"debuglevel\":\"$debuglevel\""
@@ -442,16 +454,29 @@ elif [ "$1" = "daemon" ]; then
 
 			if [ ! -z "$meshconfigs" ]; then
 				for meshconfig in $meshconfigs; do
-					ifname=$(uci get $meshconfig.ifname 2> /dev/null)
 
-					if [ -z "$ifname" ] || [ "$ifname" != "mesh$meshindex" ]; then
+					if [ $meshindex -gt 15 ]; then
+						# Max number of mesh interfaces exceeded - abort
+						debugtype="warn"
+						syslogmessage="Maximum number of mesh interfaces exceeded"
+						write_to_syslog
+						break
+					fi
+
+					hexmeshindex=$(printf "%x" $meshindex)
+					ifname=$(uci get $meshconfig.ifname 2> /dev/null)
+					mesh_ifname="$mesh_basename""$hexmeshindex"
+
+					if [ -z "$ifname" ] || [ "$ifname" != "$mesh_ifname" ]; then
 						# No interface name in config, so add one
-						ucibatch="set $meshconfig.ifname='mesh$meshindex'"
+						ucibatch="set $meshconfig.ifname='$mesh_ifname'"
 						echo "$ucibatch" | uci batch
 						changed=1
-						syslogmessage="Setting mesh interface name to [ mesh$meshindex ]"
+						debugtype="notice"
+						syslogmessage="Setting mesh interface name to [ $mesh_ifname ]"
 						write_to_syslog
 					fi
+
 					meshindex=$(($meshindex+1))
 				done
 
