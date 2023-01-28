@@ -136,6 +136,8 @@ get_current_setup () {
 		mesh_basename=$(echo "$mesh_basename" | sed 's/[^a-zA-Z0-9]//g')
 		#get first 4 chars
 		mesh_basename="m-${mesh_basename:0:4}-"
+		#convert to lower case
+		mesh_basename=$(printf $mesh_basename | tr '[A-Z]' '[a-z]')
 	fi
 }
 
@@ -211,6 +213,9 @@ if [ -z "$1" ] || [ "$1" = "-h" ] || [ $1 = "--help" ] || [ $1 = "help" ]; then
 
   Option: status
   Returns: the mesh status in json format
+
+  For further documentation, see: https://github.com/openNDS/mesh11sd#readme
+
 "
 
 elif [ "$1" = "-v" ] || [ $1 = "--version" ] || [ $1 = "version" ]; then
