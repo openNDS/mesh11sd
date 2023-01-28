@@ -2,14 +2,14 @@
 #
 # This is free software, licensed under the GNU General Public License v2.
 # See /LICENSE for more information.
-# Copyright (C) 2022 BlueWave Projects and Services  <licence@blue-wave.net>
+# Copyright (C) 2022-2023 BlueWave Projects and Services  <licence@blue-wave.net>
 #
 
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=mesh11sd
-PKG_VERSION:=1.0.0
-PKG_RELEASE:=$(AUTORELEASE)
+PKG_VERSION:=1.3.0
+PKG_RELEASE:=1
 
 PKG_MAINTAINER:=Rob White <rob@blue-wave.net>
 PKG_LICENSE:=GPL-2.0-or-later
@@ -48,9 +48,14 @@ define Package/mesh11sd/install
 	$(INSTALL_DIR) $(1)/usr/sbin
 	$(INSTALL_DIR) $(1)/etc/config
 	$(INSTALL_DIR) $(1)/etc/init.d
-	$(CP) $(PKG_BUILD_DIR)/src/mesh11sd $(1)/usr/sbin
-	$(CP) $(PKG_BUILD_DIR)/linux_openwrt/mesh11sd/files/etc/config/mesh11sd $(1)/etc/config/
-	$(CP) $(PKG_BUILD_DIR)/linux_openwrt/mesh11sd/files/etc/init.d/mesh11sd $(1)/etc/init.d/
+	$(INSTALL_BIN) $(PKG_BUILD_DIR)/src/mesh11sd $(1)/usr/sbin
+	$(INSTALL_CONF) $(PKG_BUILD_DIR)/linux_openwrt/mesh11sd/files/etc/config/mesh11sd $(1)/etc/config/
+	$(INSTALL_BIN) $(PKG_BUILD_DIR)/linux_openwrt/mesh11sd/files/etc/init.d/mesh11sd $(1)/etc/init.d/
+endef
+
+define Package/mesh11sd/postrm
+#!/bin/sh
+uci revert wireless
 endef
 
 define Package/mesh11sd/conffiles
