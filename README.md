@@ -1,4 +1,4 @@
-## 0. The mesh11sd project
+## 1. The mesh11sd project
 
   Mesh11sd is a dynamic parameter configuration daemon for 802.11s mesh networks.
 
@@ -8,9 +8,9 @@
 
   This version does not require a Captive Portal to be running.
 
-## 1. Overview
+## 2. Overview
 
-  Mesh11sd allows all mesh parameters that are supported by the wireless driver to be set in either the wireless or the mesh11sd uci config file.
+  Mesh11sd allows all mesh parameters that are supported by the wireless driver to be set in the mesh11sd uci config file.
 
   Settings take effect immediately without having to restart the wireless network and the default settings give rapid and reliable layer 2 mesh convergence.
 
@@ -25,7 +25,7 @@
 Depending on the wireless drivers/hardware, mesh parameters set in the wireless config may not only fail on startup, but may also generate errors and in the worst case may cause the wireless driver to crash.
 For this reason it is recommended that all parameter settings are moved from the wireless config and placed instead into the mesh11sd config.
 
-## 2. Installation
+## 3. Installation
 Installation is achieved in the usual way for OpenWrt, either using the Luci UI, or the opkg command line utility.
 
 Example:
@@ -34,7 +34,7 @@ Example:
     opkg install mesh11sd
 
 
-## 3. Configuration
+## 4. Configuration
 It is assumed that the mesh network interface is defined in the wireless configuration.
 
 It is also assumed that the additional dependencies for encrypted mesh are also installed, ie:
@@ -74,11 +74,12 @@ Default configuration file (/etc/config/mesh11sd):
 
 All settings in the config file are dynamic and will take effect immediately.
 
-## 4. Setup Options
-* enabled - 0=disabled, 1=enabled
-* debuglevel - 0=silent, 1=notice, 2=info, 3=debug
-* checkinterval - the interval in seconds after which changes in parameters are detected and activated.
-* interface_timeout - the time in seconds that mesh11sd will wait for a mesh interface to establish before continuing.
+## 5. Setup Options
+* enabled - 0=disabled, 1=enabled. Default 1
+* debuglevel - 0=silent, 1=notice, 2=info, 3=debug. Default 1
+* checkinterval - the interval in seconds after which changes in parameters are detected and activated. Default 10 seconds
+* interface_timeout - the time in seconds that mesh11sd will wait for a mesh interface to establish before continuing. Default 10 seconds
+* mesh_basename - (optional) The first 4 characters after non alphanumerics (ie special characters) are removed are used as the mesh_basename. The mesh_basename is used to construct a unique mesh interface name of the form m-xxxx-n. Default: 11s
 
 **Example**:
 Set the debuglevel to 2
@@ -91,7 +92,7 @@ Changes can be made permanent with the following command:
 
         uci commit mesh11sd
 
-## 5. Mesh Parameter Options
+## 6. Mesh Parameter Options
 Basic mesh parameters are already included in the default config file. These basic parameters ensure the mesh interface will be able to either seed a new mesh or join an existing one of the same mesh id.
 
 * mesh_fwding - packets will be forwarded to peer mesh nodes
@@ -112,7 +113,7 @@ Changes can be made permanent with the following command:
 
 See "Command Line Interface" for obtaining a list of possible mesh parameters for a mesh interface.
 
-## 6. Command Line Interface
+## 7. Command Line Interface
 Mesh11sd is an OpenWrt service daemon and runs continuously in the background. It does however also have a CLI interface:
 
       Usage: mesh11sd [option] [argument...]]
@@ -142,7 +143,7 @@ Mesh11sd is an OpenWrt service daemon and runs continuously in the background. I
       "setup":{
         "version":"1.2.0",
         "enabled":"1",
-        "service":"running",
+        "procd_status":"running",
         "checkinterval":"10",
         "interface_timeout":"10",
         "debuglevel":"2"
