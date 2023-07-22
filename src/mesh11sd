@@ -183,6 +183,10 @@ write_to_syslog() {
 	fi
 }
 
+check_portal() {
+	# For future use
+}
+
 
 ##############
 # Start point
@@ -375,6 +379,7 @@ elif [ "$1" = "status" ]; then
 
 elif [ "$1" = "daemon" ]; then
 	uci revert mesh11sd
+	uci revert wireless
 	debugtype="notice"
 	syslogmessage="mesh11sd is in startup"
 	write_to_syslog
@@ -387,6 +392,7 @@ elif [ "$1" = "daemon" ]; then
 	# Initial conditions
 	statusmode=0
 	changed=0
+	firstloop=1
 
 	# Initial Mode Flag
 	mode=$(($startup + $statusmode + $enabled ))
@@ -485,8 +491,9 @@ elif [ "$1" = "daemon" ]; then
 					meshindex=$(($meshindex+1))
 				done
 
-				if [ "$changed" -eq 1 ]; then
+				if [ "$changed" -eq 1 ] || [ "$firstloop" -eq 1 ]; then
 					changed=0
+					firstloop=0
 					restart_mesh
 					continue
 				fi
@@ -539,6 +546,7 @@ elif [ "$1" = "daemon" ]; then
 			fi
 		fi
 
+		check_portal
 		sleep $checkinterval
 	done
 
