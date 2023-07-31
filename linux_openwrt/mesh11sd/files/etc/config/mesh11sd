@@ -5,6 +5,7 @@ config mesh11sd 'setup'
 	option checkinterval '10'
 	option interface_timeout '10'
 
+	###########################################################################################
 	# mesh_basename (optional)
 	# The first 4 characters after non alphanumerics are removed are used as the mesh_basename
 	# The mesh_basename is used to construct a unique mesh interface name of the form m-xxxx-n
@@ -15,6 +16,14 @@ config mesh11sd 'setup'
 
 	#option mesh_basename 'link'
 
+	###########################################################################################
+	# portal_detect (optional)
+	# Detect if the meshnode is a portal, meaning it has an upstream wan link.
+	# If the upstream link is active, the router hosting the meshnode will serve ipv4 dhcp into the mesh network.
+	# If the upstream link is not connected, dhcp will be disabled and the meshnode will function as a level 2 bridge on the mesh network.
+	# Default 1 (enabled). Set to 0 to disable.
+
+	#option portal_detect '0'
 
 config mesh11sd 'mesh_params'
 	option mesh_fwding '1'
@@ -22,5 +31,4 @@ config mesh11sd 'mesh_params'
 	option mesh_gate_announcements '1'
 	option mesh_hwmp_rootmode '3'
 	option mesh_max_peer_links '8'
-	option mesh_connected_to_gate '0'
-	option mesh_connected_to_as '0'
+
