@@ -121,6 +121,12 @@ get_current_setup () {
 		checkinterval=10
 	fi
 
+	portal_detect=$(uci get mesh11sd.setup.portal_detect 2> /dev/null)
+
+	if [ -z "$portal_detect" ]; then
+		portal_detect=1
+	fi
+
 	interface_timeout=$(uci get mesh11sd.setup.interface_timeout 2> /dev/null)
 
 	if [ -z "$interface_timeout" ] || [ "$interface_timeout" -lt 10 ]; then
@@ -246,6 +252,38 @@ wait_for_mesh() {
 	done
 }
 
+ccpy_setup() {
+	get_mesh_iflist
+
+	for iface in $iflist; do
+		wait_for_interface "$iface"
+
+		if [ "$ifstatus" = "down" ]; then
+			continue
+		fi
+
+		peers=$(iw dev $iface mpath dump | grep -c -w $iface)
+		macrouting=$(iw dev $iface mpath dump | awk -F" " 'NR>1 {printf "%s/%s ",$1,$2}')
+
+		for peer in $macrouting; do
+			peermac=$(echo "$peer" | awk -F"/" '{printf "%s", $1}')
+			peerlist="$peerlist ""$peermac"
+		done
+	done
+
+
+	meshconfigs=$(uci show wireless 2> /dev/null | grep "mode='mesh'" | awk -F ".mode='mesh'" '{printf "%s " $1}')
+
+	connectlist=""
+
+	if [ ! -z "$meshconfigs" ]; then
+		for meshconfig in $meshconfigs; do
+			network=$(uci get $meshconfig.network)
+			device=$(uci get network.$network.device)
+			connectlist="$connectlist ""$(ip -6 neigh | grep "fe80::" | grep "$device" | awk '{printf "%s%s%s,%s ", $1, "%", $3, $5}')"
+		done
+	fi
+}
 
 ##############
 # Start point
@@ -276,6 +314,16 @@ if [ -z "$1" ] || [ "$1" = "-h" ] || [ $1 = "--help" ] || [ $1 = "help" ]; then
 
   Option: status
   Returns: the mesh status in json format
+
+  Option: connect
+  Connect a remote terminal session on a remote meshnode
+  Usage: mesh11sd connect [remote_meshnode_macaddress]
+    If the remote meshnode mac address is omitted, a list of meshnode mac addresses available for connection is listed
+
+  Option: copy
+  Copy a file to a remote meshnode
+  Usage: mesh11sd copy [remote_meshnode_macaddress] [path_of_source_file]
+    If the remote meshnode mac address is null, or both arguments are omitted, a list of meshnode mac addresses available for copy is listed
 
   For further documentation, see: https://github.com/openNDS/mesh11sd#readme
 
@@ -333,6 +381,7 @@ elif [ "$1" = "status" ]; then
 	echo "    \"version\":\"$version\","
 	echo "    \"enabled\":\"$enabled\","
 	echo "    \"procd_status\":\"$procd_status\","
+	echo "    \"portal_detect\":\"$portal_detect\","
 	echo "    \"mesh_basename\":\"$mesh_basename\","
 	echo "    \"checkinterval\":\"$checkinterval\","
 	echo "    \"interface_timeout\":\"$interface_timeout\","
@@ -438,36 +487,8 @@ elif [ "$1" = "status" ]; then
 
 elif [ "$1" = "connect" ]; then
 	nodeaddr=$2
-	get_mesh_iflist
 
-	for iface in $iflist; do
-		wait_for_interface "$iface"
-
-		if [ "$ifstatus" = "down" ]; then
-			continue
-		fi
-
-		peers=$(iw dev $iface mpath dump | grep -c -w $iface)
-		macrouting=$(iw dev $iface mpath dump | awk -F" " 'NR>1 {printf "%s/%s ",$1,$2}')
-
-		for peer in $macrouting; do
-			peermac=$(echo "$peer" | awk -F"/" '{printf "%s", $1}')
-			peerlist="$peerlist ""$peermac"
-		done
-	done
-
-
-	meshconfigs=$(uci show wireless 2> /dev/null | grep "mode='mesh'" | awk -F ".mode='mesh'" '{printf "%s " $1}')
-
-	connectlist=""
-
-	if [ ! -z "$meshconfigs" ]; then
-		for meshconfig in $meshconfigs; do
-			network=$(uci get $meshconfig.network)
-			device=$(uci get network.$network.device)
-			connectlist="$connectlist ""$(ip -6 neigh | grep "fe80::" | grep "$device" | awk '{printf "%s%s%s,%s ", $1, "%", $3, $5}')"
-		done
-	fi
+	ccpy_setup
 
 	if [ -z "$nodeaddr" ]; then
 		echo "========================================================="
@@ -492,6 +513,7 @@ elif [ "$1" = "connect" ]; then
 		if [ -z "$nodeaddr" ] && [ "$found" -eq 1 ]; then
 			echo "	$meshnodemac"
 		elif [ ! -z "$nodeaddr" ] && [ "$found" -eq 1 ]; then
+
 			if [ "$nodeaddr" = "$meshnodemac" ]; then
 				echo
 				echo "Trying to connect to meshnode \"$meshnodemac\"....."
@@ -501,6 +523,58 @@ elif [ "$1" = "connect" ]; then
 				echo "Disconnected from meshnode \"$meshnodemac\""
 				echo
 				break
+			fi
+		fi
+	done
+
+	echo "========================================================="
+	echo
+
+	exit 0
+
+elif [ "$1" = "copy" ]; then
+	nodeaddr=$2
+	filepath=$3
+	filename=$(echo "$filepath" | awk -F "/" '{printf $NF}')
+
+	ccpy_setup
+
+	if [ -z "$nodeaddr" ]; then
+		echo "========================================================="
+		echo "The following meshnodes are available for remote copy:"
+		echo
+	fi
+
+	for connectto in $connectlist; do
+		linklocal="${connectto%,*}"
+		arpmac="${connectto##*,}"
+
+		for peer in $peerlist; do
+			if [ "$peer" = "$arpmac" ]; then
+				meshnodemac="$peer"
+				found=1
+				break
+			else
+				found=0
+			fi
+		done
+
+		if [ -z "$nodeaddr" ] && [ "$found" -eq 1 ]; then
+			echo "	$meshnodemac"
+		elif [ ! -z "$nodeaddr" ] && [ "$found" -eq 1 ]; then
+
+			if [ "$nodeaddr" = "$meshnodemac" ]; then
+
+				if [ ! -z "$filepath" ]; then
+					echo
+					echo "Trying to copy to meshnode \"$meshnodemac\"....."
+					echo
+					scp "$filepath" "root@[$linklocal]:/tmp/$filename"
+					echo
+					echo "Disconnected from meshnode \"$meshnodemac\""
+					echo
+					break
+				fi
 			fi
 		fi
 	done
@@ -685,7 +759,10 @@ elif [ "$1" = "daemon" ]; then
 			restart_mesh
 		fi
 
-		check_portal
+		if [ "$portal_detect" -eq 1 ]; then
+			check_portal
+		fi
+
 		check_gate
 		sleep $checkinterval
 	done
