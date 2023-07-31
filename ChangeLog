@@ -1,3 +1,11 @@
+mesh11sd (2.0.0)
+  * Add - Update config file [bluewavenet]
+  * Add - implementation of remote copy [bluewavenet]
+  * Add - implementation of remote connect [bluewavenet]
+  * Add - Autonomous portal mode [bluewavenet]
+
+ -- Rob White <dot@blue-wave.net>  Mon, 31 Jul 2023 16:59:52 +0000
+
 mesh11sd (1.3.0)
   * Add - Revert wireless config on shutdown of daemon [bluewavenet]
   * Add - updated default values [bluewavenet]
