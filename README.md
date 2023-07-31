@@ -39,9 +39,11 @@ It is assumed that the mesh network interface is defined in the wireless configu
 
 It is also assumed that the additional dependencies for encrypted mesh are also installed, ie:
 
-    Remove - wpad-basic-wolfssl (or wpad-basic)
+    Remove - wpad-basic-wolfssl (or wpad-basic or wpad-basic-mbedtls)
 
-    Install - wpad-mesh-wolfssl
+    Install - wpad-mesh-mbedtls
+         or - wpad-mbedtls
+         or - wpad-mesh-wolfssl
          or - wpad-wolfssl
          or - wpad-mesh-openssl
          or - wpad-openssl
@@ -57,6 +59,8 @@ A *typical* mesh interface configuration in /etc/config/wireless would look some
 	    option network 'lan'
 	    option mesh_id 'PublicFreeMesh'
 
+**NOTE:** It is essential that all meshnodes are configured to use the same radio channel, the same key and the same mesh_id.
+
 Default configuration file (/etc/config/mesh11sd):
 
     config mesh11sd 'setup'
@@ -67,19 +71,36 @@ Default configuration file (/etc/config/mesh11sd):
 
     config mesh11sd 'mesh_params'
 	    option mesh_fwding '1'
-	    option mesh_rssi_threshold '-80'
+	    option mesh_rssi_threshold '-70'
 	    option mesh_gate_announcements '1'
 	    option mesh_hwmp_rootmode '3'
-	    option mesh_max_peer_links '150'
+	    option mesh_max_peer_links '8'
 
 All settings in the config file are dynamic and will take effect immediately.
 
+**NOTE:** From version 2 onwards, the setup option `portal_detect` is enabled by default.
+
+This much simplifies the setup of the meshnodes of a network. Each can be configured as a basic router with a mesh interface defined as above. Once mesh11sd is installed, portal detection will be activated and with the upstream wan port connected, the meshnode will continue to function as a router with the additional functionality of a mesh portal.
+
+When the upstream wan connection is disconnected, the meshnode will automatically reconfigure itself as a layer 2 peer meshnode.
+
+This means that all meshnodes can be the same basic router configuration and once moved to the required location, will autonomously reconfigure.
+
+Access to the remote meshnode peers will not be possible using the ipv4 address as this will be disabled. Remote management can be achieved by using the `mesh11sd connect` and `mesh11sd copy` commands, or alternatively by reconnecting the wan port to an upstream feed.
+
+
 ## 5. Setup Options
 * enabled - 0=disabled, 1=enabled. Default 1
+
 * debuglevel - 0=silent, 1=notice, 2=info, 3=debug. Default 1
+
 * checkinterval - the interval in seconds after which changes in parameters are detected and activated. Default 10 seconds
+
 * interface_timeout - the time in seconds that mesh11sd will wait for a mesh interface to establish before continuing. Default 10 seconds
+
 * mesh_basename - (optional) The first 4 characters after non alphanumerics (ie special characters) are removed are used as the mesh_basename. The mesh_basename is used to construct a unique mesh interface name of the form m-xxxx-n. Default: 11s
+
+* portal_detect - (optional) - Detect if the meshnode is a portal, meaning it has an upstream wan link. If the upstream link is active, the router hosting the meshnode will serve ipv4 dhcp into the mesh network. If the upstream link is not connected, dhcp will be disabled and the meshnode will function as a level 2 bridge on the mesh network. Default 1 (enabled). Set to 0 to disable.
 
 **Example**:
 Set the debuglevel to 2
@@ -96,9 +117,13 @@ Changes can be made permanent with the following command:
 Basic mesh parameters are already included in the default config file. These basic parameters ensure the mesh interface will be able to either seed a new mesh or join an existing one of the same mesh id.
 
 * mesh_fwding - packets will be forwarded to peer mesh nodes
+
 * mesh_rssi_threshold - the minimum received signal strength from a peer meshnode for a connection to be established.
+
 * mesh_gate_announcements - 0=disabled, 1=enabled. At least one meshnode must make gate announcements. It is safe to enable this on all nodes. Background announcement traffic can be reduced in large networks by disabling this on a proportion of nodes if required.
+
 * mesh_hwmp_rootmode - Set to 3 for fast mesh convergence in most situations. Can be set to 0, 1, 2, 3 or 4.
+
 * mesh_max_peer_links - sets the maximum number of peer nodes that can connect. Can be set from 1 - 255.
 
 **Example**: Set mesh_rssi_threshold to -75 dBm (decibels relative to one milliwatt)
@@ -137,6 +162,16 @@ Mesh11sd is an OpenWrt service daemon and runs continuously in the background. I
         Option: status
           Returns: the mesh status in json format
 
+  		Option: connect
+		  Connect a remote terminal session on a remote meshnode
+		  Usage: mesh11sd connect [remote_meshnode_macaddress]
+ 		 	If the remote meshnode mac address is omitted, a list of meshnode mac addresses available for connection is listed.
+
+		Option: copy
+		  Copy a file to a remote meshnode
+		  Usage: mesh11sd copy [remote_meshnode_macaddress] [path_of_source_file]
+			If the remote meshnode mac address is null, or both arguments are omitted, a list of meshnode mac addresses available for copy is listed.
+
 **Example status output:**
 
     {
@@ -144,6 +179,7 @@ Mesh11sd is an OpenWrt service daemon and runs continuously in the background. I
         "version":"1.2.0",
         "enabled":"1",
         "procd_status":"running",
+        "portal_detect":"1",
         "checkinterval":"10",
         "interface_timeout":"10",
         "debuglevel":"2"
@@ -176,7 +212,7 @@ Mesh11sd is an OpenWrt service daemon and runs continuously in the background. I
           "mesh_power_mode":"active",
           "mesh_awake_window":"10",
           "mesh_plink_timeout":"0",
-          "mesh_connected_to_gate":"0",
+          "mesh_connected_to_gate":"1",
           "mesh_nolearn":"0",
           "mesh_connected_to_as":"0",
           "mesh_id":"-_-",
