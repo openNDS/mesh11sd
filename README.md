@@ -162,13 +162,13 @@ Mesh11sd is an OpenWrt service daemon and runs continuously in the background. I
         Option: status
           Returns: the mesh status in json format
 
-  		Option: connect
+  	    Option: connect
 		  Connect a remote terminal session on a remote meshnode
 		  Usage: mesh11sd connect [remote_meshnode_macaddress]
  		 	If the remote meshnode mac address is omitted, a list of meshnode mac addresses available for connection is listed.
 
-		Option: copy
-		  Copy a file to a remote meshnode
+        Option: copy
+		  Copy a file to /tmp/ on a remote meshnode
 		  Usage: mesh11sd copy [remote_meshnode_macaddress] [path_of_source_file]
 			If the remote meshnode mac address is null, or both arguments are omitted, a list of meshnode mac addresses available for copy is listed.
 
@@ -176,7 +176,7 @@ Mesh11sd is an OpenWrt service daemon and runs continuously in the background. I
 
     {
       "setup":{
-        "version":"1.2.0",
+        "version":"2.1.0",
         "enabled":"1",
         "procd_status":"running",
         "portal_detect":"1",
@@ -189,7 +189,7 @@ Mesh11sd is an OpenWrt service daemon and runs continuously in the background. I
           "mesh_retry_timeout":"100",
           "mesh_confirm_timeout":"100",
           "mesh_holding_timeout":"100",
-          "mesh_max_peer_links":"150",
+          "mesh_max_peer_links":"10",
           "mesh_max_retries":"3",
           "mesh_ttl":"31",
           "mesh_element_ttl":"31",
