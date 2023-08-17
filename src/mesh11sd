@@ -271,17 +271,41 @@ ccpy_setup() {
 		done
 	done
 
-
 	meshconfigs=$(uci show wireless 2> /dev/null | grep "mode='mesh'" | awk -F ".mode='mesh'" '{printf "%s " $1}')
-
 	connectlist=""
 
 	if [ ! -z "$meshconfigs" ]; then
 		for meshconfig in $meshconfigs; do
 			network=$(uci get $meshconfig.network)
 			device=$(uci get network.$network.device)
-			connectlist="$connectlist ""$(ip -6 neigh | grep "fe80::" | grep "$device" | awk '{printf "%s%s%s,%s ", $1, "%", $3, $5}')"
+
+			if [ "$network" != "$network_previous" ]; then
+
+				for peer in $peerlist; do
+					known=$(ip neigh | grep "$peer")
+
+					if [ -z "$known" ]; then
+						ndp_scan_peer
+					fi
+				done
+
+				connectlist="$connectlist ""$(ip -6 neigh | grep "fe80::" | grep "$device" | awk '{printf "%s%s%s,%s ", $1, "%", $3, $5}')"
+			fi
+
+			network_previous=$network
 		done
+	fi
+}
+
+ndp_scan_peer() {
+	# scan for peer
+	peerlinklocal=$(echo $peer | awk -F":" '{printf "fe80::%s%s:%sff:fe%s:%s%s", $1, $2, $3, $4, $5, $6}')
+
+	pingresult=$(ping -q -W 1 -c 1 -I $device $peerlinklocal &>/dev/null)
+	retval=$?
+
+	if [ "$retval" -gt 0 ]; then
+		echo "	$peer is not yet available"
 	fi
 }
 
@@ -463,6 +487,13 @@ elif [ "$1" = "status" ]; then
 				echo "      \"stations\":{"
 
 				for sta in $starouting; do
+
+					inmacrouting=$(echo "$macrouting" | grep "$sta")
+
+					if [ "$inmacrouting" = "$macrouting" ]; then
+						continue
+					fi
+
 					stanum=$((stanum+1))
 					stamac=$(echo "$sta" | awk -F"/" '{printf "%s", $1}')
 					proxy_node=$(echo "$sta" | awk -F"/" '{printf "%s", $2}')
@@ -498,10 +529,11 @@ elif [ "$1" = "connect" ]; then
 
 	for connectto in $connectlist; do
 		linklocal="${connectto%,*}"
-		arpmac="${connectto##*,}"
+		ndpmac="${connectto##*,}"
 
 		for peer in $peerlist; do
-			if [ "$peer" = "$arpmac" ]; then
+
+			if [ "$peer" = "$ndpmac" ]; then
 				meshnodemac="$peer"
 				found=1
 				break
@@ -547,10 +579,10 @@ elif [ "$1" = "copy" ]; then
 
 	for connectto in $connectlist; do
 		linklocal="${connectto%,*}"
-		arpmac="${connectto##*,}"
+		ndpmac="${connectto##*,}"
 
 		for peer in $peerlist; do
-			if [ "$peer" = "$arpmac" ]; then
+			if [ "$peer" = "$ndpmac" ]; then
 				meshnodemac="$peer"
 				found=1
 				break
