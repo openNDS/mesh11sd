@@ -12,6 +12,9 @@ start_service() {
 }
 
 stop_service() {
+	/sbin/uci revert mesh11sd
 	/sbin/uci revert wireless
+	/sbin/uci revert dhcp
+
 }
 
