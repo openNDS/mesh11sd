@@ -212,7 +212,7 @@ check_channel() {
 	mininterval=$(($checkinterval * 5))
 
 	if [ "$mininterval" -le "$elapsed_time" ]; then
-		udhcpc -R -t 5 -T 1 -A 1 -q -n -i br-lan &> /dev/null
+		udhcpc -R -t 10 -T 5 -A 4 -q -n -i br-lan &> /dev/null
 		link_to_portal=$?
 		cctimestamp=""
 	fi
