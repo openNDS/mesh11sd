@@ -212,12 +212,32 @@ check_channel() {
 	mininterval=$(($checkinterval * 5))
 
 	if [ "$mininterval" -le "$elapsed_time" ]; then
-		udhcpc -R -t 10 -T 5 -A 4 -q -n -i br-lan &> /dev/null
-		link_to_portal=$?
-		cctimestamp=""
+		ifaces=$(uci export wireless | grep "config wifi-iface" | awk -F"'" '$2 != "" {printf "%s ",$2}')
+
+		for iface in $ifaces; do
+			ucibatch="get wireless.$iface.mode"
+			mode=$(echo "$ucibatch" | uci batch)
+
+			if [ "$mode" = "mesh" ]; then
+				ucibatch="get wireless.$iface.network"
+				network=$(echo "$ucibatch" | uci batch)
+				ucibatch="get network.$network.device"
+				device=$(echo "$ucibatch" | uci batch)
+
+				echo "device=$device!" >> /tmp/time
+
+				#udhcpc -R -t 10 -T 5 -A 4 -q -n -i $device &> /dev/null
+				udhcpc -R -t 10 -T 5 -A 4 -q -n -i $device
+				link_to_portal=$?
+				cctimestamp=""
+				scan_channel
+				continue
+			fi
+		done
 	fi
+}
 
-
+scan_channel() {
 	if [ "$link_to_portal" -gt 0 ]; then
 		# No link to portal. Maybe we are on the wrong channel, so scan for meshid to get channel
 		meshconfigs=$(uci show wireless 2> /dev/null | grep "mode='mesh'" | awk -F ".mode='mesh'" '{printf "%s " $1}')
@@ -287,9 +307,9 @@ check_portal() {
 				uci set dhcp.@dnsmasq[0].authoritative='0'
 				uci set dhcp.lan.ignore='1'
 				/etc/init.d/dnsmasq restart
-
-				check_channel
 			fi
+
+			check_channel
 
 		else
 			# This IS a layer 3 mesh portal
