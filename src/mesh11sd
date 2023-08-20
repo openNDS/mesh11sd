@@ -199,6 +199,88 @@ check_gate() {
 	fi
 }
 
+check_channel() {
+	# Can we see the portal?
+	link_to_portal=0
+	timenow=$(date +%s)
+
+	if [ -z $cctimestamp ]; then
+		cctimestamp=$(date +%s)
+	fi
+
+	elapsed_time=$(($timenow - $cctimestamp))
+	mininterval=$(($checkinterval * 5))
+
+	if [ "$mininterval" -le "$elapsed_time" ]; then
+		ifaces=$(uci export wireless | grep "config wifi-iface" | awk -F"'" '$2 != "" {printf "%s ",$2}')
+
+		for iface in $ifaces; do
+			ucibatch="get wireless.$iface.mode"
+			mode=$(echo "$ucibatch" | uci batch)
+
+			if [ "$mode" = "mesh" ]; then
+				ucibatch="get wireless.$iface.network"
+				network=$(echo "$ucibatch" | uci batch)
+				ucibatch="get network.$network.device"
+				device=$(echo "$ucibatch" | uci batch)
+
+				echo "device=$device!" >> /tmp/time
+
+				#udhcpc -R -t 10 -T 5 -A 4 -q -n -i $device &> /dev/null
+				udhcpc -R -t 10 -T 5 -A 4 -q -n -i $device
+				link_to_portal=$?
+				cctimestamp=""
+				scan_channel
+				continue
+			fi
+		done
+	fi
+}
+
+scan_channel() {
+	if [ "$link_to_portal" -gt 0 ]; then
+		# No link to portal. Maybe we are on the wrong channel, so scan for meshid to get channel
+		meshconfigs=$(uci show wireless 2> /dev/null | grep "mode='mesh'" | awk -F ".mode='mesh'" '{printf "%s " $1}')
+
+		if [ ! -z "$meshconfigs" ]; then
+
+			for meshconfig in $meshconfigs; do
+				ifname=$(uci get $meshconfig.ifname)
+				our_channel=$(iw dev $ifname info | grep -w "channel" | awk -F " " '{printf "%s", $2}')
+				mesh_id=$(uci get $meshconfig.mesh_id)
+				scanned_channels=$(iw dev $ifname scan | grep -F -w -B 5 "MESH ID: $mesh_id" | awk -F "primary channel: " '$2 != "" {printf "%s ",$2}')
+
+				if [ "$our_channel" -le 14 ]; then
+					band="2g"
+				else
+					band=""
+				fi
+
+				for channel in $scanned_channels; do
+
+					if [ "$channel" -gt 14 ] && [ "$band" = "2g" ]; then
+						continue
+					fi
+
+
+					if [ "$channel" = "$our_channel" ]; then
+						continue
+					else
+						device=$(uci get $meshconfig.device)
+						ucibatch="set wireless.$device.channel='$channel'"
+						echo "$ucibatch" | uci batch
+						restart_mesh
+						break
+					fi
+				done
+
+				ucibatch=""
+			done
+
+		fi
+	fi
+}
+
 check_portal() {
 	if [ "$enabled" -eq 1 ]; then
 		proto=$(uci get network.lan.proto)
@@ -226,6 +308,8 @@ check_portal() {
 				uci set dhcp.lan.ignore='1'
 				/etc/init.d/dnsmasq restart
 			fi
+
+			check_channel
 
 		else
 			# This IS a layer 3 mesh portal
@@ -460,6 +544,7 @@ elif [ "$1" = "status" ]; then
 				peernum=0
 				peers=$(iw dev $iface mpath dump | grep -c -w $iface)
 				macrouting=$(iw dev $iface mpath dump | awk -F" " 'NR>1 {printf "%s/%s ",$1,$2}')
+				peer_macs=$(iw dev m-11s-0 mpath dump | awk -F" " 'NR>1 {printf "%s ",$1}')
 
 				echo "      \"active_peers\":\"$peers\","
 				echo "      \"peers\":{"
@@ -480,23 +565,36 @@ elif [ "$1" = "status" ]; then
 				echo "      }"
 
 				stanum=0
-				stations=$(iw dev $iface mpp dump | grep -c -w $iface)
+				stations=0
 				starouting=$(iw dev $iface mpp dump | awk -F" " 'NR>1 {printf "%s/%s ",$1,$2}')
+				stas=$(iw dev $iface mpp dump | awk -F" " 'NR>1 {printf "%s ",$1}')
+
+				for sta in $stas; do
+
+					inpeermacs=$(echo "$peer_macs" | grep "$sta")
+
+					if [ "$inpeermacs" = "$peer_macs" ]; then
+						continue
+					else
+						stations=$((stations+1))
+					fi
+				done
 
 				echo "      \"active_stations\":\"$stations\","
 				echo "      \"stations\":{"
 
-				for sta in $starouting; do
+				for staroute in $starouting; do
+					sta="${staroute%/*}"
+					inpeermacs=$(echo "$peer_macs" | grep "$sta")
 
-					inmacrouting=$(echo "$macrouting" | grep "$sta")
-
-					if [ "$inmacrouting" = "$macrouting" ]; then
+					if [ "$inpeermacs" = "$peer_macs" ]; then
 						continue
 					fi
 
 					stanum=$((stanum+1))
 					stamac=$(echo "$sta" | awk -F"/" '{printf "%s", $1}')
 					proxy_node=$(echo "$sta" | awk -F"/" '{printf "%s", $2}')
+					proxy_node="${staroute##*/}"
 
 					echo "        \"$stamac\":{"
 					echo "          \"proxy_node\":\"$proxy_node\""
@@ -506,6 +604,7 @@ elif [ "$1" = "status" ]; then
 					else
 						echo "        },"
 					fi
+
 				done
 				echo "      }"
 				echo "    }"
@@ -527,37 +626,40 @@ elif [ "$1" = "connect" ]; then
 		echo
 	fi
 
-	for connectto in $connectlist; do
-		linklocal="${connectto%,*}"
-		ndpmac="${connectto##*,}"
+	if [ ! -z "$peerlist" ]; then
 
-		for peer in $peerlist; do
+		for connectto in $connectlist; do
+			linklocal="${connectto%,*}"
+			ndpmac="${connectto##*,}"
 
-			if [ "$peer" = "$ndpmac" ]; then
-				meshnodemac="$peer"
-				found=1
-				break
-			else
-				found=0
+			for peer in $peerlist; do
+
+				if [ "$peer" = "$ndpmac" ]; then
+					meshnodemac="$peer"
+					found=1
+					break
+				else
+					found=0
+				fi
+			done
+
+			if [ -z "$nodeaddr" ] && [ "$found" -eq 1 ]; then
+				echo "	$meshnodemac"
+			elif [ ! -z "$nodeaddr" ] && [ "$found" -eq 1 ]; then
+
+				if [ "$nodeaddr" = "$meshnodemac" ]; then
+					echo
+					echo "Trying to connect to meshnode \"$meshnodemac\"....."
+					echo
+					ssh "root@$linklocal"
+					echo
+					echo "Disconnected from meshnode \"$meshnodemac\""
+					echo
+					break
+				fi
 			fi
 		done
-
-		if [ -z "$nodeaddr" ] && [ "$found" -eq 1 ]; then
-			echo "	$meshnodemac"
-		elif [ ! -z "$nodeaddr" ] && [ "$found" -eq 1 ]; then
-
-			if [ "$nodeaddr" = "$meshnodemac" ]; then
-				echo
-				echo "Trying to connect to meshnode \"$meshnodemac\"....."
-				echo
-				ssh "root@$linklocal"
-				echo
-				echo "Disconnected from meshnode \"$meshnodemac\""
-				echo
-				break
-			fi
-		fi
-	done
+	fi
 
 	echo "========================================================="
 	echo
@@ -577,39 +679,41 @@ elif [ "$1" = "copy" ]; then
 		echo
 	fi
 
-	for connectto in $connectlist; do
-		linklocal="${connectto%,*}"
-		ndpmac="${connectto##*,}"
+	if [ ! -z "$peerlist" ]; then
+		for connectto in $connectlist; do
+			linklocal="${connectto%,*}"
+			ndpmac="${connectto##*,}"
 
-		for peer in $peerlist; do
-			if [ "$peer" = "$ndpmac" ]; then
-				meshnodemac="$peer"
-				found=1
-				break
-			else
-				found=0
-			fi
-		done
-
-		if [ -z "$nodeaddr" ] && [ "$found" -eq 1 ]; then
-			echo "	$meshnodemac"
-		elif [ ! -z "$nodeaddr" ] && [ "$found" -eq 1 ]; then
-
-			if [ "$nodeaddr" = "$meshnodemac" ]; then
-
-				if [ ! -z "$filepath" ]; then
-					echo
-					echo "Trying to copy to meshnode \"$meshnodemac\"....."
-					echo
-					scp "$filepath" "root@[$linklocal]:/tmp/$filename"
-					echo
-					echo "Disconnected from meshnode \"$meshnodemac\""
-					echo
+			for peer in $peerlist; do
+				if [ "$peer" = "$ndpmac" ]; then
+					meshnodemac="$peer"
+					found=1
 					break
+				else
+					found=0
+				fi
+			done
+
+			if [ -z "$nodeaddr" ] && [ "$found" -eq 1 ]; then
+				echo "	$meshnodemac"
+			elif [ ! -z "$nodeaddr" ] && [ "$found" -eq 1 ]; then
+
+				if [ "$nodeaddr" = "$meshnodemac" ]; then
+
+					if [ ! -z "$filepath" ]; then
+						echo
+						echo "Trying to copy to meshnode \"$meshnodemac\"....."
+						echo
+						scp "$filepath" "root@[$linklocal]:/tmp/$filename"
+						echo
+						echo "Disconnected from meshnode \"$meshnodemac\""
+						echo
+						break
+					fi
 				fi
 			fi
-		fi
-	done
+		done
+	fi
 
 	echo "========================================================="
 	echo
@@ -619,6 +723,7 @@ elif [ "$1" = "copy" ]; then
 elif [ "$1" = "daemon" ]; then
 	uci revert mesh11sd
 	uci revert wireless
+	uci revert dhcp
 	debugtype="notice"
 	syslogmessage="mesh11sd is in startup"
 	write_to_syslog
@@ -793,6 +898,20 @@ elif [ "$1" = "daemon" ]; then
 
 		if [ "$portal_detect" -eq 1 ]; then
 			check_portal
+		else
+			# portal_detect is not enabled - force portal mode:
+			authoritative=$(uci get dhcp.@dnsmasq[0].authoritative)
+
+			if [ "$authoritative" -eq 0 ]; then
+				debugtype="notice"
+				syslogmessage="Portal detection is disabled, forcing portal mode"
+				write_to_syslog
+
+				uci set mesh11sd.mesh_params.mesh_connected_to_as='1'
+				uci set dhcp.@dnsmasq[0].authoritative='1'
+				uci set dhcp.lan.ignore='0'
+				/etc/init.d/dnsmasq restart
+			fi
 		fi
 
 		check_gate
