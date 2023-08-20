@@ -606,37 +606,40 @@ elif [ "$1" = "connect" ]; then
 		echo
 	fi
 
-	for connectto in $connectlist; do
-		linklocal="${connectto%,*}"
-		ndpmac="${connectto##*,}"
+	if [ ! -z "$peerlist" ]; then
 
-		for peer in $peerlist; do
+		for connectto in $connectlist; do
+			linklocal="${connectto%,*}"
+			ndpmac="${connectto##*,}"
 
-			if [ "$peer" = "$ndpmac" ]; then
-				meshnodemac="$peer"
-				found=1
-				break
-			else
-				found=0
+			for peer in $peerlist; do
+
+				if [ "$peer" = "$ndpmac" ]; then
+					meshnodemac="$peer"
+					found=1
+					break
+				else
+					found=0
+				fi
+			done
+
+			if [ -z "$nodeaddr" ] && [ "$found" -eq 1 ]; then
+				echo "	$meshnodemac"
+			elif [ ! -z "$nodeaddr" ] && [ "$found" -eq 1 ]; then
+
+				if [ "$nodeaddr" = "$meshnodemac" ]; then
+					echo
+					echo "Trying to connect to meshnode \"$meshnodemac\"....."
+					echo
+					ssh "root@$linklocal"
+					echo
+					echo "Disconnected from meshnode \"$meshnodemac\""
+					echo
+					break
+				fi
 			fi
 		done
-
-		if [ -z "$nodeaddr" ] && [ "$found" -eq 1 ]; then
-			echo "	$meshnodemac"
-		elif [ ! -z "$nodeaddr" ] && [ "$found" -eq 1 ]; then
-
-			if [ "$nodeaddr" = "$meshnodemac" ]; then
-				echo
-				echo "Trying to connect to meshnode \"$meshnodemac\"....."
-				echo
-				ssh "root@$linklocal"
-				echo
-				echo "Disconnected from meshnode \"$meshnodemac\""
-				echo
-				break
-			fi
-		fi
-	done
+	fi
 
 	echo "========================================================="
 	echo
@@ -656,39 +659,41 @@ elif [ "$1" = "copy" ]; then
 		echo
 	fi
 
-	for connectto in $connectlist; do
-		linklocal="${connectto%,*}"
-		ndpmac="${connectto##*,}"
+	if [ ! -z "$peerlist" ]; then
+		for connectto in $connectlist; do
+			linklocal="${connectto%,*}"
+			ndpmac="${connectto##*,}"
 
-		for peer in $peerlist; do
-			if [ "$peer" = "$ndpmac" ]; then
-				meshnodemac="$peer"
-				found=1
-				break
-			else
-				found=0
-			fi
-		done
-
-		if [ -z "$nodeaddr" ] && [ "$found" -eq 1 ]; then
-			echo "	$meshnodemac"
-		elif [ ! -z "$nodeaddr" ] && [ "$found" -eq 1 ]; then
-
-			if [ "$nodeaddr" = "$meshnodemac" ]; then
-
-				if [ ! -z "$filepath" ]; then
-					echo
-					echo "Trying to copy to meshnode \"$meshnodemac\"....."
-					echo
-					scp "$filepath" "root@[$linklocal]:/tmp/$filename"
-					echo
-					echo "Disconnected from meshnode \"$meshnodemac\""
-					echo
+			for peer in $peerlist; do
+				if [ "$peer" = "$ndpmac" ]; then
+					meshnodemac="$peer"
+					found=1
 					break
+				else
+					found=0
+				fi
+			done
+
+			if [ -z "$nodeaddr" ] && [ "$found" -eq 1 ]; then
+				echo "	$meshnodemac"
+			elif [ ! -z "$nodeaddr" ] && [ "$found" -eq 1 ]; then
+
+				if [ "$nodeaddr" = "$meshnodemac" ]; then
+
+					if [ ! -z "$filepath" ]; then
+						echo
+						echo "Trying to copy to meshnode \"$meshnodemac\"....."
+						echo
+						scp "$filepath" "root@[$linklocal]:/tmp/$filename"
+						echo
+						echo "Disconnected from meshnode \"$meshnodemac\""
+						echo
+						break
+					fi
 				fi
 			fi
-		fi
-	done
+		done
+	fi
 
 	echo "========================================================="
 	echo
