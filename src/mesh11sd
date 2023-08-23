@@ -297,15 +297,16 @@ check_portal() {
 
 		if [ -z "$is_portal" ]; then
 			# This IS NOT a layer 3 mesh portal
+			uci set mesh11sd.mesh_params.mesh_connected_to_as='0'
 
 			if [ "$authoritative" -eq 1 ]; then
 				debugtype="debug"
 				syslogmessage="This meshnode is NOT a portal"
 				write_to_syslog
 
-				uci set mesh11sd.mesh_params.mesh_connected_to_as='0'
 				uci set dhcp.@dnsmasq[0].authoritative='0'
 				uci set dhcp.lan.ignore='1'
+				uci set dhcp.lan.ra_default='2'
 				/etc/init.d/dnsmasq restart
 			fi
 
@@ -313,15 +314,16 @@ check_portal() {
 
 		else
 			# This IS a layer 3 mesh portal
+			uci set mesh11sd.mesh_params.mesh_connected_to_as='1'
 
 			if [ "$authoritative" -eq 0 ]; then
 				debugtype="debug"
 				syslogmessage="This meshnode is an upstream portal"
 				write_to_syslog
 
-				uci set mesh11sd.mesh_params.mesh_connected_to_as='1'
 				uci set dhcp.@dnsmasq[0].authoritative='1'
 				uci set dhcp.lan.ignore='0'
+				uci set dhcp.lan.ra_default='2'
 				/etc/init.d/dnsmasq restart
 			fi
 		fi
@@ -360,23 +362,30 @@ ccpy_setup() {
 
 	if [ ! -z "$meshconfigs" ]; then
 		for meshconfig in $meshconfigs; do
-			network=$(uci get $meshconfig.network)
-			device=$(uci get network.$network.device)
+			networks=$(uci get $meshconfig.network)
 
-			if [ "$network" != "$network_previous" ]; then
+			for network in $networks; do
+				device=$(uci get network.$network.device)
 
-				for peer in $peerlist; do
-					known=$(ip neigh | grep "$peer")
+				if [ "$network" != "$network_previous" ]; then
 
-					if [ -z "$known" ]; then
-						ndp_scan_peer
-					fi
-				done
+					for peer in $peerlist; do
+						known=$(ip neigh | grep "$peer")
 
-				connectlist="$connectlist ""$(ip -6 neigh | grep "fe80::" | grep "$device" | awk '{printf "%s%s%s,%s ", $1, "%", $3, $5}')"
-			fi
+						if [ -z "$known" ]; then
+							ndp_scan_peer
+						fi
+					done
 
-			network_previous=$network
+					connectlist="$connectlist ""$(ip -6 neigh | grep "fe80::" | grep "$device" | awk '{printf "%s%s%s,%s ", $1, "%", $3, $5}')"
+				fi
+
+				network_previous=$network
+			done
+
+			# Stop after the first network - there should only be one but Luci can add more in error
+			break
+
 		done
 	fi
 }
@@ -901,15 +910,16 @@ elif [ "$1" = "daemon" ]; then
 		else
 			# portal_detect is not enabled - force portal mode:
 			authoritative=$(uci get dhcp.@dnsmasq[0].authoritative)
+			uci set mesh11sd.mesh_params.mesh_connected_to_as='1'
 
 			if [ "$authoritative" -eq 0 ]; then
 				debugtype="notice"
 				syslogmessage="Portal detection is disabled, forcing portal mode"
 				write_to_syslog
 
-				uci set mesh11sd.mesh_params.mesh_connected_to_as='1'
 				uci set dhcp.@dnsmasq[0].authoritative='1'
 				uci set dhcp.lan.ignore='0'
+				uci set dhcp.lan.ra_default='2'
 				/etc/init.d/dnsmasq restart
 			fi
 		fi
