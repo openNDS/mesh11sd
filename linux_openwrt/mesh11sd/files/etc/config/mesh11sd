@@ -21,9 +21,38 @@ config mesh11sd 'setup'
 	# Detect if the meshnode is a portal, meaning it has an upstream wan link.
 	# If the upstream link is active, the router hosting the meshnode will serve ipv4 dhcp into the mesh network.
 	# If the upstream link is not connected, dhcp will be disabled and the meshnode will function as a level 2 bridge on the mesh network.
+	# If portal_detect is disabled, the meshnode will be forced into portal mode.
 	# Default 1 (enabled). Set to 0 to disable.
 
 	#option portal_detect '0'
+
+	###########################################################################################
+	# auto_config (optional)
+	# Auto configure mesh interfaces in the wireless configuration.
+	# Default 1 (enabled). Set to 0 to disable.
+
+	#option auto_config '0'
+
+	###########################################################################################
+	# auto_mesh_id (optional)
+	# Configure the mesh_id of the wireless interface(s) when auto_config is enabled
+	# Default --__
+
+	#option auto_mesh_id 'MyMeshID'
+
+	###########################################################################################
+	# auto_mesh_key (optional)
+	# Defaults to a sha256 key to be used on all members of this mesh when auto_config is enabled
+	# Generates a sha256 key from the value set in this option.
+
+	#option auto_mesh_key "MySecretKey"
+
+	###########################################################################################
+	# auto_mesh_network (optional)
+	# Set the network the mesh interface will bind to (eg lan, guestlan etc) when auto_config is enabled
+	# Default lan
+
+	#option auto_mesh_network 'guest'
 
 config mesh11sd 'mesh_params'
 	option mesh_fwding '1'
