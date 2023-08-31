@@ -4,7 +4,7 @@
 #
 # mesh11sd daemon
 #
-version="2.1.0beta"
+version="3.0.0beta"
 
 get_mesh_iflist () {
 	iflist=""
@@ -109,11 +109,19 @@ get_current_setup () {
 		enabled=1
 	fi
 
+	syslogmessage="option enabled [ $enabled ]"
+	debugtype="info"
+	write_to_syslog
+
 	debuglevel=$(uci get mesh11sd.setup.debuglevel 2> /dev/null)
 
 	if [ -z "$debuglevel" ]; then
 		debuglevel=1
 	fi
+
+	syslogmessage="option debuglevel [ $debuglevel ]"
+	debugtype="info"
+	write_to_syslog
 
 	checkinterval=$(uci get mesh11sd.setup.checkinterval 2> /dev/null)
 
@@ -121,17 +129,71 @@ get_current_setup () {
 		checkinterval=10
 	fi
 
+	syslogmessage="option checkinterval [ $checkinterval ]"
+	debugtype="info"
+	write_to_syslog
+
 	portal_detect=$(uci get mesh11sd.setup.portal_detect 2> /dev/null)
 
 	if [ -z "$portal_detect" ]; then
 		portal_detect=1
 	fi
 
+	syslogmessage="option portal_detect [ $portal_detect ]"
+	debugtype="info"
+	write_to_syslog
+
 	interface_timeout=$(uci get mesh11sd.setup.interface_timeout 2> /dev/null)
 
 	if [ -z "$interface_timeout" ] || [ "$interface_timeout" -lt 10 ]; then
 		interface_timeout=10
 	fi
+
+	syslogmessage="option interface_timeout [ $interface_timeout ]"
+	debugtype="info"
+	write_to_syslog
+
+	auto_config=$(uci get mesh11sd.setup.auto_config 2> /dev/null)
+
+	if [ -z "$auto_config" ] || [ "$auto_config" -lt 1 ]; then
+		auto_config=1
+	fi
+
+	syslogmessage="option auto_config [ $auto_config ]"
+	debugtype="info"
+	write_to_syslog
+
+	auto_mesh_id=$(uci get mesh11sd.setup.auto_mesh_id 2> /dev/null | awk '{printf "%s", $1}')
+
+	if [ -z "$auto_mesh_id" ]; then
+		auto_mesh_id="--__"
+	fi
+
+	syslogmessage="option auto_mesh_id [ $auto_mesh_id ]"
+	debugtype="info"
+	write_to_syslog
+
+	auto_mesh_key=$(uci get mesh11sd.setup.auto_mesh_key 2> /dev/null | awk '{printf "%s", $1}')
+
+	if [ -z "$auto_mesh_key" ]; then
+		auto_mesh_key=$(echo "$auto_mesh_id""mesh11sd" | sha256sum | awk '{printf "%s", $1}')
+	else
+		auto_mesh_key=$(echo "$auto_mesh_id""$auto_mesh_key" | sha256sum | awk '{printf "%s", $1}')
+	fi
+
+	syslogmessage="option auto_mesh_key [ $auto_mesh_key ]"
+	debugtype="info"
+	write_to_syslog
+
+	auto_mesh_network=$(uci get mesh11sd.setup.auto_mesh_network 2> /dev/null)
+
+	if [ -z "$auto_mesh_network" ]; then
+		auto_mesh_network="lan"
+	fi
+
+	syslogmessage="option auto_mesh_network [ $auto_mesh_network ]"
+	debugtype="info"
+	write_to_syslog
 
 	mesh_basename=$(uci get mesh11sd.setup.mesh_basename 2> /dev/null)
 
@@ -145,6 +207,11 @@ get_current_setup () {
 		#convert to lower case
 		mesh_basename=$(printf $mesh_basename | tr '[A-Z]' '[a-z]')
 	fi
+
+	syslogmessage="option mesh_basename [ $mesh_basename ]"
+	debugtype="info"
+	write_to_syslog
+
 }
 
 wait_for_interface () {
@@ -224,10 +291,8 @@ check_channel() {
 				ucibatch="get network.$network.device"
 				device=$(echo "$ucibatch" | uci batch)
 
-				echo "device=$device!" >> /tmp/time
+				udhcpc -R -t 10 -T 5 -A 4 -q -n -i $device &> /dev/null
 
-				#udhcpc -R -t 10 -T 5 -A 4 -q -n -i $device &> /dev/null
-				udhcpc -R -t 10 -T 5 -A 4 -q -n -i $device
 				link_to_portal=$?
 				cctimestamp=""
 				scan_channel
@@ -297,15 +362,17 @@ check_portal() {
 
 		if [ -z "$is_portal" ]; then
 			# This IS NOT a layer 3 mesh portal
+			uci set mesh11sd.mesh_params.mesh_connected_to_as='0'
 
 			if [ "$authoritative" -eq 1 ]; then
 				debugtype="debug"
 				syslogmessage="This meshnode is NOT a portal"
 				write_to_syslog
 
-				uci set mesh11sd.mesh_params.mesh_connected_to_as='0'
 				uci set dhcp.@dnsmasq[0].authoritative='0'
 				uci set dhcp.lan.ignore='1'
+				uci set dhcp.lan.ra_default='2'
+				uci set dhcp.@dnsmasq[0].quietdhcp='1'
 				/etc/init.d/dnsmasq restart
 			fi
 
@@ -313,15 +380,17 @@ check_portal() {
 
 		else
 			# This IS a layer 3 mesh portal
+			uci set mesh11sd.mesh_params.mesh_connected_to_as='1'
 
 			if [ "$authoritative" -eq 0 ]; then
 				debugtype="debug"
 				syslogmessage="This meshnode is an upstream portal"
 				write_to_syslog
 
-				uci set mesh11sd.mesh_params.mesh_connected_to_as='1'
 				uci set dhcp.@dnsmasq[0].authoritative='1'
 				uci set dhcp.lan.ignore='0'
+				uci set dhcp.lan.ra_default='2'
+				uci set dhcp.@dnsmasq[0].quietdhcp='1'
 				/etc/init.d/dnsmasq restart
 			fi
 		fi
@@ -360,23 +429,28 @@ ccpy_setup() {
 
 	if [ ! -z "$meshconfigs" ]; then
 		for meshconfig in $meshconfigs; do
-			network=$(uci get $meshconfig.network)
-			device=$(uci get network.$network.device)
+			networks=$(uci get $meshconfig.network)
 
-			if [ "$network" != "$network_previous" ]; then
+			for network in $networks; do
+				device=$(uci get network.$network.device)
 
-				for peer in $peerlist; do
-					known=$(ip neigh | grep "$peer")
+				if [ "$network" != "$network_previous" ]; then
+					connectlist="$connectlist ""$(ip -6 neigh | grep "fe80::" | grep "$device" | awk '{printf "%s%s%s,%s ", $1, "%", $3, $5}')"
+				fi
 
-					if [ -z "$known" ]; then
-						ndp_scan_peer
-					fi
-				done
+				network_previous=$network
+			done
 
-				connectlist="$connectlist ""$(ip -6 neigh | grep "fe80::" | grep "$device" | awk '{printf "%s%s%s,%s ", $1, "%", $3, $5}')"
+			# Stop after the first network - there should only be one but Luci can add more in error
+			break
+		done
+
+		for peer in $peerlist; do
+			known=$(ip neigh | grep "$peer")
+
+			if [ -z "$known" ]; then
+				ndp_scan_peer
 			fi
-
-			network_previous=$network
 		done
 	fi
 }
@@ -389,7 +463,53 @@ ndp_scan_peer() {
 	retval=$?
 
 	if [ "$retval" -gt 0 ]; then
-		echo "	$peer is not yet available"
+		echo "	$peer has joined the mesh but is not yet available for remote connection."
+	fi
+}
+
+auto_config() {
+
+	if [ "$autoconfig" -eq 0 ]; then
+		# do we have mesh supporting wpad?
+		installed_wpad=$(opkg list-installed | grep "wpad" | awk '{printf "%s", $1}' | awk -F "-" '{print $2}')
+
+		if [ "$installed_wpad" = "mesh" ] || [ "$installed_wpad" = "mbedtls" ] || [ "$installed_wpad" = "wolfssl" ] || [ "$installed_wpad" = "openssl" ]; then
+			# get list of physical interfaces
+			wiphys=$(iw list | grep -w "Wiphy" | awk -F "Wiphy " '{printf "%s ", $2}')
+
+			if [ ! -z "$wiphys" ]; then
+				for wiphy in $wiphys; do
+					mesh_capable=$(iw phy $wiphy info | grep -A 15 "Supported interface modes:" | grep -w "mesh point")
+
+					if [ -z "$mesh_capable" ]; then
+						continue
+					fi
+
+					# Prerequisites met so we can autoconfigure
+					phyindex=$(echo "$wiphy" | awk -F "phy" '{printf "%s", $2}')
+
+					echo "set wireless.m11s$phyindex=wifi-iface" | uci batch
+					echo "set wireless.m11s$phyindex.device='radio$phyindex'" | uci batch
+					echo "set wireless.m11s$phyindex.mode='mesh'" | uci batch
+					echo "set wireless.m11s$phyindex.encryption='sae'" | uci batch
+					echo "set wireless.m11s$phyindex.mesh_id='$auto_mesh_id'" | uci batch
+					echo "set wireless.m11s$phyindex.key='$auto_mesh_key'" | uci batch
+					echo "set wireless.m11s$phyindex.network='$auto_mesh_network'" | uci batch
+					echo "set wireless.m11s$phyindex.disabled='0'" | uci batch
+
+				done
+			else
+				debugtype="err"
+				syslogmessage="Unable to autoconfigure. No pysical wireless interfaces found"
+				write_to_syslog
+			fi
+		else
+			debugtype="err"
+			syslogmessage="Unable to autoconfigure. Please install package wpad-mesh-mbedtls, wpad-mesh-wolfssl, wpad-meshopenssl or an equvalent"
+			write_to_syslog
+		fi
+
+		#autoconfig=1
 	fi
 }
 
@@ -398,7 +518,7 @@ ndp_scan_peer() {
 ##############
 
 mesh11sdpid=$(pgrep -f "/bin/sh /usr/sbin/mesh11sd")
-get_current_setup
+get_current_setup 2> /dev/null
 
 if [ -z "$1" ] || [ "$1" = "-h" ] || [ $1 = "--help" ] || [ $1 = "help" ]; then
 	echo "
@@ -737,6 +857,7 @@ elif [ "$1" = "daemon" ]; then
 	statusmode=0
 	changed=0
 	firstloop=1
+	autoconfig=0
 
 	# Initial Mode Flag
 	mode=$(($startup + $statusmode + $enabled ))
@@ -747,7 +868,7 @@ elif [ "$1" = "daemon" ]; then
 
 	while true; do
 
-		get_current_setup
+		#get_current_setup
 		mode=$(($startup + $statusmode + $enabled))
 
 		syslogmessage=""
@@ -832,7 +953,26 @@ elif [ "$1" = "daemon" ]; then
 						write_to_syslog
 					fi
 
-					meshindex=$(($meshindex+1))
+
+					# set mesh mac address for this meshconfig
+					network=$(uci get $meshconfig.network | awk '{printf "%s", $1}')
+					device=$(uci get network.$network.device | awk '{printf "%s", $1}')
+					devicemac=$(ip link | grep -A 1 "$device:" | grep -w "link/ether" | awk '{printf "%s", $2}')
+					meshmac=$(ip link | grep -A 1 "$mesh_ifname:" | grep -w "link/ether" | awk '{printf "%s", $2}')
+
+					if [ -z "$devicemac" ] || [ -z "$meshmac" ] || [ "$meshmac" = "$devicemac" ]; then
+						meshindex=$(($meshindex+1))
+					else
+						changed=1
+						debugtype="notice"
+						syslogmessage="Setting mac address of mesh interface $mesh_ifname to [ $devicemac ]"
+						write_to_syslog
+
+						ucibatch="set $meshconfig.macaddr='$devicemac'"
+						echo "$ucibatch" | uci batch
+						meshindex=$(($meshindex+1))
+					fi
+
 				done
 
 				if [ "$changed" -eq 1 ] || [ "$firstloop" -eq 1 ]; then
@@ -888,12 +1028,19 @@ elif [ "$1" = "daemon" ]; then
 				debugtype="info"
 				syslogmessage="No mesh interfaces detected yet...."
 				write_to_syslog
-			fi
-		fi
 
-		if [ "$firstloop" -eq 1 ]; then
-			firstloop=0
-			restart_mesh
+				############# Autoconfig
+
+				auto_config
+
+				########################
+			fi
+		else
+
+			if [ "$firstloop" -eq 1 ]; then
+				firstloop=0
+				restart_mesh
+			fi
 		fi
 
 		if [ "$portal_detect" -eq 1 ]; then
@@ -901,15 +1048,17 @@ elif [ "$1" = "daemon" ]; then
 		else
 			# portal_detect is not enabled - force portal mode:
 			authoritative=$(uci get dhcp.@dnsmasq[0].authoritative)
+			uci set mesh11sd.mesh_params.mesh_connected_to_as='1'
 
 			if [ "$authoritative" -eq 0 ]; then
 				debugtype="notice"
 				syslogmessage="Portal detection is disabled, forcing portal mode"
 				write_to_syslog
 
-				uci set mesh11sd.mesh_params.mesh_connected_to_as='1'
 				uci set dhcp.@dnsmasq[0].authoritative='1'
 				uci set dhcp.lan.ignore='0'
+				uci set dhcp.lan.ra_default='2'
+				uci set dhcp.@dnsmasq[0].quietdhcp='1'
 				/etc/init.d/dnsmasq restart
 			fi
 		fi

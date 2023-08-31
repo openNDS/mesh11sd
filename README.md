@@ -10,9 +10,17 @@
 
 ## 2. Overview
 
+**Auto_configuration:**
+
+  From version 3 onwards, by default, Mesh11sd checks the wireless configuration for mesh options including a mesh capable version of the wpad package.
+
+  If a suitable version of wpad is installed (eg wpad-mesh-mbedtls), mesh11sd adds options to the wireless configuration to bring up 802.11s mesh interfaces, if they are not already present.
+
+**Mesh Parameters:**
+
   Mesh11sd allows all mesh parameters that are supported by the wireless driver to be set in the mesh11sd uci config file.
 
-  Settings take effect immediately without having to restart the wireless network and the default settings give rapid and reliable layer 2 mesh convergence.
+  Changes to parameter settings take effect immediately without having to restart the wireless network and the default settings give rapid and reliable layer 2 mesh convergence.
 
   The settings in the uci wireless config are acted upon at boot time or when the wireless network is restarted and are implemented *before* the mesh interface has reached an active state
 
@@ -23,7 +31,21 @@
   The mesh11sd daemon dynamically checks parameters that are set in the wireless config and sets them as required. Parameters can also be set in the mesh11sd config and these settings will override any mesh parameter settings in the wireless config.
 
 Depending on the wireless drivers/hardware, mesh parameters set in the wireless config may not only fail on startup, but may also generate errors and in the worst case may cause the wireless driver to crash.
-For this reason it is recommended that all parameter settings are moved from the wireless config and placed instead into the mesh11sd config.
+For this reason it is recommended that all parameter settings are moved from the wireless config and placed into the mesh11sd config.
+
+**Meshnode Types:**
+
+The mesh contains three types of meshnodes.
+
+  1. Peer Node - the basic mesh peer - capable of mac-routing layer 2 packets in the mesh network.
+  2. Gateway Node - a peer node that also hosts an access point (AP) radio for normal client devices to connect to.
+  3. Portal Node - a peer node that also hosts a layer 3 routed upstream connection (eg an Internet feed) 
+
+It is possible for a Portal node to also be a Gateway node (ie it hosts an AP as well as an upstream connection.
+
+**Auto Channel Tracking:**
+
+From version 3 onwards, all Peer and Gateway nodes will track the wireless channel that the Portal node is using. If the Portal node changes its working channel, this will be detected and tracked autonomously by downstream meshnodes.
 
 ## 3. Installation
 Installation is achieved in the usual way for OpenWrt, either using the Luci UI, or the opkg command line utility.
@@ -35,11 +57,11 @@ Example:
 
 
 ## 4. Configuration
-It is assumed that the mesh network interface is defined in the wireless configuration.
+If the mesh network interface is defined in the wireless configuration, this will be used. If it is not defined, Mesh11sd will add the required options dynamically.
 
 It is also assumed that the additional dependencies for encrypted mesh are also installed, ie:
 
-    Remove - wpad-basic-wolfssl (or wpad-basic or wpad-basic-mbedtls)
+    Remove - wpad-basic-mbedtls (or wpad-basic or wpad-basic-wolfssl)
 
     Install - wpad-mesh-mbedtls
          or - wpad-mbedtls
@@ -59,28 +81,82 @@ A *typical* mesh interface configuration in /etc/config/wireless would look some
 	    option network 'lan'
 	    option mesh_id 'PublicFreeMesh'
 
-**NOTE:** It is essential that all meshnodes are configured to use the same radio channel, the same key and the same mesh_id.
+**NOTE:** It is essential that all meshnodes are configured to use the same radio channel, the same key and the same mesh_id. By default, Mesh11sd will do this for you.
 
 Default configuration file (/etc/config/mesh11sd):
 
-    config mesh11sd 'setup'
-	    option enabled '1'
-	    option debuglevel '1'
-	    option checkinterval '10'
-	    option interface_timeout '10'
+```
+config mesh11sd 'setup'
+	option enabled '1'
+	option debuglevel '1'
+	option checkinterval '10'
+	option interface_timeout '10'
 
-    config mesh11sd 'mesh_params'
-	    option mesh_fwding '1'
-	    option mesh_rssi_threshold '-70'
-	    option mesh_gate_announcements '1'
-	    option mesh_hwmp_rootmode '3'
-	    option mesh_max_peer_links '8'
+	###########################################################################################
+	# mesh_basename (optional)
+	# The first 4 characters after non alphanumerics are removed are used as the mesh_basename
+	# The mesh_basename is used to construct a unique mesh interface name of the form m-xxxx-n
+	# Default: 11s
+	# Results in ifname=m-11s-0 for the first mesh interface
+	# Example: link
+	# Results in ifname=m-link-0
 
-All settings in the config file are dynamic and will take effect immediately.
+	#option mesh_basename 'link'
+
+	###########################################################################################
+	# portal_detect (optional)
+	# Detect if the meshnode is a portal, meaning it has an upstream wan link.
+	# If the upstream link is active, the router hosting the meshnode will serve ipv4 dhcp into the mesh network.
+	# If the upstream link is not connected, dhcp will be disabled and the meshnode will function as a level 2 bridge on the mesh network.
+	# If portal_detect is disabled, the meshnode will be forced into portal mode.
+	# Default 1 (enabled). Set to 0 to disable.
+
+	#option portal_detect '0'
+
+	###########################################################################################
+	# auto_config (optional)
+	# Auto configure mesh interfaces in the wireless configuration.
+	# Default 1 (enabled). Set to 0 to disable.
+
+	#option auto_config '0'
+
+	###########################################################################################
+	# auto_mesh_id (optional)
+	# Configure the mesh_id of the wireless interface(s) when auto_config is enabled
+	# Default --__
+
+	#option auto_mesh_id 'MyMeshID'
+
+	###########################################################################################
+	# auto_mesh_key (optional)
+	# Defaults to a sha256 key to be used on all members of this mesh when auto_config is enabled
+	# Generates a sha256 key from the value set in this option.
+
+	#option auto_mesh_key "secretmeshkey"
+
+	###########################################################################################
+	# auto_mesh_network (optional)
+	# Set the network the mesh interface will bind to (eg lan, guestlan etc) when auto_config is enabled
+	# Default lan
+
+	#option auto_mesh_network 'guest'
+
+config mesh11sd 'mesh_params'
+	option mesh_fwding '1'
+	option mesh_rssi_threshold '-70'
+	option mesh_gate_announcements '1'
+	option mesh_hwmp_rootmode '3'
+	option mesh_max_peer_links '8'
+
+```
+
+All mesh parameter settings in the config file are dynamic and will take effect immediately.
 
 **NOTE:** From version 2 onwards, the setup option `portal_detect` is enabled by default.
 
-This much simplifies the setup of the meshnodes of a network. Each can be configured as a basic router with a mesh interface defined as above. Once mesh11sd is installed, portal detection will be activated and with the upstream wan port connected, the meshnode will continue to function as a router with the additional functionality of a mesh portal.
+**NOTE:** If the setup option `portal_detect` is disabled, the meshnode will be forced into Portal mode. ie it will act as a layer 3 router between its wan and lan ports regardless of the availability of an upstream feed.
+
+The option portal_detect much simplifies the setup of the meshnodes of a network. Each can be configured as a basic router with a mesh interface defined as above. Once mesh11sd is installed, portal detection will be activated and with the upstream wan port connected, the meshnode will continue to function as a router with the additional functionality of a mesh portal.
 
 When the upstream wan connection is disconnected, the meshnode will automatically reconfigure itself as a layer 2 peer meshnode.
 
