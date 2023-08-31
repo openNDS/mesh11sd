@@ -152,7 +152,7 @@ config mesh11sd 'mesh_params'
 
 All mesh parameter settings in the config file are dynamic and will take effect immediately.
 
-**NOTE:** From version 2 onwards, the setup option `portal_detect` is enabled by default.
+**NOTE:** From version 3 onwards, the setup option `portal_detect` is enabled by default.
 
 **NOTE:** If the setup option `portal_detect` is disabled, the meshnode will be forced into Portal mode. ie it will act as a layer 3 router between its wan and lan ports regardless of the availability of an upstream feed.
 
