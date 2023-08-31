@@ -391,6 +391,7 @@ check_portal() {
 				uci set dhcp.lan.ignore='0'
 				uci set dhcp.lan.ra_default='2'
 				uci set dhcp.@dnsmasq[0].quietdhcp='1'
+				/etc/init.d/network restart
 				/etc/init.d/dnsmasq restart
 			fi
 		fi
@@ -496,6 +497,7 @@ auto_config() {
 					echo "set wireless.m11s$phyindex.key='$auto_mesh_key'" | uci batch
 					echo "set wireless.m11s$phyindex.network='$auto_mesh_network'" | uci batch
 					echo "set wireless.m11s$phyindex.disabled='0'" | uci batch
+					echo "set wireless.radio$phyindex.disabled='0'" | uci batch
 
 				done
 			else
