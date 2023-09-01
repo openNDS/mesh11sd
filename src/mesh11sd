@@ -350,7 +350,7 @@ check_portal() {
 	if [ "$enabled" -eq 1 ]; then
 		proto=$(uci get network.lan.proto)
 		default_gw=$(ip route | grep "default via")
-		authoritative=$(uci get dhcp.@dnsmasq[0].authoritative)
+		authoritative=$(uci get dhcp.@dnsmasq[0].authoritative 2>/dev/null | awk '{printf "%d", $1}')
 
 		if [ -z "$default_gw" ]; then
 			is_portal=""
@@ -364,7 +364,7 @@ check_portal() {
 			# This IS NOT a layer 3 mesh portal
 			uci set mesh11sd.mesh_params.mesh_connected_to_as='0'
 
-			if [ "$authoritative" -eq 1 ]; then
+			if [ "$authoritative" -eq 1 ] || [ -z "$authoritative" ]; then
 				debugtype="debug"
 				syslogmessage="This meshnode is NOT a portal"
 				write_to_syslog
@@ -382,7 +382,7 @@ check_portal() {
 			# This IS a layer 3 mesh portal
 			uci set mesh11sd.mesh_params.mesh_connected_to_as='1'
 
-			if [ "$authoritative" -eq 0 ]; then
+			if [ "$authoritative" -eq 0 ] || [ -z "$authoritative" ]; then
 				debugtype="debug"
 				syslogmessage="This meshnode is an upstream portal"
 				write_to_syslog
