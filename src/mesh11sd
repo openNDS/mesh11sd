@@ -652,16 +652,16 @@ elif [ "$1" = "status" ]; then
 				echo "      \"device\":\"$device\","
 				echo "      \"channel\":\"$channel\","
 
-				tx_packets=$(devstatus $iface | grep "tx_packets" | awk -F": " '{print $2}' | tr -d ",")
+				tx_packets=$(devstatus $iface 2>/dev/null | grep "tx_packets" | awk -F": " '{print $2}' | tr -d ",")
 				echo "      \"tx_packets\":\"$tx_packets\","
 
-				tx_bytes=$(devstatus $iface | grep "tx_bytes" | awk -F": " '{print $2}' | tr -d ",")
+				tx_bytes=$(devstatus $iface 2>/dev/null | grep "tx_bytes" | awk -F": " '{print $2}' | tr -d ",")
 				echo "      \"tx_bytes\":\"$tx_bytes\","
 
-				rx_packets=$(devstatus $iface | grep "rx_packets" | awk -F": " '{print $2}' | tr -d ",")
+				rx_packets=$(devstatus $iface 2>/dev/null | grep "rx_packets" | awk -F": " '{print $2}' | tr -d ",")
 				echo "      \"rx_packets\":\"$rx_packets\","
 
-				rx_bytes=$(devstatus $iface | grep "rx_bytes" | awk -F": " '{print $2}' | tr -d ",")
+				rx_bytes=$(devstatus $iface 2>/dev/null | grep "rx_bytes" | awk -F": " '{print $2}' | tr -d ",")
 				echo "      \"rx_bytes\":\"$rx_bytes\","
 
 				peernum=0
