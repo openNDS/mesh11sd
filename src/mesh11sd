@@ -350,7 +350,7 @@ check_portal() {
 	if [ "$enabled" -eq 1 ]; then
 		proto=$(uci get network.lan.proto)
 		default_gw=$(ip route | grep "default via")
-		authoritative=$(uci get dhcp.@dnsmasq[0].authoritative)
+		authoritative=$(uci get dhcp.@dnsmasq[0].authoritative 2>/dev/null | awk '{printf "%d", $1}')
 
 		if [ -z "$default_gw" ]; then
 			is_portal=""
@@ -364,15 +364,16 @@ check_portal() {
 			# This IS NOT a layer 3 mesh portal
 			uci set mesh11sd.mesh_params.mesh_connected_to_as='0'
 
-			if [ "$authoritative" -eq 1 ]; then
+			if [ "$authoritative" -eq 1 ] || [ -z "$authoritative" ]; then
 				debugtype="debug"
 				syslogmessage="This meshnode is NOT a portal"
 				write_to_syslog
 
 				uci set dhcp.@dnsmasq[0].authoritative='0'
 				uci set dhcp.lan.ignore='1'
-				uci set dhcp.lan.ra_default='2'
+				uci set network.lan.stp='1'
 				uci set dhcp.@dnsmasq[0].quietdhcp='1'
+				/etc/init.d/network restart
 				/etc/init.d/dnsmasq restart
 			fi
 
@@ -382,15 +383,16 @@ check_portal() {
 			# This IS a layer 3 mesh portal
 			uci set mesh11sd.mesh_params.mesh_connected_to_as='1'
 
-			if [ "$authoritative" -eq 0 ]; then
+			if [ "$authoritative" -eq 0 ] || [ -z "$authoritative" ]; then
 				debugtype="debug"
 				syslogmessage="This meshnode is an upstream portal"
 				write_to_syslog
 
 				uci set dhcp.@dnsmasq[0].authoritative='1'
 				uci set dhcp.lan.ignore='0'
-				uci set dhcp.lan.ra_default='2'
+				uci set network.lan.stp='1'
 				uci set dhcp.@dnsmasq[0].quietdhcp='1'
+				/etc/init.d/network restart
 				/etc/init.d/dnsmasq restart
 			fi
 		fi
@@ -496,6 +498,7 @@ auto_config() {
 					echo "set wireless.m11s$phyindex.key='$auto_mesh_key'" | uci batch
 					echo "set wireless.m11s$phyindex.network='$auto_mesh_network'" | uci batch
 					echo "set wireless.m11s$phyindex.disabled='0'" | uci batch
+					echo "set wireless.radio$phyindex.disabled='0'" | uci batch
 
 				done
 			else
@@ -649,16 +652,16 @@ elif [ "$1" = "status" ]; then
 				echo "      \"device\":\"$device\","
 				echo "      \"channel\":\"$channel\","
 
-				tx_packets=$(devstatus $iface | grep "tx_packets" | awk -F": " '{print $2}' | tr -d ",")
+				tx_packets=$(devstatus $iface 2>/dev/null | grep "tx_packets" | awk -F": " '{print $2}' | tr -d ",")
 				echo "      \"tx_packets\":\"$tx_packets\","
 
-				tx_bytes=$(devstatus $iface | grep "tx_bytes" | awk -F": " '{print $2}' | tr -d ",")
+				tx_bytes=$(devstatus $iface 2>/dev/null | grep "tx_bytes" | awk -F": " '{print $2}' | tr -d ",")
 				echo "      \"tx_bytes\":\"$tx_bytes\","
 
-				rx_packets=$(devstatus $iface | grep "rx_packets" | awk -F": " '{print $2}' | tr -d ",")
+				rx_packets=$(devstatus $iface 2>/dev/null | grep "rx_packets" | awk -F": " '{print $2}' | tr -d ",")
 				echo "      \"rx_packets\":\"$rx_packets\","
 
-				rx_bytes=$(devstatus $iface | grep "rx_bytes" | awk -F": " '{print $2}' | tr -d ",")
+				rx_bytes=$(devstatus $iface 2>/dev/null | grep "rx_bytes" | awk -F": " '{print $2}' | tr -d ",")
 				echo "      \"rx_bytes\":\"$rx_bytes\","
 
 				peernum=0
@@ -951,6 +954,7 @@ elif [ "$1" = "daemon" ]; then
 						debugtype="notice"
 						syslogmessage="Setting mesh interface name to [ $mesh_ifname ]"
 						write_to_syslog
+						restart_mesh
 					fi
 
 
@@ -970,6 +974,7 @@ elif [ "$1" = "daemon" ]; then
 
 						ucibatch="set $meshconfig.macaddr='$devicemac'"
 						echo "$ucibatch" | uci batch
+						restart_mesh
 						meshindex=$(($meshindex+1))
 					fi
 
@@ -1047,10 +1052,10 @@ elif [ "$1" = "daemon" ]; then
 			check_portal
 		else
 			# portal_detect is not enabled - force portal mode:
-			authoritative=$(uci get dhcp.@dnsmasq[0].authoritative)
+			authoritative=$(uci get dhcp.@dnsmasq[0].authoritative 2>/dev/null | awk '{printf "%d", $1}')
 			uci set mesh11sd.mesh_params.mesh_connected_to_as='1'
 
-			if [ "$authoritative" -eq 0 ]; then
+			if [ "$authoritative" -eq 0 ] || [ -z "$authoritative" ]; then
 				debugtype="notice"
 				syslogmessage="Portal detection is disabled, forcing portal mode"
 				write_to_syslog
@@ -1058,7 +1063,9 @@ elif [ "$1" = "daemon" ]; then
 				uci set dhcp.@dnsmasq[0].authoritative='1'
 				uci set dhcp.lan.ignore='0'
 				uci set dhcp.lan.ra_default='2'
+				uci set network.lan.stp='1'
 				uci set dhcp.@dnsmasq[0].quietdhcp='1'
+				/etc/init.d/network restart
 				/etc/init.d/dnsmasq restart
 			fi
 		fi

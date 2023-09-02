@@ -1,3 +1,18 @@
+mesh11sd (3.0.0)
+  * Update config file [bluewavenet]
+  * Update README.md [bluewavenet]
+  * Add - auto configuration [bluewavenet]
+  * Add - enable radio and restart network [bluewavenet]
+  * Fix - correctly set mesh_connected_to_as, dhcp.lan.ra_default and connectlist [bluewavenet]
+  * Add - channel tracking [bluewavenet]
+  * Add - refined udhcpc timeouts [bluewavenet]
+  * Fix - out of range error when no peers are connected [bluewavenet]
+  * Add - channel tracking for non portal meshnodes [bluewavenet]
+  * Fix - revert uncommitted changes on service stop [bluewavenet]
+  * Add - numerous code improvements [bluewavenet]
+
+ -- Rob White <dot@blue-wave.net>  Thu, 31 Aug 2023 13:37:55 +0000
+
 mesh11sd (2.0.0)
   * Add - Update config file [bluewavenet]
   * Add - implementation of remote copy [bluewavenet]
