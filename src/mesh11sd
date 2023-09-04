@@ -173,6 +173,32 @@ get_current_setup () {
 	debugtype="info"
 	write_to_syslog
 
+	auto_mesh_band=$(uci get mesh11sd.setup.auto_mesh_band 2> /dev/null | awk '{printf "%s", $1}')
+
+	if [ -z "$auto_mesh_band" ]; then
+		auto_mesh_band="2g"
+	fi
+
+	bandlist="2g 5g 6g 60g"
+	bandcheck=0
+
+	for band in $bandlist; do
+
+		if [ "$band" = "$auto_mesh_band" ]; then
+			bandcheck=1
+			break
+		fi
+
+	done
+
+	if [ "$bandcheck" = 0 ]; then
+		auto_mesh_band="2g"
+	fi
+
+	syslogmessage="option auto_mesh_band [ $auto_mesh_band ]"
+	debugtype="info"
+	write_to_syslog
+
 	auto_mesh_key=$(uci get mesh11sd.setup.auto_mesh_key 2> /dev/null | awk '{printf "%s", $1}')
 
 	if [ -z "$auto_mesh_key" ]; then
@@ -371,9 +397,8 @@ check_portal() {
 
 				uci set dhcp.@dnsmasq[0].authoritative='0'
 				uci set dhcp.lan.ignore='1'
-				uci set network.lan.stp='1'
+				uci set dhcp.lan.ra_default='2'
 				uci set dhcp.@dnsmasq[0].quietdhcp='1'
-				/etc/init.d/network restart
 				/etc/init.d/dnsmasq restart
 			fi
 
@@ -390,9 +415,8 @@ check_portal() {
 
 				uci set dhcp.@dnsmasq[0].authoritative='1'
 				uci set dhcp.lan.ignore='0'
-				uci set network.lan.stp='1'
+				uci set dhcp.lan.ra_default='2'
 				uci set dhcp.@dnsmasq[0].quietdhcp='1'
-				/etc/init.d/network restart
 				/etc/init.d/dnsmasq restart
 			fi
 		fi
@@ -472,7 +496,7 @@ ndp_scan_peer() {
 auto_config() {
 
 	if [ "$autoconfig" -eq 0 ]; then
-		# do we have mesh supporting wpad?
+		# do we have a mesh supporting wpad?
 		installed_wpad=$(opkg list-installed | grep "wpad" | awk '{printf "%s", $1}' | awk -F "-" '{print $2}')
 
 		if [ "$installed_wpad" = "mesh" ] || [ "$installed_wpad" = "mbedtls" ] || [ "$installed_wpad" = "wolfssl" ] || [ "$installed_wpad" = "openssl" ]; then
@@ -497,8 +521,14 @@ auto_config() {
 					echo "set wireless.m11s$phyindex.mesh_id='$auto_mesh_id'" | uci batch
 					echo "set wireless.m11s$phyindex.key='$auto_mesh_key'" | uci batch
 					echo "set wireless.m11s$phyindex.network='$auto_mesh_network'" | uci batch
-					echo "set wireless.m11s$phyindex.disabled='0'" | uci batch
 					echo "set wireless.radio$phyindex.disabled='0'" | uci batch
+					band=$(uci get wireless.radio$phyindex.band | awk '{printf "%s", $1}')
+
+					if [ "$band" = "$auto_mesh_band" ]; then
+						echo "set wireless.m11s$phyindex.disabled='0'" | uci batch
+					else
+						echo "set wireless.m11s$phyindex.disabled='1'" | uci batch
+					fi
 
 				done
 			else
@@ -665,9 +695,9 @@ elif [ "$1" = "status" ]; then
 				echo "      \"rx_bytes\":\"$rx_bytes\","
 
 				peernum=0
-				peers=$(iw dev $iface mpath dump | grep -c -w $iface)
-				macrouting=$(iw dev $iface mpath dump | awk -F" " 'NR>1 {printf "%s/%s ",$1,$2}')
-				peer_macs=$(iw dev m-11s-0 mpath dump | awk -F" " 'NR>1 {printf "%s ",$1}')
+				peers=$(iw dev $iface mpath dump 2>/dev/null | grep -c -w $iface)
+				macrouting=$(iw dev $iface mpath dump 2>/dev/null | awk -F" " 'NR>1 {printf "%s/%s ",$1,$2}')
+				peer_macs=$(iw dev m-11s-0 mpath dump 2>/dev/null | awk -F" " 'NR>1 {printf "%s ",$1}')
 
 				echo "      \"active_peers\":\"$peers\","
 				echo "      \"peers\":{"
@@ -861,6 +891,7 @@ elif [ "$1" = "daemon" ]; then
 	changed=0
 	firstloop=1
 	autoconfig=0
+	uci delete dhcp.@dnsmasq[0].authoritative 2>/dev/null
 
 	# Initial Mode Flag
 	mode=$(($startup + $statusmode + $enabled ))
@@ -964,6 +995,12 @@ elif [ "$1" = "daemon" ]; then
 					devicemac=$(ip link | grep -A 1 "$device:" | grep -w "link/ether" | awk '{printf "%s", $2}')
 					meshmac=$(ip link | grep -A 1 "$mesh_ifname:" | grep -w "link/ether" | awk '{printf "%s", $2}')
 
+					stpstatus=$(brctl show $device | grep "yes" | awk '{printf "%s", $3}')
+
+					if [ -z "$stpstatus" ] || [ "$stpstatus" != "yes" ]; then
+						brctl stp "$device" yes
+					fi
+
 					if [ -z "$devicemac" ] || [ -z "$meshmac" ] || [ "$meshmac" = "$devicemac" ]; then
 						meshindex=$(($meshindex+1))
 					else
@@ -1063,14 +1100,13 @@ elif [ "$1" = "daemon" ]; then
 				uci set dhcp.@dnsmasq[0].authoritative='1'
 				uci set dhcp.lan.ignore='0'
 				uci set dhcp.lan.ra_default='2'
-				uci set network.lan.stp='1'
 				uci set dhcp.@dnsmasq[0].quietdhcp='1'
-				/etc/init.d/network restart
 				/etc/init.d/dnsmasq restart
 			fi
 		fi
 
 		check_gate
+
 		sleep $checkinterval
 	done
 
