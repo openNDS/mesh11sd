@@ -542,6 +542,7 @@ auto_config() {
 			write_to_syslog
 		fi
 
+		# TODO If we want to call auto_config from cli then we can stop it happening more than once by uncommenting the following:
 		#autoconfig=1
 	fi
 }
