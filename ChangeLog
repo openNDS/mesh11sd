@@ -1,4 +1,7 @@
 mesh11sd (3.0.0)
+  * Fix - mute error output if devsatatus fails [bluewavenet]
+  * Fix - remove unsupported ra_default option [bluewavenet]
+  * Fix - if dnsmasq option authoritive is not set, deal with it. [bluewavenet]
   * Update config file [bluewavenet]
   * Update README.md [bluewavenet]
   * Add - auto configuration [bluewavenet]
