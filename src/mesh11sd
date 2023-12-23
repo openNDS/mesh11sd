@@ -50,7 +50,7 @@ get_params () {
 
 		for param in $param_list; do
 			paramval=$(iw dev $iface get mesh_param $param 2> /dev/null)
-			if [ "$?" = 0 ]; then
+			if [ "$?" -eq 0 ]; then
 				paramline="$param = $paramval"
 				echo "$paramline" >> $buffer
 			fi
@@ -175,7 +175,7 @@ get_current_setup () {
 	#####
 	auto_config=$(uci get mesh11sd.setup.auto_config 2> /dev/null)
 
-	if [ -z "$auto_config" ] || [ "$auto_config" -lt 1 ]; then
+	if [ -z "$auto_config" ] || [ "$auto_config" -gt 0 ]; then
 		auto_config=1
 	fi
 
@@ -190,7 +190,7 @@ get_current_setup () {
 		auto_mesh_id="--__"
 	fi
 
-	auto_mesh_id=$(printf "mysecretmeshid" | sha256sum | awk '{printf $1}' | tail -c55 | head -c30)
+	auto_mesh_id=$(printf "$auto_mesh_id" | sha256sum | awk '{printf $1}' | tail -c55 | head -c30)
 
 	syslogmessage="auto_mesh_id hash [ $auto_mesh_id ]"
 	debugtype="info"
@@ -541,6 +541,7 @@ wait_for_mesh() {
 }
 
 ccpy_setup() {
+	ndp_scan_peer
 	get_mesh_iflist
 
 	for iface in $iflist; do
@@ -570,35 +571,23 @@ ccpy_setup() {
 				device=$(uci get network.$network.device)
 
 				if [ "$network" != "$network_previous" ]; then
-					connectlist="$connectlist ""$(ip -6 neigh | grep "fe80::" | grep "$device" | awk '{printf "%s%s%s,%s ", $1, "%", $3, $5}')"
+					connectlist="$connectlist ""$(ip -6 neigh | grep "fe80::" | grep "$device" | grep "lladdr" | grep "router"| awk '{printf "%s%s%s,%s ", $1, "%", $3, $5}')"
 				fi
 
 				network_previous=$network
 			done
 
-			# Stop after the first network - there should only be one but Luci can add more in error
+			# Stop after the first mesh network - there should only be one but more might have been added in error
 			break
-		done
-
-		for peer in $peerlist; do
-			known=$(ip neigh | grep "$peer")
-
-			if [ -z "$known" ]; then
-				ndp_scan_peer
-			fi
 		done
 	fi
 }
 
 ndp_scan_peer() {
-	# scan for peer
-	peerlinklocal=$(echo $peer | awk -F":" '{printf "fe80::%s%s:%sff:fe%s:%s%s", $1, $2, $3, $4, $5, $6}')
-
-	pingresult=$(ping -q -W 1 -c 1 -I $device $peerlinklocal &>/dev/null)
-	retval=$?
-
-	if [ "$retval" -gt 0 ]; then
-		echo "	$peer has joined the mesh but is not yet available for remote connection."
+	# NDP - Send linklocal multicast
+	if [ -e "/tmp/devicemac" ]; then
+		. /tmp/devicemac
+		response=$(ping -q -c 2 -I "$device" "ff02::1" &>/dev/null)
 	fi
 }
 
@@ -779,7 +768,7 @@ if [ -z "$1" ] || [ "$1" = "-h" ] || [ $1 = "--help" ] || [ $1 = "help" ]; then
     If the remote meshnode mac address is omitted, a list of meshnode mac addresses available for connection is listed
 
   Option: copy
-  Copy a file to a remote meshnode
+  Copy a file to /tmp on a remote meshnode
   Usage: mesh11sd copy [remote_meshnode_macaddress] [path_of_source_file]
     If the remote meshnode mac address is null, or both arguments are omitted, a list of meshnode mac addresses available for copy is listed
 
@@ -921,12 +910,13 @@ elif [ "$1" = "status" ]; then
 				echo "      }"
 
 				stanum=0
+				realstanum=0
 				stations=0
 				starouting=$(iw dev $iface mpp dump | awk -F" " 'NR>1 {printf "%s/%s ",$1,$2}')
 				stas=$(iw dev $iface mpp dump | awk -F" " 'NR>1 {printf "%s ",$1}')
 
 				for sta in $stas; do
-
+					sta=$(printf "%s" "$sta" | awk -F ":" '{printf "%s:%s:%s:%s:%s", $2, $3, $4, $5, $6}')
 					inpeermacs=$(echo "$peer_macs" | grep "$sta")
 
 					if [ "$inpeermacs" = "$peer_macs" ]; then
@@ -952,6 +942,14 @@ elif [ "$1" = "status" ]; then
 					proxy_node=$(echo "$sta" | awk -F"/" '{printf "%s", $2}')
 					proxy_node="${staroute##*/}"
 
+					stamacid=$(printf "%s" "$stamac" | awk -F ":" '{printf "%s%s%s%s%s", $2, $3, $4, $5, $6}')
+					proxy_nodeid=$(printf "%s" "$proxy_node" | awk -F ":" '{printf "%s%s%s%s%s", $2, $3, $4, $5, $6}')
+
+					if [ "$stamacid" = "$proxy_nodeid" ]; then
+						continue
+					fi
+
+					realstanum=$((realstanum+1))
 					echo "        \"$stamac\":{"
 					echo "          \"proxy_node\":\"$proxy_node\""
 
@@ -980,14 +978,16 @@ elif [ "$1" = "connect" ]; then
 		exit 1
 	fi
 
-	nodeaddr=$2
+	nodeaddr=$(printf "%s" "$2" | tr "-" ":" | tr "[A-Z]" "[a-z]")
 
+	echo "========================================================="
 	ccpy_setup
 
 	if [ -z "$nodeaddr" ]; then
-		echo "========================================================="
-		echo "The following meshnodes are available for remote connection:"
+		echo " Connect a remote terminal session on a remote meshnode"
+		echo "    Usage: mesh11sd connect [remote_meshnode_macaddress]"
 		echo
+		echo " The following meshnodes are available for remote connection:"
 	fi
 
 	if [ ! -z "$peerlist" ]; then
@@ -995,29 +995,19 @@ elif [ "$1" = "connect" ]; then
 		for connectto in $connectlist; do
 			linklocal="${connectto%,*}"
 			ndpmac="${connectto##*,}"
+			ndpmacf=$(printf "%s" "$ndpmac" | tr ":" "-")
 
-			for peer in $peerlist; do
+			if [ -z "$nodeaddr" ]; then
+				echo "	$ndpmacf"
+			elif [ ! -z "$nodeaddr" ]; then
 
-				if [ "$peer" = "$ndpmac" ]; then
-					meshnodemac="$peer"
-					found=1
-					break
-				else
-					found=0
-				fi
-			done
-
-			if [ -z "$nodeaddr" ] && [ "$found" -eq 1 ]; then
-				echo "	$meshnodemac"
-			elif [ ! -z "$nodeaddr" ] && [ "$found" -eq 1 ]; then
-
-				if [ "$nodeaddr" = "$meshnodemac" ]; then
+				if [ "$nodeaddr" = "$ndpmac" ]; then
 					echo
-					echo "Trying to connect to meshnode \"$meshnodemac\"....."
+					echo "Trying to connect to meshnode \"$ndpmacf\"....."
 					echo
 					ssh "root@$linklocal"
 					echo
-					echo "Disconnected from meshnode \"$meshnodemac\""
+					echo "Disconnected from meshnode \"$ndpmacf\""
 					echo
 					break
 				fi
@@ -1038,49 +1028,39 @@ elif [ "$1" = "copy" ]; then
 		echo "================================================================"
 		exit 1
 	fi
-	nodeaddr=$2
+	nodeaddr=$(printf "%s" "$2" | tr "-" ":" | tr "[A-Z]" "[a-z]")
 	filepath=$3
 	filename=$(echo "$filepath" | awk -F "/" '{printf $NF}')
-
+	echo "========================================================="
 	ccpy_setup
 
 	if [ -z "$nodeaddr" ]; then
-		echo "========================================================="
-		echo "The following meshnodes are available for remote copy:"
+		echo " Copy a file to /tmp on a remote meshnode"
+		echo "    Usage: mesh11sd copy [remote_meshnode_macaddress] [path_of_source_file]"
 		echo
+		echo " The following meshnodes are available for remote copy:"
+
 	fi
 
 	if [ ! -z "$peerlist" ]; then
 		for connectto in $connectlist; do
 			linklocal="${connectto%,*}"
 			ndpmac="${connectto##*,}"
+			ndpmacf=$(printf "%s" "$ndpmac" | tr ":" "-")
 
-			for peer in $peerlist; do
-				if [ "$peer" = "$ndpmac" ]; then
-					meshnodemac="$peer"
-					found=1
+			if [ -z "$nodeaddr" ]; then
+				echo "	$ndpmacf"
+			elif [ "$nodeaddr" = "$ndpmac" ]; then
+
+				if [ ! -z "$filepath" ]; then
+					echo
+					echo "Trying to copy to meshnode \"$ndpmacf\"....."
+					echo
+					scp "$filepath" "root@[$linklocal]:/tmp/$filename"
+					echo
+					echo "Disconnected from meshnode \"$ndpmacf\""
+					echo
 					break
-				else
-					found=0
-				fi
-			done
-
-			if [ -z "$nodeaddr" ] && [ "$found" -eq 1 ]; then
-				echo "	$meshnodemac"
-			elif [ ! -z "$nodeaddr" ] && [ "$found" -eq 1 ]; then
-
-				if [ "$nodeaddr" = "$meshnodemac" ]; then
-
-					if [ ! -z "$filepath" ]; then
-						echo
-						echo "Trying to copy to meshnode \"$meshnodemac\"....."
-						echo
-						scp "$filepath" "root@[$linklocal]:/tmp/$filename"
-						echo
-						echo "Disconnected from meshnode \"$meshnodemac\""
-						echo
-						break
-					fi
 				fi
 			fi
 		done
@@ -1191,9 +1171,21 @@ elif [ "$1" = "daemon" ]; then
 				if [ "$auto_config" -eq 1 ]; then
 					auto_config
 				else
-				debugtype="err"
-				syslogmessage="auto_config is disabled. Please configure a mesh interface or enable auto_config...."
-				write_to_syslog
+					debugtype="err"
+					syslogmessage="auto_config is disabled. Please configure a mesh interface or enable auto_config...."
+					write_to_syslog
+					sleep $checkinterval
+
+					auto_config=$(uci get mesh11sd.setup.auto_config 2> /dev/null)
+
+					if [ -z "$auto_config" ] || [ "$auto_config" -gt 0 ]; then
+						auto_config=1
+					fi
+
+					syslogmessage="option auto_config [ $auto_config ]"
+					debugtype="info"
+					write_to_syslog
+
 				fi
 
 				########################
