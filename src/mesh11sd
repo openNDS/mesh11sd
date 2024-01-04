@@ -243,6 +243,18 @@ get_current_setup () {
 		auto_mesh_network="lan"
 	fi
 
+	zone_status=$(uci show firewall | grep -w "name='$auto_mesh_network'" &>/dev/null ; echo $?)
+
+	if [ "$zone_status" -eq 1 ]; then
+		syslogmessage="network zone [ $auto_mesh_network ] does not exist"
+		debugtype="warn"
+		write_to_syslog
+		auto_mesh_network="lan"
+	else
+		syslogmessage="option auto_mesh_network [ $auto_mesh_network ]"
+		debugtype="info"
+		write_to_syslog
+	fi
 	syslogmessage="option auto_mesh_network [ $auto_mesh_network ]"
 	debugtype="info"
 	write_to_syslog
@@ -498,6 +510,21 @@ check_portal() {
 
 }
 
+wait_for_nodes() {
+	local tics=4
+
+	echo " If the node you are looking for is not in the list - re-run this command."
+	echo
+	echo -n " Waiting for node list to build "
+
+	for tic in $(seq $tics); do
+		echo -n "* "
+		sleep 1
+	done
+
+	echo
+}
+
 wait_for_mesh() {
 	get_mesh_iflist
 
@@ -730,6 +757,48 @@ auto_config() {
 		# TODO If we want to call auto_config from cli then we can stop it happening more than once by uncommenting the following:
 		#autoconfig=1
 	fi
+}
+
+urlencode() {
+	entitylist="
+		s/%/%25/g
+		s/\s/%20/g
+		s/\"/%22/g
+		s/:/%3A/g
+		s/>/%3E/g
+		s/</%3C/g
+		s/'/%27/g
+		s/\`/%60/g
+	"
+	local buffer="$1"
+
+	for entity in $entitylist; do
+		urlencoded=$(echo "$buffer" | sed "$entity")
+		buffer=$urlencoded
+	done
+
+	urlencoded=$(echo "$buffer" | awk '{ gsub(/\$/, "\\%24"); print }')
+}
+
+urldecode() {
+	entitylist="
+		s/%22/\"/g
+		s/%3A/:/g
+		s/%3E/>/g
+		s/%3C/</g
+		s/%27/'/g
+		s/%60/\`/g
+		s/%25/%/g
+	"
+	local buffer="$1"
+
+	for entity in $entitylist; do
+		urldecoded=$(echo "$buffer" | sed "$entity")
+		buffer=$urldecoded
+	done
+
+	buffer=$(echo "$buffer" | awk '{ gsub(/%24/, "$"); print }')
+	urldecoded=$(echo "$buffer" | awk '{ gsub(/%20/, " "); print }')
 }
 
 ##############
@@ -987,6 +1056,8 @@ elif [ "$1" = "connect" ]; then
 		echo " Connect a remote terminal session on a remote meshnode"
 		echo "    Usage: mesh11sd connect [remote_meshnode_macaddress]"
 		echo
+		wait_for_nodes
+		echo
 		echo " The following meshnodes are available for remote connection:"
 	fi
 
@@ -996,9 +1067,10 @@ elif [ "$1" = "connect" ]; then
 			linklocal="${connectto%,*}"
 			ndpmac="${connectto##*,}"
 			ndpmacf=$(printf "%s" "$ndpmac" | tr ":" "-")
+			ip6addr=$(echo "$linklocal" | awk -F "%" '{printf "%s", $1}')
 
 			if [ -z "$nodeaddr" ]; then
-				echo "	$ndpmacf"
+				echo "	$ndpmacf	[ ip address: $ip6addr ]"
 			elif [ ! -z "$nodeaddr" ]; then
 
 				if [ "$nodeaddr" = "$ndpmac" ]; then
@@ -1037,6 +1109,8 @@ elif [ "$1" = "copy" ]; then
 	if [ -z "$nodeaddr" ]; then
 		echo " Copy a file to /tmp on a remote meshnode"
 		echo "    Usage: mesh11sd copy [remote_meshnode_macaddress] [path_of_source_file]"
+		echo
+		wait_for_nodes
 		echo
 		echo " The following meshnodes are available for remote copy:"
 
