@@ -347,6 +347,11 @@ wait_for_interface () {
 # $syslogmessage contains the string to log
 # $debugtype contains the debug level string: debug, info, warn, notice, err, emerg.
 write_to_syslog() {
+	debuglevel=$(uci get mesh11sd.setup.debuglevel 2> /dev/null)
+
+	if [ -z "$debuglevel" ]; then
+		debuglevel=1
+	fi
 
 	if [ ! -z "$syslogmessage" ]; then
 
