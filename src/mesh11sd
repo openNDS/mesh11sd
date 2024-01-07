@@ -504,7 +504,6 @@ check_portal() {
 				uci set dhcp.lan.ra_default='2'
 				uci set dhcp.@dnsmasq[0].quietdhcp='1'
 				/sbin/service dnsmasq restart
-				/sbin/service network restart
 			fi
 
 			check_channel
@@ -523,7 +522,6 @@ check_portal() {
 				uci set dhcp.lan.ra_default='2'
 				uci set dhcp.@dnsmasq[0].quietdhcp='1'
 				/sbin/service dnsmasq restart
-				/sbin/service network restart
 			fi
 		fi
 	fi
