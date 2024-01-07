@@ -907,6 +907,11 @@ elif [ "$1" = "disable" ]; then
 elif [ "$1" = "status" ]; then
 	# get list of interfaces
 	get_mesh_iflist
+
+	if [ -e "/tmp/devicemac" ]; then
+		. /tmp/devicemac
+	fi
+
 	procd_status=$(/etc/init.d/mesh11sd status)
 
 	echo "{"
@@ -922,6 +927,7 @@ elif [ "$1" = "status" ]; then
 	echo "    \"auto_mesh_band\":\"$auto_mesh_band\","
 	echo "    \"auto_mesh_id\":\"$auto_mesh_id\","
 	echo "    \"mesh_gate_enable\":\"$mesh_gate_enable\","
+	echo "    \"mesh_path_cost\":\"$mesh_path_cost\","
 	echo "    \"checkinterval\":\"$checkinterval\","
 	echo "    \"interface_timeout\":\"$interface_timeout\","
 	echo "    \"debuglevel\":\"$debuglevel\""
@@ -977,6 +983,7 @@ elif [ "$1" = "status" ]; then
 				macrouting=$(iw dev $iface mpath dump 2>/dev/null | awk -F" " 'NR>1 {printf "%s/%s ",$1,$2}')
 				peer_macs=$(iw dev m-11s-0 mpath dump 2>/dev/null | awk -F" " 'NR>1 {printf "%s ",$1}')
 
+				echo "      \"this_node\":\"$devicemac\","
 				echo "      \"active_peers\":\"$peers\","
 				echo "      \"peers\":{"
 
@@ -995,11 +1002,23 @@ elif [ "$1" = "status" ]; then
 				done
 				echo "      }"
 
+				ap_ifaces=$(iw dev | grep -B 7 "type AP"| grep "Interface" | awk '{printf "%s ", $2}')
+
+				for ap_iface in $ap_ifaces; do
+					ap_sta=$(iw dev $ap_iface station dump | grep "Station" | awk  '{printf "%s ", $2}')
+					ap_stas="$ap_stas""$ap_sta"
+				done
+
+				for ap_sta in $ap_stas; do
+					starouting="$starouting""$ap_sta/$devicemac "
+				done
+
 				stanum=0
 				realstanum=0
 				stations=0
-				starouting=$(iw dev $iface mpp dump | awk -F" " 'NR>1 {printf "%s/%s ",$1,$2}')
+				starouting="$starouting"$(iw dev $iface mpp dump | awk -F" " 'NR>1 {printf "%s/%s ",$1,$2}')
 				stas=$(iw dev $iface mpp dump | awk -F" " 'NR>1 {printf "%s ",$1}')
+				stas="$ap_stas""$stas"
 
 				for sta in $stas; do
 					sta=$(printf "%s" "$sta" | awk -F ":" '{printf "%s:%s:%s:%s:%s", $2, $3, $4, $5, $6}')
