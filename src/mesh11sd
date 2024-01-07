@@ -160,6 +160,16 @@ get_current_setup () {
 	debugtype="info"
 	write_to_syslog
 
+	#####
+	mesh_path_cost=$(uci get mesh11sd.setup.mesh_path_cost 2> /dev/null)
+
+	if [ -z "$mesh_path_cost" ]; then
+		mesh_path_cost="5"
+	fi
+
+	syslogmessage="option mesh_path_cost [ $mesh_path_cost ]"
+	debugtype="info"
+	write_to_syslog
 
 	#####
 	interface_timeout=$(uci get mesh11sd.setup.interface_timeout 2> /dev/null)
@@ -240,6 +250,12 @@ get_current_setup () {
 	auto_mesh_network=$(uci get mesh11sd.setup.auto_mesh_network 2> /dev/null)
 
 	if [ -z "$auto_mesh_network" ]; then
+		auto_mesh_network="lan"
+	fi
+
+	# Block wan and wan6 as valid network zones for mesh
+
+	if [ "$auto_mesh_network" = "wan" ] || [ "$auto_mesh_network" = "wan6" ]; then
 		auto_mesh_network="lan"
 	fi
 
@@ -643,6 +659,7 @@ auto_config() {
 		if [ "$installed_wpad" = "mesh" ] || [ "$installed_wpad" = "mbedtls" ] || [ "$installed_wpad" = "wolfssl" ] || [ "$installed_wpad" = "openssl" ]; then
 
 			refresh_bridgemac
+			. /tmp/devicemac
 			get_wiphys
 
 			if [ ! -z "$wiphys" ]; then
@@ -1335,6 +1352,13 @@ elif [ "$1" = "daemon" ]; then
 			# get a list of interfaces
 			get_mesh_iflist
 
+			# Make sure STP is on
+			stpstatus=$(brctl show $device | grep "yes" | awk '{printf "%s", $3}')
+
+			if [ -z "$stpstatus" ] || [ "$stpstatus" != "yes" ]; then
+				brctl stp "$device" yes
+			fi
+
 			for iface in $iflist; do
 				wait_for_interface "$iface"
 
@@ -1364,6 +1388,9 @@ elif [ "$1" = "daemon" ]; then
 						continue
 					fi
 				fi
+
+				# Set stp path cost
+				brctl setpathcost "$device" "$iface" "$mesh_path_cost"
 
 				#Do NOT configure parameters found in wireless config
 				# so change the value of uciname before calling check_mesh_params.
