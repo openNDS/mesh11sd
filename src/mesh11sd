@@ -245,7 +245,7 @@ get_current_setup () {
 	auto_mesh_key=$(uci get mesh11sd.setup.auto_mesh_key 2> /dev/null | awk '{printf "%s", $1}')
 
 	if [ -z "$auto_mesh_key" ]; then
-		auto_mesh_key=$(echo "$auto_mesh_id""mesh11sd" | sha256sum | awk '{printf "%s", $1}')
+		auto_mesh_key=$(echo "$auto_mesh_id""91b39a9b41e918e9bce1c8d5d7d3e071d6f1f8855a7c0214f687550177c5d5b8" | sha256sum | awk '{printf "%s", $1}')
 	else
 		auto_mesh_key=$(echo "$auto_mesh_id""$auto_mesh_key" | sha256sum | awk '{printf "%s", $1}')
 	fi
