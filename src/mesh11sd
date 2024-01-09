@@ -169,15 +169,7 @@ get_current_setup () {
 	write_to_syslog
 
 	#####
-	mesh_path_cost=$(uci get mesh11sd.setup.mesh_path_cost 2> /dev/null)
-
-	if [ -z "$mesh_path_cost" ]; then
-		mesh_path_cost="5"
-	fi
-
-	syslogmessage="option mesh_path_cost [ $mesh_path_cost ]"
-	debugtype="info"
-	write_to_syslog
+	get_mesh_path_cost
 
 	#####
 	interface_timeout=$(uci get mesh11sd.setup.interface_timeout 2> /dev/null)
@@ -324,6 +316,18 @@ get_current_setup () {
 	write_to_syslog
 }
 
+get_mesh_path_cost () {
+	mesh_path_cost=$(uci get mesh11sd.setup.mesh_path_cost 2> /dev/null)
+
+	if [ -z "$mesh_path_cost" ]; then
+		mesh_path_cost="1"
+	fi
+
+	syslogmessage="option mesh_path_cost [ $mesh_path_cost ]"
+	debugtype="info"
+	write_to_syslog
+}
+
 wait_for_interface () {
 	local ifname="$1"
 	local timeout=$interface_timeout
@@ -347,27 +351,32 @@ wait_for_interface () {
 # $syslogmessage contains the string to log
 # $debugtype contains the debug level string: debug, info, warn, notice, err, emerg.
 write_to_syslog() {
-	debuglevel=$(uci get mesh11sd.setup.debuglevel 2> /dev/null)
 
-	if [ -z "$debuglevel" ]; then
-		debuglevel=1
-	fi
+	if [ "$mute" = 0 ]; then
+		debuglevel=$(uci get mesh11sd.setup.debuglevel 2> /dev/null)
 
-	if [ ! -z "$syslogmessage" ]; then
-
-		case $debugtype in
-			"emerg") debugnum=0;;
-			"err") debugnum=0;;
-			"notice") debugnum=1;;
-			"warn") debugnum=1;;
-			"info") debugnum=2;;
-			"debug") debugnum=3;;
-			*) debugnum=1; debugtype="notice";;
-		esac
-
-		if [ "$debuglevel" -ge "$debugnum" ]; then
-			echo "$syslogmessage" | logger -p "daemon.$debugtype" -s -t "mesh11sd[$mesh11sdpid]"
+		if [ -z "$debuglevel" ]; then
+			debuglevel=1
 		fi
+
+		if [ ! -z "$syslogmessage" ]; then
+
+			case $debugtype in
+				"emerg") debugnum=0;;
+				"err") debugnum=0;;
+				"notice") debugnum=1;;
+				"warn") debugnum=1;;
+				"info") debugnum=2;;
+				"debug") debugnum=3;;
+				*) debugnum=1; debugtype="notice";;
+			esac
+
+			if [ "$debuglevel" -ge "$debugnum" ]; then
+				echo "$syslogmessage" | logger -p "daemon.$debugtype" -s -t "mesh11sd[$mesh11sdpid]"
+			fi
+		fi
+	else
+		mute=0
 	fi
 }
 
@@ -1211,6 +1220,7 @@ elif [ "$1" = "daemon" ]; then
 	firstloop=1
 	autoconfig=0
 	macfixup=0
+	mute=0
 	uci delete dhcp.@dnsmasq[0].authoritative 2>/dev/null
 
 	# Initial Mode Flag
@@ -1420,7 +1430,22 @@ elif [ "$1" = "daemon" ]; then
 				fi
 
 				# Set stp path cost
+				mute=1
+				get_mesh_path_cost
 				brctl setpathcost "$device" "$iface" "$mesh_path_cost"
+
+				br_ifaces=$(brctl showstp "$device" | grep -B 1 -w "port id" | grep "(" | awk '{printf "%s ", $1}')
+
+				for br_iface in $br_ifaces; do
+
+					if [ "$br_iface" = "$iface" ]; then
+						continue
+					fi
+
+					other_path_cost=$(( 65535 - $mesh_path_cost))
+					brctl setpathcost "$device" "$br_iface" "$other_path_cost"
+
+				done
 
 				#Do NOT configure parameters found in wireless config
 				# so change the value of uciname before calling check_mesh_params.
@@ -1430,13 +1455,6 @@ elif [ "$1" = "daemon" ]; then
 				check_mesh_params
 				check_mesh_phantom
 			done
-
-			# Make sure STP is on
-			stpstatus=$(brctl show $device | grep "yes" | awk '{printf "%s", $3}')
-
-			if [ -z "$stpstatus" ] || [ "$stpstatus" != "yes" ]; then
-				brctl stp "$device" yes
-			fi
 
 			if [ "$portal_detect" -eq 1 ]; then
 				check_portal
