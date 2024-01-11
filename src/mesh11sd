@@ -740,8 +740,8 @@ auto_config() {
 								chan=$((0x$(printf "$devicemac" | sha256sum | awk '{printf $1}' | tail -c$i | head -c1)))
 
 								#Check for max
-								if [ "$chan" -gt 12 ]; then
-									chan=1
+								if [ "$chan" -gt 11 ]; then
+									chan=11
 									continue
 								fi
 
@@ -761,7 +761,7 @@ auto_config() {
 
 							#Check for max
 							if [ "$chan" -gt 11 ]; then
-								chan=1
+								chan=11
 								continue
 							fi
 
