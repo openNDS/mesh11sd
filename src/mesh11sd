@@ -210,7 +210,7 @@ get_current_setup () {
 	auto_mesh_band=$(uci get mesh11sd.setup.auto_mesh_band 2> /dev/null | awk '{printf "%s", $1}')
 
 	if [ -z "$auto_mesh_band" ]; then
-		auto_mesh_band="2g"
+		auto_mesh_band="2g40"
 	fi
 
 	bandlist="2g 5g 6g 60g"
@@ -665,6 +665,7 @@ get_wiphys() {
 refresh_bridgemac() {
 	# get the device device mac and write it to /tmp/devicemac
 	device=$(uci get network.$auto_mesh_network.device)
+	wait_for_interface "$device"
 	devicemac=$(ip link | grep -A 1 "$device:" | grep -w "link/ether" | awk '{printf "%s", $2}')
 	echo "device=\"$device\" ; devicemac=\"$devicemac\"" > /tmp/devicemac
 }
@@ -712,16 +713,22 @@ auto_config() {
 
 					band=$(uci get wireless.radio$phyindex.band | awk '{printf "%s", $1}')
 
-					if [ "$band" = "$auto_mesh_band" ]; then
+					if [ "$auto_mesh_band" = "2g40" ]; then
+						mesh_band="2g"
+					else
+						mesh_band=$auto_mesh_band
+					fi
+
+					if [ "$band" = "$mesh_band" ]; then
 						echo "set wireless.m11s$phyindex.disabled='0'" | uci batch
 					else
 						echo "set wireless.m11s$phyindex.disabled='1'" | uci batch
 					fi
 
-					if [ "$band" = "2g" ] || [ "$band" = "2g40" ]; then
+					if [ "$mesh_band" = "2g" ] || [ "$mesh_band" = "2g40" ]; then
 						get_portal_state
 
-						if [ "$band" = "2g40" ]; then
+						if [ "$auto_mesh_band" = "2g40" ]; then
 							echo "set wireless.radio$phyindex.noscan='1'" | uci batch
 							echo "set wireless.radio$phyindex.htmode='HT40'" | uci batch
 						fi
@@ -770,7 +777,7 @@ auto_config() {
 				done
 
 				#Add suffix to ssid
-				if [ "$ssid_suffix_enable" -eq 1 ] && [ "$portal_detect" -eq 1 ]; then
+				if [ "$ssid_suffix_enable" -eq 1 ]; then
 					aplist=$(uci show wireless 2> /dev/null | grep "='ap'" | awk -F "." '{printf "%s.%s ", $1, $2}')
 					suffix=$(echo $devicemac | awk -F":" '{printf "%s%s", $5, $6}')
 
@@ -1354,6 +1361,9 @@ elif [ "$1" = "daemon" ]; then
 				refresh_bridgemac
 				. /tmp/devicemac
 				get_wiphys
+
+				#### Disable macfixup:
+				# macfixup=1
 
 				if [ "$macfixup" -eq 0 ]; then
 					for wiphy in $wiphys; do
