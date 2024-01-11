@@ -741,13 +741,11 @@ auto_config() {
 
 								#Check for max
 								if [ "$chan" -gt 11 ]; then
-									chan=11
 									continue
 								fi
 
 								#Check for min
 								if [ "$chan" -le 0 ]; then
-									chan=1
 									continue
 								fi
 
@@ -762,13 +760,11 @@ auto_config() {
 							#Check for max
 							if [ "$chan" -gt 11 ]; then
 								chan=11
-								continue
 							fi
 
 							#Check for min
 							if [ "$chan" -le 0 ]; then
 								chan=1
-								continue
 							fi
 
 							echo "set wireless.radio$phyindex.channel='$chan'" | uci batch
