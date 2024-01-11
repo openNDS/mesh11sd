@@ -794,6 +794,9 @@ auto_config() {
 				syslogmessage="auto config complete...."
 				write_to_syslog
 
+				# set changed flag to signify a mesh restart is needed
+				changed=1
+
 			else
 				debugtype="err"
 				syslogmessage="Unable to autoconfigure. No physical wireless interfaces found"
