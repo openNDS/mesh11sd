@@ -226,7 +226,7 @@ get_current_setup () {
 	done
 
 	if [ "$bandcheck" = 0 ]; then
-		auto_mesh_band="2g"
+		auto_mesh_band="2g40"
 	fi
 
 	syslogmessage="option auto_mesh_band [ $auto_mesh_band ]"
@@ -485,6 +485,19 @@ scan_channel() {
 	fi
 }
 
+get_portal_state() {
+	default_gw=$(ip route | grep "default via")
+	authoritative=$(uci get dhcp.@dnsmasq[0].authoritative 2>/dev/null | awk '{printf "%d", $1}')
+
+	if [ -z "$default_gw" ]; then
+		is_portal=""
+	else
+		gw_ip=$(echo "$default_gw" | awk -F" " '{printf "%s", $3}')
+		wan_ip=$(echo "$default_gw" | awk -F" " '{printf "%s", $7}')
+		is_portal=$(ip addr | grep "$wan_ip")
+	fi
+}
+
 check_portal() {
 	is_portal=""
 	debugtype="debug"
@@ -492,17 +505,7 @@ check_portal() {
 	write_to_syslog
 
 	if [ "$enabled" -eq 1 ]; then
-		proto=$(uci get network.lan.proto)
-		default_gw=$(ip route | grep "default via")
-		authoritative=$(uci get dhcp.@dnsmasq[0].authoritative 2>/dev/null | awk '{printf "%d", $1}')
-
-		if [ -z "$default_gw" ]; then
-			is_portal=""
-		else
-			gw_ip=$(echo "$default_gw" | awk -F" " '{printf "%s", $3}')
-			wan_ip=$(echo "$default_gw" | awk -F" " '{printf "%s", $7}')
-			is_portal=$(ip addr | grep "$wan_ip")
-		fi
+		get_portal_state
 
 		if [ -z "$is_portal" ]; then
 			# This IS NOT a layer 3 mesh portal
@@ -715,11 +718,15 @@ auto_config() {
 						echo "set wireless.m11s$phyindex.disabled='1'" | uci batch
 					fi
 
-					if [ "$band" = "2g" ]; then
-						echo "set wireless.radio$phyindex.noscan='1'" | uci batch
-						echo "set wireless.radio$phyindex.htmode='HT40'" | uci batch
+					if [ "$band" = "2g" ] || [ "$band" = "2g40" ]; then
+						get_portal_state
 
-						if [ "$portal_detect" -eq 0 ] && [ "$portal_channel" = "auto" ]; then
+						if [ "$band" = "2g40" ]; then
+							echo "set wireless.radio$phyindex.noscan='1'" | uci batch
+							echo "set wireless.radio$phyindex.htmode='HT40'" | uci batch
+						fi
+
+						if [ ! -z "$is_portal" ] && [ "$portal_channel" = "auto" ]; then
 
 							for i in $(seq 9 1 64); do
 								#choose start point of sequence away from end eg "9"
@@ -742,11 +749,11 @@ auto_config() {
 							done
 
 
-						elif [ "$portal_detect" -eq 0 ] && [ "$portal_channel" != "auto" ] && [ "$portal_channel" != "default" ]; then
+						elif [ ! -z "$is_portal" ] && [ "$portal_channel" != "auto" ] && [ "$portal_channel" != "default" ]; then
 							chan="$portal_channel"
 
 							#Check for max
-							if [ "$chan" -gt 12 ]; then
+							if [ "$chan" -gt 11 ]; then
 								chan=1
 								continue
 							fi
