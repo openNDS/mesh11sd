@@ -207,9 +207,18 @@ get_current_setup () {
 	write_to_syslog
 
 	#####
+
+	country=$(iw reg get | grep -w "country" | awk '{printf "%s", $2}')
+
+	if [ "$country" = "00" ]; then
+		syslogmessage="WARNING - country code not set - interoperability with other mesh nodes may be compromised or fail altogether...."
+		debugtype="warn"
+		write_to_syslog
+	fi
+
 	auto_mesh_band=$(uci get mesh11sd.setup.auto_mesh_band 2> /dev/null | awk '{printf "%s", $1}')
 
-	if [ -z "$auto_mesh_band" ]; then
+	if [ -z "$auto_mesh_band" ] && [ "$country" != "00" ]; then
 		auto_mesh_band="2g40"
 	fi
 
@@ -408,14 +417,23 @@ check_gate() {
 check_channel() {
 	# Can we see the portal?
 	link_to_portal=0
+
+	# We need to scan for working channel if we cannot see a portal
+	# Check for portal every checkinterval_multiplier checkintervals
+	checkinterval_multiplier=6
+
 	timenow=$(date +%s)
+
+	debugtype="debug"
+	syslogmessage="checking for working channel...."
+	write_to_syslog
 
 	if [ -z $cctimestamp ]; then
 		cctimestamp=$(date +%s)
 	fi
 
 	elapsed_time=$(($timenow - $cctimestamp))
-	mininterval=$(($checkinterval * 5))
+	mininterval=$(($checkinterval * $checkinterval_multiplier))
 
 	if [ "$mininterval" -le "$elapsed_time" ]; then
 		ifaces=$(uci export wireless | grep "config wifi-iface" | awk -F"'" '$2 != "" {printf "%s ",$2}')
@@ -430,9 +448,41 @@ check_channel() {
 				ucibatch="get network.$network.device"
 				device=$(echo "$ucibatch" | uci batch)
 
-				udhcpc -R -t 10 -T 5 -A 4 -q -n -i $device &> /dev/null
+				if [ -e "/tmp/dhcp6probe" ]; then
+					mv "/tmp/dhcp6probe" "/tmp/dhcp6probe.prev"
+				fi
 
-				link_to_portal=$?
+				odhcp6c -ev "$device" 2>/tmp/dhcp6probe &
+
+				local retries=20
+
+				for retry in $(seq $retries); do
+
+					if [ -e "/tmp/dhcp6probe" ]; then
+						sleep 4
+						break
+					else
+						sleep 1
+						continue
+					fi
+				done
+
+				link_to_portal=$(cat /tmp/dhcp6probe | grep -q -w "Got a valid ADVERTISE" ; echo $?)
+				instances=$(pgrep odhcp6c | awk '{printf "%s ", $1}')
+
+				for instance in $instances; do
+					kill "$instance"
+				done
+
+				debugtype="debug"
+
+				if [ "$link_to_portal" -eq 0 ]; then
+					syslogmessage="portal detected"
+				else
+					syslogmessage="portal not detected"
+				fi
+
+				write_to_syslog
 				cctimestamp=""
 				scan_channel
 				continue
@@ -442,6 +492,10 @@ check_channel() {
 }
 
 scan_channel() {
+	debugtype="debug"
+	syslogmessage="Entering scan channel...."
+	write_to_syslog
+
 	if [ "$link_to_portal" -gt 0 ]; then
 		# No link to portal. Maybe we are on the wrong channel, so scan for meshid to get channel
 		meshconfigs=$(uci show wireless 2> /dev/null | grep "mode='mesh'" | awk -F ".mode='mesh'" '{printf "%s " $1}')
@@ -486,22 +540,64 @@ scan_channel() {
 }
 
 get_portal_state() {
-	default_gw=$(ip route | grep "default via")
+	debugtype="debug"
+	syslogmessage="In get_portal_state. firstloop=$firstloop..."
+	write_to_syslog
+
+	if [ "$firstloop" -eq 1 ]; then
+		local retries=10
+
+		for retry in $(seq $retries); do
+			default_gw=$(ip route | grep "default via")
+
+			if [ -z "$default_gw" ]; then
+				debugtype="debug"
+				syslogmessage="In Startup - portal upstream link check - iteration [ $retry ] ...."
+				write_to_syslog
+				sleep 1
+				continue
+			fi
+		done
+
+	else
+		default_gw=$(ip route | grep "default via")
+	fi
+
+
+	debugtype="debug"
+	syslogmessage="default_gw=$default_gw...."
+	write_to_syslog
+
 	authoritative=$(uci get dhcp.@dnsmasq[0].authoritative 2>/dev/null | awk '{printf "%d", $1}')
 
 	if [ -z "$default_gw" ]; then
 		is_portal=""
+		wan_ip=""
+		gw_ip=""
 	else
 		gw_ip=$(echo "$default_gw" | awk -F" " '{printf "%s", $3}')
 		wan_ip=$(echo "$default_gw" | awk -F" " '{printf "%s", $7}')
-		is_portal=$(ip addr | grep "$wan_ip")
+
+		# must test if upstream gateway is actually up
+		gwstatus=$(ping -q -c 1 -W 1 192.168.8.1 &> /dev/null; echo $?)
+
+		if [ "$gwstatus" -eq 0 ]; then
+			is_portal=$(ip addr | grep "$wan_ip")
+		else
+			is_portal=""
+		fi
 	fi
+
+	debugtype="debug"
+	syslogmessage="leaving get_portal_state - is_portal=$is_portal. wan_ip=$wan_ip. gw_ip=$gw_ip.."
+	write_to_syslog
+
 }
 
 check_portal() {
 	is_portal=""
 	debugtype="debug"
-	syslogmessage="Entering check portal...."
+	syslogmessage="Entering check portal.... $auto_mesh_network"
 	write_to_syslog
 
 	if [ "$enabled" -eq 1 ]; then
@@ -517,10 +613,14 @@ check_portal() {
 				write_to_syslog
 
 				uci set dhcp.@dnsmasq[0].authoritative='0'
-				uci set dhcp.lan.ignore='1'
-				uci set dhcp.lan.ra_default='2'
+				echo "set dhcp.$auto_mesh_network.ignore='1'" | uci batch
+				echo "set dhcp.$auto_mesh_network.ra_default='2'" | uci batch
+				echo "set dhcp.$auto_mesh_network.dhcpv6='disabled'" | uci batch
+				echo "set dhcp.$auto_mesh_network.ra='disabled'" | uci batch
 				uci set dhcp.@dnsmasq[0].quietdhcp='1'
 				/sbin/service dnsmasq restart
+				/sbin/service odhcpd restart
+
 			fi
 
 			check_channel
@@ -535,10 +635,13 @@ check_portal() {
 				write_to_syslog
 
 				uci set dhcp.@dnsmasq[0].authoritative='1'
-				uci set dhcp.lan.ignore='0'
-				uci set dhcp.lan.ra_default='2'
+				echo "set dhcp.$auto_mesh_network.ignore='0'" | uci batch
+				echo "set dhcp.$auto_mesh_network.ra_default='2'" | uci batch
+				echo "set dhcp.$auto_mesh_network.dhcpv6='server'" | uci batch
+				echo "set dhcp.$auto_mesh_network.ra='server'" | uci batch
 				uci set dhcp.@dnsmasq[0].quietdhcp='1'
 				/sbin/service dnsmasq restart
+				/sbin/service odhcpd restart
 			fi
 		fi
 	fi
@@ -733,41 +836,43 @@ auto_config() {
 							echo "set wireless.radio$phyindex.htmode='HT40'" | uci batch
 						fi
 
-						if [ ! -z "$is_portal" ] && [ "$portal_channel" = "auto" ]; then
+						if [ ! -z "$is_portal" ] || [ "$portal_detect" -eq 0 ]; then
 
-							for i in $(seq 9 1 64); do
-								#choose start point of sequence away from end eg "9"
-								chan=$((0x$(printf "$devicemac" | sha256sum | awk '{printf $1}' | tail -c$i | head -c1)))
+							if [ "$portal_channel" = "auto" ] && [ "$band" = "2g" ]; then
+
+								for i in $(seq 9 1 64); do
+									#choose start point of sequence away from end eg "9"
+									chan=$((0x$(printf "$devicemac" | sha256sum | awk '{printf $1}' | tail -c$i | head -c1)))
+
+									#Check for max
+									if [ "$chan" -gt 11 ]; then
+										continue
+									fi
+
+									#Check for min
+									if [ "$chan" -le 0 ]; then
+										continue
+									fi
+
+									echo "set wireless.radio$phyindex.channel='$chan'" | uci batch
+									break
+								done
+
+							elif [ "$portal_channel" != "auto" ] && [ "$portal_channel" != "default" ] && [ "$band" = "2g" ]; then
+								chan="$portal_channel"
 
 								#Check for max
 								if [ "$chan" -gt 11 ]; then
-									continue
+									chan=11
 								fi
 
 								#Check for min
 								if [ "$chan" -le 0 ]; then
-									continue
+									chan=1
 								fi
 
 								echo "set wireless.radio$phyindex.channel='$chan'" | uci batch
-								break
-							done
-
-
-						elif [ ! -z "$is_portal" ] && [ "$portal_channel" != "auto" ] && [ "$portal_channel" != "default" ]; then
-							chan="$portal_channel"
-
-							#Check for max
-							if [ "$chan" -gt 11 ]; then
-								chan=11
 							fi
-
-							#Check for min
-							if [ "$chan" -le 0 ]; then
-								chan=1
-							fi
-
-							echo "set wireless.radio$phyindex.channel='$chan'" | uci batch
 						fi
 					fi
 				done
@@ -1490,10 +1595,13 @@ elif [ "$1" = "daemon" ]; then
 					write_to_syslog
 
 					uci set dhcp.@dnsmasq[0].authoritative='1'
-					uci set dhcp.lan.ignore='0'
-					uci set dhcp.lan.ra_default='2'
+					echo "set dhcp.$auto_mesh_network.ignore='0'" | uci batch
+					echo "set dhcp.$auto_mesh_network.ra_default='2'" | uci batch
+					echo "set dhcp.$auto_mesh_network.dhcpv6='server'" | uci batch
+					echo "set dhcp.$auto_mesh_network.ra='server'" | uci batch
 					uci set dhcp.@dnsmasq[0].quietdhcp='1'
 					/sbin/service dnsmasq restart
+					/sbin/service odhcpd restart
 				fi
 			fi
 
