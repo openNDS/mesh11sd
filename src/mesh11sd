@@ -316,6 +316,84 @@ get_current_setup () {
 	write_to_syslog
 }
 
+check_config_params() {
+	################
+	# Set default parameters if not in config
+
+	#####
+	mesh_fwding=$(uci get mesh11sd.mesh_params.mesh_fwding 2> /dev/null)
+
+	if [ -z "$mesh_fwding" ]; then
+		mesh_fwding="1"
+		echo "set mesh11sd.mesh_params.mesh_fwding='$mesh_fwding'" | uci batch
+	fi
+
+	syslogmessage="option mesh_fwding [ $mesh_fwding ]"
+	debugtype="info"
+	write_to_syslog
+
+	#####
+	mesh_rssi_threshold=$(uci get mesh11sd.mesh_params.mesh_rssi_threshold 2> /dev/null)
+
+	if [ -z "$mesh_rssi_threshold" ]; then
+		mesh_rssi_threshold="-80"
+		echo "set mesh11sd.mesh_params.mesh_rssi_threshold='$mesh_rssi_threshold'" | uci batch
+	fi
+
+	syslogmessage="option mesh_rssi_threshold [ $mesh_rssi_threshold ]"
+	debugtype="info"
+	write_to_syslog
+
+	#####
+	mesh_gate_announcements=$(uci get mesh11sd.mesh_params.mesh_gate_announcements 2> /dev/null)
+
+	if [ -z "$mesh_gate_announcements" ]; then
+		mesh_gate_announcements="1"
+		echo "set mesh11sd.mesh_params.mesh_gate_announcements='$mesh_gate_announcements'" | uci batch
+	fi
+
+	syslogmessage="option mesh_gate_announcements [ $mesh_gate_announcements ]"
+	debugtype="info"
+	write_to_syslog
+
+	#####
+	mesh_hwmp_rootmode=$(uci get mesh11sd.mesh_params.mesh_hwmp_rootmode 2> /dev/null)
+
+	if [ -z "$mesh_hwmp_rootmode" ]; then
+		mesh_hwmp_rootmode="4"
+		echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='$mesh_hwmp_rootmode'" | uci batch
+	fi
+
+	syslogmessage="option mesh_hwmp_rootmode [ $mesh_hwmp_rootmode ]"
+	debugtype="info"
+	write_to_syslog
+
+	#####
+	mesh_hwmp_rann_interval=$(uci get mesh11sd.mesh_params.mesh_hwmp_rann_interval 2> /dev/null)
+
+	if [ -z "$mesh_hwmp_rann_interval" ]; then
+		mesh_hwmp_rann_interval="2000"
+		echo "set mesh11sd.mesh_params.mesh_hwmp_rann_interval='$mesh_hwmp_rann_interval'" | uci batch
+	fi
+
+	syslogmessage="option mesh_hwmp_rann_interval [ $mesh_hwmp_rann_interval ]"
+	debugtype="info"
+	write_to_syslog
+
+	#####
+	mesh_max_peer_links=$(uci get mesh11sd.mesh_params.mesh_max_peer_links 2> /dev/null)
+
+	if [ -z "$mesh_max_peer_links" ]; then
+		mesh_max_peer_links="16"
+		echo "set mesh11sd.mesh_params.mesh_max_peer_links='$mesh_max_peer_links'" | uci batch
+	fi
+
+	syslogmessage="option mesh_max_peer_links [ $mesh_max_peer_links ]"
+	debugtype="info"
+	write_to_syslog
+
+}
+
 get_mesh_path_cost () {
 	mesh_path_cost=$(uci get mesh11sd.setup.mesh_path_cost 2> /dev/null)
 
@@ -1364,10 +1442,10 @@ elif [ "$1" = "daemon" ]; then
 	mode=$(($startup + $statusmode + $enabled ))
 	lastmode=0
 
+	check_config_params
+
 	# Start the main loop
 	while true; do
-
-		#get_current_setup
 		mode=$(($startup + $statusmode + $enabled))
 
 		syslogmessage=""
