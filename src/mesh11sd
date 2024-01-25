@@ -20,7 +20,7 @@ get_mesh_iflist () {
 	all_ifcs=$(iw dev | awk -F "Interface " '$2>0{printf "%s " $2}')
 
 	for iface in $all_ifcs; do
-		iftype=$(iw dev $iface info | grep "type" | awk '{printf "%s", $2}')
+		iftype=$(iw dev $iface info 2> /dev/null | grep "type" | awk '{printf "%s", $2}')
 
 		if [ "$iftype" = "mesh" ]; then
 			iflist="$iflist $iface"
@@ -372,7 +372,7 @@ check_config_params() {
 	mesh_hwmp_rann_interval=$(uci get mesh11sd.mesh_params.mesh_hwmp_rann_interval 2> /dev/null)
 
 	if [ -z "$mesh_hwmp_rann_interval" ]; then
-		mesh_hwmp_rann_interval="2000"
+		mesh_hwmp_rann_interval="5000"
 		echo "set mesh11sd.mesh_params.mesh_hwmp_rann_interval='$mesh_hwmp_rann_interval'" | uci batch
 	fi
 
@@ -573,33 +573,39 @@ scan_channel() {
 
 			for meshconfig in $meshconfigs; do
 				ifname=$(uci get $meshconfig.ifname)
-				our_channel=$(iw dev $ifname info | grep -w "channel" | awk -F " " '{printf "%s", $2}')
+				our_channel=$(iw dev $ifname info 2> /dev/null | grep -w "channel" | awk -F " " '{printf "%s", $2}')
 				mesh_id=$(uci get $meshconfig.mesh_id)
-				scanned_channels=$(iw dev $ifname scan | grep -F -w -B 5 "MESH ID: $mesh_id" | awk -F "primary channel: " '$2 != "" {printf "%s ",$2}')
+				scanned_channels=$(iw dev $ifname scan 2> /dev/null | grep -F -w -B 20 "MESH ID: $mesh_id" | awk -F "primary channel: " '$2 != "" {printf "%s ",$2}')
 
-				if [ "$our_channel" -le 14 ]; then
+				if [ ! -z "$our_channel" ] && [ "$our_channel" -le 14 ]; then
 					band="2g"
 				else
 					band=""
 				fi
 
-				for channel in $scanned_channels; do
+				if [ ! -z "$our_channel" ] && [ ! -z "$scanned_channels" ]; then
 
-					if [ "$channel" -gt 14 ] && [ "$band" = "2g" ]; then
-						continue
-					fi
+					for channel in $scanned_channels; do
 
+						if [ "$channel" -gt 14 ] && [ "$band" = "2g" ]; then
+							continue
+						fi
 
-					if [ "$channel" = "$our_channel" ]; then
-						continue
-					else
-						device=$(uci get $meshconfig.device)
-						ucibatch="set wireless.$device.channel='$channel'"
-						echo "$ucibatch" | uci batch
-						restart_mesh
-						break
-					fi
-				done
+						if [ "$channel" -eq "$our_channel" ]; then
+							continue
+						else
+							device=$(uci get $meshconfig.device)
+							echo "set wireless.$device.channel='$channel'" | uci batch
+
+							debugtype="notice"
+							syslogmessage="Tracking channel from [ $our_channel ] to [ $channel ]"
+							write_to_syslog
+
+							restart_mesh
+							break
+						fi
+					done
+				fi
 
 				ucibatch=""
 			done
@@ -647,13 +653,17 @@ get_portal_state() {
 		gw_ip=$(echo "$default_gw" | awk -F" " '{printf "%s", $3}')
 		wan_ip=$(echo "$default_gw" | awk -F" " '{printf "%s", $7}')
 
-		# must test if upstream gateway is actually up
-		gwstatus=$(ping -q -c 1 -W 1 192.168.8.1 &> /dev/null; echo $?)
-
-		if [ "$gwstatus" -eq 0 ]; then
-			is_portal=$(ip addr | grep "$wan_ip")
-		else
+		if [ -z "$wan_ip" ]; then
 			is_portal=""
+		else
+			# must test if upstream gateway is actually up
+			gwstatus=$(ping -q -c 1 -W 1 $wan_ip &> /dev/null; echo $?)
+
+			if [ "$gwstatus" -eq 0 ]; then
+				is_portal=$(ip addr | grep "$wan_ip")
+			else
+				is_portal=""
+			fi
 		fi
 	fi
 
@@ -676,7 +686,7 @@ check_portal() {
 			# This IS NOT a layer 3 mesh portal
 			uci set mesh11sd.mesh_params.mesh_connected_to_as='0'
 
-			if [ "$authoritative" -eq 1 ] || [ -z "$authoritative" ]; then
+			if [ -z "$authoritative" ] || [ "$authoritative" -eq 1 ]; then
 				debugtype="debug"
 				syslogmessage="This meshnode is NOT a portal"
 				write_to_syslog
@@ -685,10 +695,19 @@ check_portal() {
 				echo "set dhcp.$auto_mesh_network.ignore='1'" | uci batch
 				echo "set dhcp.$auto_mesh_network.ra_default='2'" | uci batch
 				echo "set dhcp.$auto_mesh_network.dhcpv6='disabled'" | uci batch
+				echo "set dhcp.$auto_mesh_network.dhcpv4='disabled'" | uci batch
 				echo "set dhcp.$auto_mesh_network.ra='disabled'" | uci batch
 				uci set dhcp.@dnsmasq[0].quietdhcp='1'
+
+				non_portal_mesh_hwmp_rootmode="3"
+				echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='$non_portal_mesh_hwmp_rootmode'" | uci batch
+
 				/sbin/service dnsmasq restart
 				/sbin/service odhcpd restart
+
+				. /tmp/devicemac
+
+				udhcpc -R -t 10 -T 5 -A 4 -i $device
 
 			fi
 
@@ -707,8 +726,13 @@ check_portal() {
 				echo "set dhcp.$auto_mesh_network.ignore='0'" | uci batch
 				echo "set dhcp.$auto_mesh_network.ra_default='2'" | uci batch
 				echo "set dhcp.$auto_mesh_network.dhcpv6='server'" | uci batch
+				echo "set dhcp.$auto_mesh_network.dhcpv4='server'" | uci batch
 				echo "set dhcp.$auto_mesh_network.ra='server'" | uci batch
 				uci set dhcp.@dnsmasq[0].quietdhcp='1'
+
+				echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='$mesh_hwmp_rootmode'" | uci batch
+
+				/sbin/service network restart
 				/sbin/service dnsmasq restart
 				/sbin/service odhcpd restart
 			fi
@@ -721,12 +745,39 @@ check_portal() {
 
 }
 
+check_hwmp() {
+	get_mesh_iflist
+
+	for iface in $iflist; do
+		mesh_hwmp_active_path_timeout=$(iw dev $iface get mesh_param mesh_hwmp_active_path_timeout | awk '{printf "%s", $1}')
+		mesh_hwmp_rann_interval=$(iw dev $iface get mesh_param mesh_hwmp_rann_interval | awk '{printf "%s", $1}')
+		mesh_hwmp_root_interval=$(iw dev $iface get mesh_param mesh_hwmp_root_interval | awk '{printf "%s", $1}')
+
+		if [ "$mesh_hwmp_rann_interval" -gt "$mesh_hwmp_active_path_timeout" ]; then
+			debugtype="warn"
+			syslogmessage="mesh_hwmp_rann_interval is too large, reducing...."
+			write_to_syslog
+			echo "set mesh11sd.mesh_params.mesh_hwmp_rann_interval='$mesh_hwmp_active_path_timeout'" | uci batch
+		fi
+
+		if [ "$mesh_hwmp_root_interval" -gt "$mesh_hwmp_active_path_timeout" ]; then
+			debugtype="warn"
+			syslogmessage="mesh_hwmp_root_interval is too large, reducing...."
+			write_to_syslog
+			echo "set mesh11sd.mesh_params.mesh_hwmp_root_interval='$mesh_hwmp_active_path_timeout'" | uci batch
+		fi
+
+	done
+}
+
 wait_for_nodes() {
-	local tics=4
+	local tics=5
 
 	echo " If the node you are looking for is not in the list - re-run this command."
 	echo
 	echo -n " Waiting for node list to build "
+
+	ccpy_setup
 
 	for tic in $(seq $tics); do
 		echo -n "* "
@@ -775,6 +826,15 @@ wait_for_mesh() {
 				fi
 			done
 		fi
+
+		###########
+		# Process htmode if needed
+		#uci_section_name=$(uci show wireless | grep "ifname='$iface'" | awk -F "." '{printf "%s", $2}')
+		#radio=$(uci show wireless | grep "$uci_section_name" | grep "device=" | awk -F "'" '{printf "%s", $2}')
+
+		#htmode_config=$(echo "get wireless.$radio.htmode" | uci batch)
+		#echo "iface=$iface! uci_section_name=$uci_section_name! radio=$radio! wifiifaces=$wifiifaces! htmode_config=$htmode_config!"
+		###########
 	done
 }
 
@@ -847,6 +907,7 @@ auto_config() {
 	syslogmessage="Entering auto config...."
 	write_to_syslog
 	autoconfig=0
+	dfs_etsi="GB"
 
 	if [ "$autoconfig" -eq 0 ]; then
 		# do we have a mesh supporting wpad?
@@ -884,7 +945,20 @@ auto_config() {
 					echo "set wireless.radio$phyindex.disabled='0'" | uci batch
 					echo "set wireless.radio$phyindex.wmm='1'" | uci batch
 
-					band=$(uci get wireless.radio$phyindex.band | awk '{printf "%s", $1}')
+					country=$(uci get wireless.radio$phyindex.country 2> /dev/null | awk '{printf "%s", $1}')
+
+					if [ -z "$country" ]; then
+						echo "set wireless.radio$phyindex.country='$dfs_etsi'" | uci batch
+						syslogmessage="WARNING - country code not set - interoperability with other mesh nodes may be compromised or fail altogether...."
+						debugtype="warn"
+						write_to_syslog
+						syslogmessage="WARNING - country code defaulting to [ DFS-ETSI ]...."
+						debugtype="warn"
+						write_to_syslog
+						country="$dfs_etsi"
+					fi
+
+					band=$(uci get wireless.radio$phyindex.band 2> /dev/null | awk '{printf "%s", $1}')
 
 					if [ "$auto_mesh_band" = "2g40" ]; then
 						mesh_band="2g"
@@ -906,22 +980,11 @@ auto_config() {
 							he_mode=$(echo "$originalhtmode" | grep -q "HE"; echo $?)
 
 							if [ "$he_mode" -eq 0 ]; then
-								#htmode="HE40"
-								htmode="HT40"
+								htmode="HE40"
+								#htmode="HT40"
 							else
 								htmode="HT40"
 							fi
-
-
-							#country=$(iw reg get | grep -w "country" | awk '{printf "%s", $2}' | awk -F ":" '{printf "%s", $1}')
-							country=$(echo "get wireless.radio$phyindex.country" | uci batch)
-
-							if [ -z "$country" ]; then
-								syslogmessage="WARNING - country code not set - interoperability with other mesh nodes may be compromised or fail altogether...."
-								debugtype="warn"
-								write_to_syslog
-							fi
-
 
 							if [ ! -z "$country" ]; then
 								echo "set wireless.radio$phyindex.noscan='1'" | uci batch
@@ -1320,8 +1383,7 @@ elif [ "$1" = "connect" ]; then
 
 	nodeaddr=$(printf "%s" "$2" | tr "-" ":" | tr "[A-Z]" "[a-z]")
 
-	echo "========================================================="
-	ccpy_setup
+	echo "==========================================================================="
 
 	if [ -z "$nodeaddr" ]; then
 		echo " Connect a remote terminal session on a remote meshnode"
@@ -1358,7 +1420,7 @@ elif [ "$1" = "connect" ]; then
 		done
 	fi
 
-	echo "========================================================="
+	echo "==========================================================================="
 	echo
 
 	exit 0
@@ -1374,8 +1436,8 @@ elif [ "$1" = "copy" ]; then
 	nodeaddr=$(printf "%s" "$2" | tr "-" ":" | tr "[A-Z]" "[a-z]")
 	filepath=$3
 	filename=$(echo "$filepath" | awk -F "/" '{printf $NF}')
-	echo "========================================================="
-	ccpy_setup
+
+	echo "==========================================================================="
 
 	if [ -z "$nodeaddr" ]; then
 		echo " Copy a file to /tmp on a remote meshnode"
@@ -1411,7 +1473,7 @@ elif [ "$1" = "copy" ]; then
 		done
 	fi
 
-	echo "========================================================="
+	echo "==========================================================================="
 	echo
 
 	exit 0
@@ -1686,7 +1748,7 @@ elif [ "$1" = "daemon" ]; then
 
 				uci set mesh11sd.mesh_params.mesh_connected_to_as='1'
 
-				if [ "$authoritative" -eq 0 ] || [ -z "$authoritative" ]; then
+				if [ -z "$authoritative" ] || [ "$authoritative" -eq 0 ]; then
 					debugtype="notice"
 					syslogmessage="Portal detection is disabled, forcing portal mode"
 					write_to_syslog
@@ -1697,12 +1759,18 @@ elif [ "$1" = "daemon" ]; then
 					echo "set dhcp.$auto_mesh_network.dhcpv6='server'" | uci batch
 					echo "set dhcp.$auto_mesh_network.ra='server'" | uci batch
 					uci set dhcp.@dnsmasq[0].quietdhcp='1'
+
+					mesh_hwmp_rootmode="4"
+					echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='$mesh_hwmp_rootmode'" | uci batch
+
 					/sbin/service dnsmasq restart
 					/sbin/service odhcpd restart
 				fi
 			fi
 
 			check_gate
+			check_hwmp
+			wait_for_mesh
 		fi
 
 		debugtype="debug"
