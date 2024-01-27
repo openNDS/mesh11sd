@@ -172,11 +172,25 @@ Access to the remote meshnode peers will not be possible using the ipv4 address 
 
 * checkinterval - the interval in seconds after which changes in parameters are detected and activated. Default 10 seconds
 
+* portal_detect - (optional) - Detect if the meshnode is a portal, meaning it has an upstream wan link. If the upstream link is active, the router hosting the meshnode will serve ipv4 dhcp into the mesh network. If the upstream link is not connected, dhcp will be disabled and the meshnode will function as a level 2 bridge on the mesh network. Default 1 (enabled). Set to 0 to disable.
+
+* portal_channel - valid only when portal detect is disabled.
 * interface_timeout - the time in seconds that mesh11sd will wait for a mesh interface to establish before continuing. Default 10 seconds
+
+* auto_config - (optional) - autonomously configures the mesh network. Default 1 (enabled). Set to 0 to disable
+
+* auto_mesh_id - (optional) - specifies a string used to generate the mesh id hash. If set, this must be the same on all mesh nodes. Default --__
+
+* auto_mesh_band - (optional) - specifies the wireless band to be used for the mesh network. Possible values are 2g, 5g, 6g and 60g. Default 2g
+
+* auto_mesh_key - specifies a seed value string to be used in generating the mesh key hash used for mesh encryption. If set, this must be the same on all meshnodes. Default not set
+
+* auto_mesh_network - (optional) - specifies the firewall zone used for the mesh. Typical values "lan", "guest" etc. This can be set differently on each meshnode as required. Firewall zone "wan" is not valid. Default lan
 
 * mesh_basename - (optional) The first 4 characters after non alphanumerics (ie special characters) are removed are used as the mesh_basename. The mesh_basename is used to construct a unique mesh interface name of the form m-xxxx-n. Default: 11s
 
-* portal_detect - (optional) - Detect if the meshnode is a portal, meaning it has an upstream wan link. If the upstream link is active, the router hosting the meshnode will serve ipv4 dhcp into the mesh network. If the upstream link is not connected, dhcp will be disabled and the meshnode will function as a level 2 bridge on the mesh network. Default 1 (enabled). Set to 0 to disable.
+* mesh_gate_enable - enables any access points configured on the meshnode. Default 1 (enabled). Set to 0 to disable
+
 
 **Example**:
 Set the debuglevel to 2
@@ -190,19 +204,90 @@ Changes can be made permanent with the following command:
         uci commit mesh11sd
 
 ## 6. Mesh Parameter Options
+
+
+Mesh parameters can be changed only while the mesh is active.
+
+Here is a list of available parameters and their function:
+
+ * mesh_retry_timeout: the initial retry timeout in millisecond units used by the Mesh Peering Open message
+
+ * mesh_confirm_timeout: the initial retry timeout in millisecond units used by the Mesh Peering Open message
+
+ * mesh_holding_timeout: the confirm timeout in millisecond units used by the mesh peering management to close a mesh peering
+
+ * mesh_max_peer_links: the maximum number of peer links allowed on this mesh interface
+
+ * mesh_max_retries: the maximum number of peer link open retries that can be sent to establish a new peer link instance in a mesh
+
+ * mesh_ttl: the value of TTL field set at a source mesh STA (STAtion)
+
+ * mesh_element_ttl: the value of TTL field set at a mesh STA for path selection elements
+
+ * mesh_auto_open_plinks: whether peer links should be automatically opened when compatible mesh peers are detected [deprecated - most implementations hard coded to enabled]
+
+ * mesh_sync_offset_max_neighor: the maximum number of neighbors to synchronize to
+
+ * mesh_hwmp_max_preq_retries: the number of action frames containing a PREQ (PeerREQuest) that an originator mesh STA can send to a particular path target
+
+ * mesh_path_refresh_time: how frequently to refresh mesh paths in milliseconds
+
+ * mesh_min_discovery_timeout: the minimum length of time to wait until giving up on a path discovery in milliseconds
+
+ * mesh_hwmp_active_path_timeout: the time in milliseconds for which mesh STAs receiving a PREQ shall consider the forwarding information from the root to be valid.
+
+ * mesh_hwmp_preq_min_interval: the minimum interval of time in milliseconds during which a mesh STA can send only one action frame containing a PREQ element
+
+ * mesh_hwmp_net_diameter_traversal_time: the interval of time in milliseconds that it takes for an HWMP (Hybrid Wireless Mesh Protocol) information element to propagate across the mesh
+
+ * mesh_hwmp_rootmode: the configuration of a mesh STA as root mesh STA
+
+ * mesh_hwmp_rann_interval: the interval of time in milliseconds between root announcements (rann - RootANNouncement)
+
+ * mesh_gate_announcements: whether to advertise that this mesh station has access to a broader network beyond the MBSS (Mesh Basic Service Set, a self-contained network of mesh stations that share a mesh profile)
+
+ * mesh_fwding: whether the Mesh STA is forwarding or non-forwarding
+
+ * mesh_rssi_threshold: the threshold for average signal strength of candidate station to establish a peer link
+
+ * mesh_hwmp_active_path_to_root_timeout: The time in milliseconds for which mesh STAs receiving a proactive PREQ shall consider the forwarding information to the root mesh STA to be valid
+
+ * mesh_hwmp_root_interval: The interval of time in milliseconds between proactive PREQs
+
+ * mesh_hwmp_confirmation_interval: The minimum interval of time in milliseconds during which a mesh STA can send only one Action frame containing a PREQ element for root path confirmation
+
+ * mesh_power_mode: The default mesh power save mode which will be the initial setting for new peer links
+
+ * mesh_awake_window: The duration in milliseconds the STA will remain awake after transmitting its beacon
+
+ * mesh_plink_timeout: If no tx activity is seen from a peered STA for longer than this time (in seconds), then remove it from the STA's list of peers.  Default is 0, equating to 30 minutes
+
+ * mesh_connected_to_as: if set to true then this mesh STA will advertise in the mesh station information field that it is connected to a captive portal authentication server, or in the simplest case, an upstream router
+
+ * mesh_connected_to_gate: if set to true then this mesh STA will advertise in the mesh station information field that it is connected to a separate network infrastucture such as a wireless network or downstream router
+
+ * mesh_nolearn: Try to avoid multi-hop path discovery if the destination is a direct neighbour. Note that this will not be optimal as multi-hop mac-routes will not be discovered. If using this setting, disable mesh forwarding and use another mesh routing protocol
+
+**Acronyms used**
+
+TTL - Time To Live
+
+STA - STAtion
+
+PREQ - PeerREQuest
+
+HWMP - Hybrid Wireless Mesh Protocol
+
+RANN - Root ANNouncement
+
+RSSI - Received Signal Strength Indication
+
+
+**The Config File**
+
 Basic mesh parameters are already included in the default config file. These basic parameters ensure the mesh interface will be able to either seed a new mesh or join an existing one of the same mesh id.
 
-* mesh_fwding - packets will be forwarded to peer mesh nodes
-
-* mesh_rssi_threshold - the minimum received signal strength from a peer meshnode for a connection to be established.
-
-* mesh_gate_announcements - 0=disabled, 1=enabled. At least one meshnode must make gate announcements. It is safe to enable this on all nodes. Background announcement traffic can be reduced in large networks by disabling this on a proportion of nodes if required.
-
-* mesh_hwmp_rootmode - Set to 3 for fast mesh convergence in most situations. Can be set to 0, 1, 2, 3 or 4.
-
-* mesh_max_peer_links - sets the maximum number of peer nodes that can connect. Can be set from 1 - 255.
-
-**Example**: Set mesh_rssi_threshold to -75 dBm (decibels relative to one milliwatt)
+**Example of Setting a Config Option**: Set mesh_rssi_threshold to -75 dBm (decibels relative to one milliwatt)
 
         uci set mesh11sd.mesh_params.mesh_rssi_threshold='-75'
 
