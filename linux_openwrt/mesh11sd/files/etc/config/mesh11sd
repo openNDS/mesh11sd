@@ -124,18 +124,15 @@ config mesh11sd 'setup'
 	#option auto_mesh_network 'guest'
 
 config mesh11sd 'mesh_params'
+	# A minimum set of parameters is automatically set for initial startup and do not have to be configured here
+	#
 	# Any mesh parameter supported by the wireless driver can be specified here
 	# and will be dynamically set and continuously checked every "checkinterval"
+	# 
+	# Examples:
+	#option mesh_rssi_threshold '-70'
+	#option mesh_max_peer_links '20'
+
 	#
-	#
-	# The following parameters are the minimum that are **required** for normal operation
-	# Do not change them unless you know what you are doing
-	#
-	option mesh_fwding '1'
-	option mesh_rssi_threshold '-70'
-	option mesh_gate_announcements '1'
-	option mesh_hwmp_rootmode '3'
-	option mesh_max_peer_links '8'
-	#
-	# The command: "mesh11sd status" gives a full list of additional supported parameters.
+	# The command: "mesh11sd status" gives a full list of supported parameters.
 
