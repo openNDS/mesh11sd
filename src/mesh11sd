@@ -645,34 +645,58 @@ get_portal_state() {
 
 	authoritative=$(uci get dhcp.@dnsmasq[0].authoritative 2>/dev/null | awk '{printf "%d", $1}')
 
+	if [ -z "$authoritative" ]; then
+		authoritative=0
+	fi
+
 	if [ -z "$default_gw" ]; then
 		is_portal=""
-		wan_ip=""
 		gw_ip=""
+		gwstatus=""
 	else
 		gw_ip=$(echo "$default_gw" | awk -F" " '{printf "%s", $3}')
-		wan_ip=$(echo "$default_gw" | awk -F" " '{printf "%s", $7}')
 
-		if [ -z "$wan_ip" ]; then
+		if [ -z "$gw_ip" ]; then
 			is_portal=""
 		else
 			# must test if upstream gateway is actually up
-			gwstatus=$(ping -q -c 1 -W 1 $wan_ip &> /dev/null; echo $?)
+			# Trigger arp with a ping:
+			gwstatus=$(ping -q -c 2 -W 1 "$gw_ip" &>/dev/null; ip neigh | grep "$gw_ip" | awk '{printf "%s", $NF}')
 
-			if [ "$gwstatus" -eq 0 ]; then
-				is_portal=$(ip addr | grep "$wan_ip")
-			else
+			if [ -z "$gwstatus" ]; then
+				is_portal=""
+			elif [ "$gwstatus" = "REACHABLE" ] || [ "$gwstatus" = "DELAY" ] || [ "$gwstatus" = "STALE" ]; then
+				is_portal=$gwstatus
+			elif [ "$gwstatus" = "PROBE" ] || [ "$gwstatus" = "INCOMPLETE" ] || [ "$gwstatus" = "FAILED" ]; then
 				is_portal=""
 			fi
 		fi
 	fi
 
 	debugtype="debug"
-	syslogmessage="leaving get_portal_state - is_portal=$is_portal. wan_ip=$wan_ip. gw_ip=$gw_ip.."
+	syslogmessage="leaving get_portal_state - is_portal=$is_portal.. gwstatus=$gwstatus.. gw_ip=$gw_ip.."
 	write_to_syslog
 
 }
 
+restore_ipv4() {
+	. /tmp/devicemac
+	config_ipaddr=$(uci get network.$auto_mesh_network.ipaddr)
+	config_netmask=$(uci get network.$auto_mesh_network.netmask)
+	cdir_netmask=$(echo "$config_netmask" | awk -F"." '{for(i=1; i<=NF; ++i) {mask+=8-log(2**8-$i)/log(2)} {printf "/%.0f", mask}}')
+	cdir_ip="$config_ipaddr""$cdir_netmask"
+
+	eval $(echo "$config_ipaddr" | awk -F"." '{printf "i1=%s i2=%s i3=%s i4=%s", $1 ,$2, $3, $4}')
+	eval $(echo "$config_netmask" | awk -F"." '{printf "m1=%s m2=%s m3=%s m4=%s", $1 ,$2, $3, $4}')
+	network_address="$(( $i1 & $m1 )).$(( $i2 & $m2 )).$(( $i3 & $m3 )).$(( $i4 & $m4 ))"
+	eval $(echo "$network_address" | awk -F"." '{printf "n1=%s n2=%s n3=%s n4=%s", $1 ,$2, $3, $4}')
+	broadcast_mask="$(( 255 ^ $m1 )).$(( 255 ^ $m2 )).$(( 255 ^ $m3 )).$(( 255 ^ $m4 ))"
+	eval $(echo "$broadcast_mask" | awk -F"." '{printf "b1=%s b2=%s b3=%s b4=%s", $1 ,$2, $3, $4}')
+	broadcast_address="$(( $n1 ^ $b1 )).$(( $n2 ^ $b2 )).$(( $n3 ^ $b3 )).$(( $n4 ^ $b4 ))"
+
+	ip addr add "$cdir_ip" broadcast "$broadcast_address" dev "$device"
+
+}
 check_portal() {
 	is_portal=""
 	debugtype="debug"
@@ -686,7 +710,7 @@ check_portal() {
 			# This IS NOT a layer 3 mesh portal
 			uci set mesh11sd.mesh_params.mesh_connected_to_as='0'
 
-			if [ -z "$authoritative" ] || [ "$authoritative" -eq 1 ]; then
+			if [ "$authoritative" -eq 1 ]; then
 				debugtype="debug"
 				syslogmessage="This meshnode is NOT a portal"
 				write_to_syslog
@@ -707,8 +731,13 @@ check_portal() {
 
 				. /tmp/devicemac
 
-				udhcpc -R -t 10 -T 5 -A 4 -i $device
+				dhcpstatus=$(udhcpc -R -f -n -t 3 -T 2 -A 4 -i $device &>/dev/null ; echo $?)
 
+				if [ "$dhcpstatus" -eq 0 ]; then
+					debugtype="debug"
+					syslogmessage="Remote dhcpv4 server found"
+					write_to_syslog
+				fi
 			fi
 
 			check_channel
@@ -717,7 +746,7 @@ check_portal() {
 			# This IS a layer 3 mesh portal
 			uci set mesh11sd.mesh_params.mesh_connected_to_as='1'
 
-			if [ -z "$authoritative" ] || [ "$authoritative" -eq 0 ]; then
+			if [ "$authoritative" -eq 0 ]; then
 				debugtype="debug"
 				syslogmessage="This meshnode is an upstream portal"
 				write_to_syslog
@@ -732,9 +761,13 @@ check_portal() {
 
 				echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='$mesh_hwmp_rootmode'" | uci batch
 
-				/sbin/service network restart
+				restore_ipv4
 				/sbin/service dnsmasq restart
 				/sbin/service odhcpd restart
+
+				if [ "$daemon_startup" -eq 1 ]; then
+					daemon_startup=0
+				fi
 			fi
 		fi
 	fi
@@ -1494,10 +1527,13 @@ elif [ "$1" = "daemon" ]; then
 	# Initial conditions
 	statusmode=0
 	changed=0
-	firstloop=1
+	firstloop=1 # Set if we have just started
+	daemon_startup=1 # For future watchdog tests
 	autoconfig=0
-	macfixup=0
-	mute=0
+	macfixup=0 # Used if we need to fix the mesh interface mac address
+	mute=0 # Mute some debug messages in function calls
+
+	# Clear the dhcp authoritative flag
 	uci delete dhcp.@dnsmasq[0].authoritative 2>/dev/null
 
 	# Initial Mode Flag
