@@ -838,7 +838,7 @@ wait_for_nodes() {
 wait_for_mesh() {
 	get_mesh_iflist
 
-	local retries=20
+	local retries=5
 
 	for iface in $iflist; do
 
@@ -851,10 +851,37 @@ wait_for_mesh() {
 			fi
 		done
 
-		if [ "$ifstatus" = "down" ] && [ "$fixup1" -ne 1 ]; then
+		if [ "$ifstatus" = "down" ] && [ "$fixup1" -eq 0 ]; then
 			fixup1=1
 			debugtype="err"
-			syslogmessage="Attempting fixup: Mesh interface $iface failed - Possible wireless driver bug.... Attempting fixup"
+			syslogmessage="First attempt at fixup: Mesh interface $iface failed - Possible wireless driver bug...."
+			write_to_syslog
+			. /tmp/devicemac
+			eval $(echo "$devicemac" | awk -F":" '{printf "p1=%s p2=%s p3=%s p4=%s p5=%s p6=%s", $1 ,$2, $3, $4, $5, $6}')
+			mac_la="$(echo -n ${p1:0:1})""6:$p2:$p3:$p4:$p5:$p6"
+
+			uci_section_name=$(uci show wireless | grep "ifname='$iface'" | awk -F "." '{printf "%s", $2}')
+			radio=$(uci show wireless | grep "$uci_section_name" | grep "device=" | awk -F "'" '{printf "%s", $2}')
+			wifiifaces=$(uci show wireless | grep "device='$radio'" | awk -F "." '{printf "%s ", $2}')
+
+			for wifiiface in $wifiifaces; do
+
+				if [ "$wifiiface" = "$uci_section_name" ]; then
+					continue
+				else
+					debugtype="notice"
+					syslogmessage="Attempting fixup: Setting locally administered mac address"
+					write_to_syslog
+					sleep 1
+					echo "set wireless.$wifiiface.macaddr='$mac_la'" | uci batch
+					wifi
+				fi
+			done
+
+		elif [ "$ifstatus" = "down" ] && [ "$fixup1" -eq 1 ]; then
+			fixup1=2
+			debugtype="err"
+			syslogmessage="Second attempt at fixup: Mesh interface $iface failed - Possible wireless driver bug...."
 			write_to_syslog
 			uci_section_name=$(uci show wireless | grep "ifname='$iface'" | awk -F "." '{printf "%s", $2}')
 			radio=$(uci show wireless | grep "$uci_section_name" | grep "device=" | awk -F "'" '{printf "%s", $2}')
@@ -1693,31 +1720,20 @@ elif [ "$1" = "daemon" ]; then
 
 				if [ "$macfixup" -eq 0 ]; then
 					for wiphy in $wiphys; do
-						# Create a probe interface
-						wifi down
-						iw phy "$wiphy" interface add probe type mesh mesh_id "probe"
-						# Get the probe mac address
-						meshmac=$(iw dev | grep -A 5 "Interface probe" | grep -w "addr" | awk '{printf "%s", $2}')
-						# Delete the probe interface
-						iw dev "probe" del
+						ucimeshconfig=$(uci get $meshconfig.macaddr 2> /dev/null)
 
-						if [ "$meshmac" != "$devicemac" ]; then
+						if [ -z "$ucimeshconfig" ]; then
+							# No mac address fixup, so add one
+							phyindex=$(echo "$wiphy" | awk -F "phy" '{printf "%s", $2}')
+							phyindex=$(printf "%x" $phyindex)
+							mesh_ifname="$mesh_basename""$phyindex"
+							debugtype="notice"
+							syslogmessage="Setting mac address of mesh interface $mesh_ifname to [ $devicemac ]"
+							write_to_syslog
 
-							ucimeshconfig=$(uci get $meshconfig.macaddr 2> /dev/null)
-
-							if [ -z "$ucimeshconfig" ]; then
-								# No mac address fixup, so add one
-								phyindex=$(echo "$wiphy" | awk -F "phy" '{printf "%s", $2}')
-								phyindex=$(printf "%x" $phyindex)
-								mesh_ifname="$mesh_basename""$phyindex"
-								debugtype="notice"
-								syslogmessage="Setting mac address of mesh interface $mesh_ifname to [ $devicemac ]"
-								write_to_syslog
-
-								ucibatch="set wireless.m11s$phyindex.macaddr='$devicemac'"
-								echo "$ucibatch" | uci batch
-								changed=1
-							fi
+							ucibatch="set wireless.m11s$phyindex.macaddr='$devicemac'"
+							echo "$ucibatch" | uci batch
+							changed=1
 						fi
 					done
 
