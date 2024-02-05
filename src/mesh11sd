@@ -646,7 +646,7 @@ get_portal_state() {
 	authoritative=$(uci get dhcp.@dnsmasq[0].authoritative 2>/dev/null | awk '{printf "%d", $1}')
 
 	if [ -z "$authoritative" ]; then
-		authoritative=0
+		authoritative=2 # Meaning not yet set
 	fi
 
 	if [ -z "$default_gw" ]; then
@@ -655,8 +655,9 @@ get_portal_state() {
 		gwstatus=""
 	else
 		gw_ip=$(echo "$default_gw" | awk -F" " '{printf "%s", $3}')
+		config_ipaddr=$(uci get network.$auto_mesh_network.ipaddr)
 
-		if [ -z "$gw_ip" ]; then
+		if [ -z "$gw_ip" ] || [ "$config_ipaddr" = "$gw_ip" ]; then
 			is_portal=""
 		else
 			# must test if upstream gateway is actually up
@@ -682,21 +683,25 @@ get_portal_state() {
 restore_ipv4() {
 	. /tmp/devicemac
 	config_ipaddr=$(uci get network.$auto_mesh_network.ipaddr)
-	config_netmask=$(uci get network.$auto_mesh_network.netmask)
-	cdir_netmask=$(echo "$config_netmask" | awk -F"." '{for(i=1; i<=NF; ++i) {mask+=8-log(2**8-$i)/log(2)} {printf "/%.0f", mask}}')
-	cdir_ip="$config_ipaddr""$cdir_netmask"
+	active_ipaddr=$(ip addr show dev $auto_mesh_network | grep -w "$config_ipaddr" | awk '{printf "%s", $2}' | awk -F"/" '{printf "%s", $1}')
 
-	eval $(echo "$config_ipaddr" | awk -F"." '{printf "i1=%s i2=%s i3=%s i4=%s", $1 ,$2, $3, $4}')
-	eval $(echo "$config_netmask" | awk -F"." '{printf "m1=%s m2=%s m3=%s m4=%s", $1 ,$2, $3, $4}')
-	network_address="$(( $i1 & $m1 )).$(( $i2 & $m2 )).$(( $i3 & $m3 )).$(( $i4 & $m4 ))"
-	eval $(echo "$network_address" | awk -F"." '{printf "n1=%s n2=%s n3=%s n4=%s", $1 ,$2, $3, $4}')
-	broadcast_mask="$(( 255 ^ $m1 )).$(( 255 ^ $m2 )).$(( 255 ^ $m3 )).$(( 255 ^ $m4 ))"
-	eval $(echo "$broadcast_mask" | awk -F"." '{printf "b1=%s b2=%s b3=%s b4=%s", $1 ,$2, $3, $4}')
-	broadcast_address="$(( $n1 ^ $b1 )).$(( $n2 ^ $b2 )).$(( $n3 ^ $b3 )).$(( $n4 ^ $b4 ))"
+	if [ "$config_ipaddr" != "$active_ipaddr" ]; then
+		config_netmask=$(uci get network.$auto_mesh_network.netmask)
+		cdir_netmask=$(echo "$config_netmask" | awk -F"." '{for(i=1; i<=NF; ++i) {mask+=8-log(2**8-$i)/log(2)} {printf "/%.0f", mask}}')
+		cdir_ip="$config_ipaddr""$cdir_netmask"
 
-	ip addr add "$cdir_ip" broadcast "$broadcast_address" dev "$device"
+		eval $(echo "$config_ipaddr" | awk -F"." '{printf "i1=%s i2=%s i3=%s i4=%s", $1 ,$2, $3, $4}')
+		eval $(echo "$config_netmask" | awk -F"." '{printf "m1=%s m2=%s m3=%s m4=%s", $1 ,$2, $3, $4}')
+		network_address="$(( $i1 & $m1 )).$(( $i2 & $m2 )).$(( $i3 & $m3 )).$(( $i4 & $m4 ))"
+		eval $(echo "$network_address" | awk -F"." '{printf "n1=%s n2=%s n3=%s n4=%s", $1 ,$2, $3, $4}')
+		broadcast_mask="$(( 255 ^ $m1 )).$(( 255 ^ $m2 )).$(( 255 ^ $m3 )).$(( 255 ^ $m4 ))"
+		eval $(echo "$broadcast_mask" | awk -F"." '{printf "b1=%s b2=%s b3=%s b4=%s", $1 ,$2, $3, $4}')
+		broadcast_address="$(( $n1 ^ $b1 )).$(( $n2 ^ $b2 )).$(( $n3 ^ $b3 )).$(( $n4 ^ $b4 ))"
 
+		ip addr add "$cdir_ip" broadcast "$broadcast_address" dev "$device"
+	fi
 }
+
 check_portal() {
 	is_portal=""
 	debugtype="debug"
@@ -705,12 +710,29 @@ check_portal() {
 
 	if [ "$enabled" -eq 1 ]; then
 		get_portal_state
+		. /tmp/devicemac
 
 		if [ -z "$is_portal" ]; then
 			# This IS NOT a layer 3 mesh portal
 			uci set mesh11sd.mesh_params.mesh_connected_to_as='0'
 
-			if [ "$authoritative" -eq 1 ]; then
+			if [ ! -e "/var/run/udhcpc-$device.pid" ]; then
+
+				hostname=$(uci get system.@system[0].hostname 2>/dev/null)
+
+				# Start the dhcp client
+				dhcpstatus=$(udhcpc -p /var/run/udhcpc-$device.pid -b -t 3 -i $device -x hostname:$hostname -C -R -O 121)
+				echo "$dhcpstatus" | grep "setting default routers"
+				dhcptest=$?
+
+				if [ "$dhcptest" -eq 0 ]; then
+					debugtype="debug"
+					syslogmessage="Remote dhcpv4 server found"
+					write_to_syslog
+				fi
+			fi
+
+			if [ "$authoritative" -eq 1 ] || [ "$authoritative" -eq 2 ]; then
 				debugtype="debug"
 				syslogmessage="This meshnode is NOT a portal"
 				write_to_syslog
@@ -728,16 +750,6 @@ check_portal() {
 
 				/sbin/service dnsmasq restart
 				/sbin/service odhcpd restart
-
-				. /tmp/devicemac
-
-				dhcpstatus=$(udhcpc -R -f -n -t 3 -T 2 -A 4 -i $device &>/dev/null ; echo $?)
-
-				if [ "$dhcpstatus" -eq 0 ]; then
-					debugtype="debug"
-					syslogmessage="Remote dhcpv4 server found"
-					write_to_syslog
-				fi
 			fi
 
 			check_channel
@@ -746,7 +758,13 @@ check_portal() {
 			# This IS a layer 3 mesh portal
 			uci set mesh11sd.mesh_params.mesh_connected_to_as='1'
 
-			if [ "$authoritative" -eq 0 ]; then
+			if [ -e "/var/run/udhcpc-$device.pid" ]; then
+				kill $(cat /var/run/udhcpc-$device.pid)
+			fi
+
+			restore_ipv4
+
+			if [ "$authoritative" -eq 0 ] || [ "$authoritative" -eq 2 ]; then
 				debugtype="debug"
 				syslogmessage="This meshnode is an upstream portal"
 				write_to_syslog
@@ -761,7 +779,6 @@ check_portal() {
 
 				echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='$mesh_hwmp_rootmode'" | uci batch
 
-				restore_ipv4
 				/sbin/service dnsmasq restart
 				/sbin/service odhcpd restart
 
@@ -806,15 +823,13 @@ check_hwmp() {
 wait_for_nodes() {
 	local tics=5
 
-	echo " If the node you are looking for is not in the list - re-run this command."
-	echo
 	echo -n " Waiting for node list to build "
 
 	ccpy_setup
 
 	for tic in $(seq $tics); do
+		ndp_scan_peer
 		echo -n "* "
-		sleep 1
 	done
 
 	echo
@@ -872,7 +887,6 @@ wait_for_mesh() {
 }
 
 ccpy_setup() {
-	ndp_scan_peer
 	get_mesh_iflist
 
 	for iface in $iflist; do
@@ -902,7 +916,8 @@ ccpy_setup() {
 				device=$(uci get network.$network.device)
 
 				if [ "$network" != "$network_previous" ]; then
-					connectlist="$connectlist ""$(ip -6 neigh | grep "fe80::" | grep "$device" | grep "lladdr" | grep "router"| awk '{printf "%s%s%s,%s ", $1, "%", $3, $5}')"
+					#connectlist="$connectlist ""$(ip -6 neigh | grep "fe80::" | grep "$device" | grep "lladdr" | grep "router"| awk '{printf "%s%s%s,%s ", $1, "%", $3, $5}')"
+					connectlist="$connectlist ""$(ip -6 neigh | grep "fe80::" | grep "$device" | grep "lladdr" | awk '{printf "%s%s%s,%s ", $1, "%", $3, $5}')"
 				fi
 
 				network_previous=$network
@@ -1418,12 +1433,15 @@ elif [ "$1" = "connect" ]; then
 
 	echo "==========================================================================="
 
+	echo " Connect a remote terminal session on a remote meshnode"
+	echo "    Usage: mesh11sd connect [remote_meshnode_macaddress]"
+	echo
+	wait_for_nodes
+	echo
+
 	if [ -z "$nodeaddr" ]; then
-		echo " Connect a remote terminal session on a remote meshnode"
-		echo "    Usage: mesh11sd connect [remote_meshnode_macaddress]"
-		echo
-		wait_for_nodes
-		echo
+		echo " If the node you are looking for is not in the list - re-run this command."
+		echo "==========================================================================="
 		echo " The following meshnodes are available for remote connection:"
 	fi
 
@@ -1432,6 +1450,13 @@ elif [ "$1" = "connect" ]; then
 		for connectto in $connectlist; do
 			linklocal="${connectto%,*}"
 			ndpmac="${connectto##*,}"
+
+			ispeer=$(echo "$peerlist" | grep "$ndpmac"; echo $?)
+echo "peerlist=$peerlist! ndpmac=$ndpmac! ispeer=$ispeer!"
+			if [ "$ispeer" -ne 0 ]; then
+				continue
+			fi
+
 			ndpmacf=$(printf "%s" "$ndpmac" | tr ":" "-")
 			ip6addr=$(echo "$linklocal" | awk -F "%" '{printf "%s", $1}')
 
@@ -1442,7 +1467,6 @@ elif [ "$1" = "connect" ]; then
 				if [ "$nodeaddr" = "$ndpmac" ]; then
 					echo
 					echo "Trying to connect to meshnode \"$ndpmacf\"....."
-					echo
 					ssh "root@$linklocal"
 					echo
 					echo "Disconnected from meshnode \"$ndpmacf\""
@@ -1472,12 +1496,15 @@ elif [ "$1" = "copy" ]; then
 
 	echo "==========================================================================="
 
+	echo " Copy a file to /tmp on a remote meshnode"
+	echo "    Usage: mesh11sd copy [remote_meshnode_macaddress] [path_of_source_file]"
+	echo
+	wait_for_nodes
+	echo
+
 	if [ -z "$nodeaddr" ]; then
-		echo " Copy a file to /tmp on a remote meshnode"
-		echo "    Usage: mesh11sd copy [remote_meshnode_macaddress] [path_of_source_file]"
-		echo
-		wait_for_nodes
-		echo
+		echo " If the node you are looking for is not in the list - re-run this command."
+		echo "==========================================================================="
 		echo " The following meshnodes are available for remote copy:"
 
 	fi
