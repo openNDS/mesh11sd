@@ -1,4 +1,5 @@
 mesh11sd (3.0.0)
+  * Fix - allow wireless config for ap disable option to take precedence [bluewavenet]
   * Fix - missing fixup flag [bluewavenet]
   * Fix - connect and copy to ensure correct list of nodes is displayed [bluewavenet]
   * Fix - Try locally administered mac address to fix mesh failure when ap enabled [bluewavenet]
