@@ -50,7 +50,7 @@ check_mesh_phantom () {
 get_params () {
 	params=$(iw dev $iface mesh_param dump 2> /dev/null)
 
-	if [ "$?" != 0 ]; then
+	if [ "$?" -ne 0 ]; then
 		buffer="/tmp/"$(date | sha256sum | awk '{printf $1}')
 		param_list=$(iw dev $iface get mesh_param 2> /dev/null | grep " - " | awk -F" - " '{printf "%s ", $2}')
 		params=""
@@ -462,8 +462,9 @@ mesh_gate_state() {
 	aplist=$(uci show wireless | grep "mode='ap'" | awk -F "." '{printf "%s ", $2}')
 
 	for gate in $aplist; do
+		config_state=$(echo "get wireless.$gate.disabled" | uci batch 2> /dev/null)
 
-		if [ "$mesh_gate_enable" -eq 1 ]; then
+		if [ -z "$config_state" ] && [ "$mesh_gate_enable" -eq 1 ]; then
 			ucibatch="set wireless.$gate.disabled='0'"
 			echo "$ucibatch" | uci batch
 		else
@@ -645,32 +646,61 @@ get_portal_state() {
 
 	authoritative=$(uci get dhcp.@dnsmasq[0].authoritative 2>/dev/null | awk '{printf "%d", $1}')
 
+	if [ -z "$authoritative" ]; then
+		authoritative=2 # Meaning not yet set
+	fi
+
 	if [ -z "$default_gw" ]; then
 		is_portal=""
-		wan_ip=""
 		gw_ip=""
+		gwstatus=""
 	else
 		gw_ip=$(echo "$default_gw" | awk -F" " '{printf "%s", $3}')
-		wan_ip=$(echo "$default_gw" | awk -F" " '{printf "%s", $7}')
+		config_ipaddr=$(uci get network.$auto_mesh_network.ipaddr)
 
-		if [ -z "$wan_ip" ]; then
+		if [ -z "$gw_ip" ] || [ "$config_ipaddr" = "$gw_ip" ]; then
 			is_portal=""
 		else
 			# must test if upstream gateway is actually up
-			gwstatus=$(ping -q -c 1 -W 1 $wan_ip &> /dev/null; echo $?)
+			# Trigger arp with a ping:
+			gwstatus=$(ping -q -c 2 -W 1 "$gw_ip" &>/dev/null; ip neigh | grep "$gw_ip" | awk '{printf "%s", $NF}')
 
-			if [ "$gwstatus" -eq 0 ]; then
-				is_portal=$(ip addr | grep "$wan_ip")
-			else
+			if [ -z "$gwstatus" ]; then
+				is_portal=""
+			elif [ "$gwstatus" = "REACHABLE" ] || [ "$gwstatus" = "DELAY" ] || [ "$gwstatus" = "STALE" ]; then
+				is_portal=$gwstatus
+			elif [ "$gwstatus" = "PROBE" ] || [ "$gwstatus" = "INCOMPLETE" ] || [ "$gwstatus" = "FAILED" ]; then
 				is_portal=""
 			fi
 		fi
 	fi
 
 	debugtype="debug"
-	syslogmessage="leaving get_portal_state - is_portal=$is_portal. wan_ip=$wan_ip. gw_ip=$gw_ip.."
+	syslogmessage="leaving get_portal_state - is_portal=$is_portal.. gwstatus=$gwstatus.. gw_ip=$gw_ip.."
 	write_to_syslog
 
+}
+
+restore_ipv4() {
+	. /tmp/devicemac
+	config_ipaddr=$(uci get network.$auto_mesh_network.ipaddr)
+	active_ipaddr=$(ip addr show dev $auto_mesh_network | grep -w "$config_ipaddr" | awk '{printf "%s", $2}' | awk -F"/" '{printf "%s", $1}')
+
+	if [ "$config_ipaddr" != "$active_ipaddr" ]; then
+		config_netmask=$(uci get network.$auto_mesh_network.netmask)
+		cdir_netmask=$(echo "$config_netmask" | awk -F"." '{for(i=1; i<=NF; ++i) {mask+=8-log(2**8-$i)/log(2)} {printf "/%.0f", mask}}')
+		cdir_ip="$config_ipaddr""$cdir_netmask"
+
+		eval $(echo "$config_ipaddr" | awk -F"." '{printf "i1=%s i2=%s i3=%s i4=%s", $1 ,$2, $3, $4}')
+		eval $(echo "$config_netmask" | awk -F"." '{printf "m1=%s m2=%s m3=%s m4=%s", $1 ,$2, $3, $4}')
+		network_address="$(( $i1 & $m1 )).$(( $i2 & $m2 )).$(( $i3 & $m3 )).$(( $i4 & $m4 ))"
+		eval $(echo "$network_address" | awk -F"." '{printf "n1=%s n2=%s n3=%s n4=%s", $1 ,$2, $3, $4}')
+		broadcast_mask="$(( 255 ^ $m1 )).$(( 255 ^ $m2 )).$(( 255 ^ $m3 )).$(( 255 ^ $m4 ))"
+		eval $(echo "$broadcast_mask" | awk -F"." '{printf "b1=%s b2=%s b3=%s b4=%s", $1 ,$2, $3, $4}')
+		broadcast_address="$(( $n1 ^ $b1 )).$(( $n2 ^ $b2 )).$(( $n3 ^ $b3 )).$(( $n4 ^ $b4 ))"
+
+		ip addr add "$cdir_ip" broadcast "$broadcast_address" dev "$device"
+	fi
 }
 
 check_portal() {
@@ -681,12 +711,29 @@ check_portal() {
 
 	if [ "$enabled" -eq 1 ]; then
 		get_portal_state
+		. /tmp/devicemac
 
 		if [ -z "$is_portal" ]; then
 			# This IS NOT a layer 3 mesh portal
 			uci set mesh11sd.mesh_params.mesh_connected_to_as='0'
 
-			if [ -z "$authoritative" ] || [ "$authoritative" -eq 1 ]; then
+			if [ ! -e "/var/run/udhcpc-$device.pid" ]; then
+
+				hostname=$(uci get system.@system[0].hostname 2>/dev/null)
+
+				# Start the dhcp client
+				dhcpstatus=$(udhcpc -p /var/run/udhcpc-$device.pid -b -t 3 -i $device -x hostname:$hostname -C -R -O 121)
+				echo "$dhcpstatus" | grep "setting default routers"
+				dhcptest=$?
+
+				if [ "$dhcptest" -eq 0 ]; then
+					debugtype="debug"
+					syslogmessage="Remote dhcpv4 server found"
+					write_to_syslog
+				fi
+			fi
+
+			if [ "$authoritative" -eq 1 ] || [ "$authoritative" -eq 2 ]; then
 				debugtype="debug"
 				syslogmessage="This meshnode is NOT a portal"
 				write_to_syslog
@@ -704,11 +751,6 @@ check_portal() {
 
 				/sbin/service dnsmasq restart
 				/sbin/service odhcpd restart
-
-				. /tmp/devicemac
-
-				udhcpc -R -t 10 -T 5 -A 4 -i $device
-
 			fi
 
 			check_channel
@@ -717,7 +759,13 @@ check_portal() {
 			# This IS a layer 3 mesh portal
 			uci set mesh11sd.mesh_params.mesh_connected_to_as='1'
 
-			if [ -z "$authoritative" ] || [ "$authoritative" -eq 0 ]; then
+			if [ -e "/var/run/udhcpc-$device.pid" ]; then
+				kill $(cat /var/run/udhcpc-$device.pid)
+			fi
+
+			restore_ipv4
+
+			if [ "$authoritative" -eq 0 ] || [ "$authoritative" -eq 2 ]; then
 				debugtype="debug"
 				syslogmessage="This meshnode is an upstream portal"
 				write_to_syslog
@@ -732,9 +780,12 @@ check_portal() {
 
 				echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='$mesh_hwmp_rootmode'" | uci batch
 
-				/sbin/service network restart
 				/sbin/service dnsmasq restart
 				/sbin/service odhcpd restart
+
+				if [ "$daemon_startup" -eq 1 ]; then
+					daemon_startup=0
+				fi
 			fi
 		fi
 	fi
@@ -773,24 +824,23 @@ check_hwmp() {
 wait_for_nodes() {
 	local tics=5
 
-	echo " If the node you are looking for is not in the list - re-run this command."
-	echo
 	echo -n " Waiting for node list to build "
 
 	ccpy_setup
 
 	for tic in $(seq $tics); do
+		ndp_scan_peer
 		echo -n "* "
-		sleep 1
 	done
 
 	echo
 }
 
 wait_for_mesh() {
+	fixup1=0
 	get_mesh_iflist
 
-	local retries=20
+	local retries=5
 
 	for iface in $iflist; do
 
@@ -803,10 +853,37 @@ wait_for_mesh() {
 			fi
 		done
 
-		if [ "$ifstatus" = "down" ] && [ "$fixup1" -ne 1 ]; then
+		if [ "$ifstatus" = "down" ] && [ "$fixup1" -eq 0 ]; then
 			fixup1=1
 			debugtype="err"
-			syslogmessage="Attempting fixup: Mesh interface $iface failed - Possible wireless driver bug.... Attempting fixup"
+			syslogmessage="First attempt at fixup: Mesh interface $iface failed - Possible wireless driver bug...."
+			write_to_syslog
+			. /tmp/devicemac
+			eval $(echo "$devicemac" | awk -F":" '{printf "p1=%s p2=%s p3=%s p4=%s p5=%s p6=%s", $1 ,$2, $3, $4, $5, $6}')
+			mac_la="$(echo -n ${p1:0:1})""6:$p2:$p3:$p4:$p5:$p6"
+
+			uci_section_name=$(uci show wireless | grep "ifname='$iface'" | awk -F "." '{printf "%s", $2}')
+			radio=$(uci show wireless | grep "$uci_section_name" | grep "device=" | awk -F "'" '{printf "%s", $2}')
+			wifiifaces=$(uci show wireless | grep "device='$radio'" | awk -F "." '{printf "%s ", $2}')
+
+			for wifiiface in $wifiifaces; do
+
+				if [ "$wifiiface" = "$uci_section_name" ]; then
+					continue
+				else
+					debugtype="notice"
+					syslogmessage="Attempting fixup: Setting locally administered mac address"
+					write_to_syslog
+					sleep 1
+					echo "set wireless.$wifiiface.macaddr='$mac_la'" | uci batch
+					wifi
+				fi
+			done
+
+		elif [ "$ifstatus" = "down" ] && [ "$fixup1" -eq 1 ]; then
+			fixup1=2
+			debugtype="err"
+			syslogmessage="Second attempt at fixup: Mesh interface $iface failed - Possible wireless driver bug...."
 			write_to_syslog
 			uci_section_name=$(uci show wireless | grep "ifname='$iface'" | awk -F "." '{printf "%s", $2}')
 			radio=$(uci show wireless | grep "$uci_section_name" | grep "device=" | awk -F "'" '{printf "%s", $2}')
@@ -839,7 +916,6 @@ wait_for_mesh() {
 }
 
 ccpy_setup() {
-	ndp_scan_peer
 	get_mesh_iflist
 
 	for iface in $iflist; do
@@ -869,7 +945,8 @@ ccpy_setup() {
 				device=$(uci get network.$network.device)
 
 				if [ "$network" != "$network_previous" ]; then
-					connectlist="$connectlist ""$(ip -6 neigh | grep "fe80::" | grep "$device" | grep "lladdr" | grep "router"| awk '{printf "%s%s%s,%s ", $1, "%", $3, $5}')"
+					#connectlist="$connectlist ""$(ip -6 neigh | grep "fe80::" | grep "$device" | grep "lladdr" | grep "router"| awk '{printf "%s%s%s,%s ", $1, "%", $3, $5}')"
+					connectlist="$connectlist ""$(ip -6 neigh | grep "fe80::" | grep "$device" | grep "lladdr" | awk '{printf "%s%s%s,%s ", $1, "%", $3, $5}')"
 				fi
 
 				network_previous=$network
@@ -1385,12 +1462,15 @@ elif [ "$1" = "connect" ]; then
 
 	echo "==========================================================================="
 
+	echo " Connect a remote terminal session on a remote meshnode"
+	echo "    Usage: mesh11sd connect [remote_meshnode_macaddress]"
+	echo
+	wait_for_nodes
+	echo
+
 	if [ -z "$nodeaddr" ]; then
-		echo " Connect a remote terminal session on a remote meshnode"
-		echo "    Usage: mesh11sd connect [remote_meshnode_macaddress]"
-		echo
-		wait_for_nodes
-		echo
+		echo " If the node you are looking for is not in the list - re-run this command."
+		echo "==========================================================================="
 		echo " The following meshnodes are available for remote connection:"
 	fi
 
@@ -1399,6 +1479,13 @@ elif [ "$1" = "connect" ]; then
 		for connectto in $connectlist; do
 			linklocal="${connectto%,*}"
 			ndpmac="${connectto##*,}"
+
+			ispeer=$(echo "$peerlist" | grep -q "$ndpmac"; echo $?)
+
+			if [ "$ispeer" -ne 0 ]; then
+				continue
+			fi
+
 			ndpmacf=$(printf "%s" "$ndpmac" | tr ":" "-")
 			ip6addr=$(echo "$linklocal" | awk -F "%" '{printf "%s", $1}')
 
@@ -1409,7 +1496,6 @@ elif [ "$1" = "connect" ]; then
 				if [ "$nodeaddr" = "$ndpmac" ]; then
 					echo
 					echo "Trying to connect to meshnode \"$ndpmacf\"....."
-					echo
 					ssh "root@$linklocal"
 					echo
 					echo "Disconnected from meshnode \"$ndpmacf\""
@@ -1439,30 +1525,41 @@ elif [ "$1" = "copy" ]; then
 
 	echo "==========================================================================="
 
+	echo " Copy a file to /tmp on a remote meshnode"
+	echo "    Usage: mesh11sd copy [remote_meshnode_macaddress] [path_of_source_file]"
+	echo
+	wait_for_nodes
+	echo
+
 	if [ -z "$nodeaddr" ]; then
-		echo " Copy a file to /tmp on a remote meshnode"
-		echo "    Usage: mesh11sd copy [remote_meshnode_macaddress] [path_of_source_file]"
-		echo
-		wait_for_nodes
-		echo
+		echo " If the node you are looking for is not in the list - re-run this command."
+		echo "==========================================================================="
 		echo " The following meshnodes are available for remote copy:"
 
 	fi
 
 	if [ ! -z "$peerlist" ]; then
+
 		for connectto in $connectlist; do
 			linklocal="${connectto%,*}"
 			ndpmac="${connectto##*,}"
+
+			ispeer=$(echo "$peerlist" | grep -q "$ndpmac"; echo $?)
+
+			if [ "$ispeer" -ne 0 ]; then
+				continue
+			fi
+
 			ndpmacf=$(printf "%s" "$ndpmac" | tr ":" "-")
+			ip6addr=$(echo "$linklocal" | awk -F "%" '{printf "%s", $1}')
 
 			if [ -z "$nodeaddr" ]; then
-				echo "	$ndpmacf"
-			elif [ "$nodeaddr" = "$ndpmac" ]; then
+				echo "	$ndpmacf	[ ip address: $ip6addr ]"
+			elif [ ! -z "$nodeaddr" ]; then
 
-				if [ ! -z "$filepath" ]; then
+				if [ "$nodeaddr" = "$ndpmac" ] && [ ! -z "$filepath" ]; then
 					echo
 					echo "Trying to copy to meshnode \"$ndpmacf\"....."
-					echo
 					scp "$filepath" "root@[$linklocal]:/tmp/$filename"
 					echo
 					echo "Disconnected from meshnode \"$ndpmacf\""
@@ -1494,10 +1591,13 @@ elif [ "$1" = "daemon" ]; then
 	# Initial conditions
 	statusmode=0
 	changed=0
-	firstloop=1
+	firstloop=1 # Set if we have just started
+	daemon_startup=1 # For future watchdog tests
 	autoconfig=0
-	macfixup=0
-	mute=0
+	macfixup=0 # Used if we need to fix the mesh interface mac address
+	mute=0 # Mute some debug messages in function calls
+
+	# Clear the dhcp authoritative flag
 	uci delete dhcp.@dnsmasq[0].authoritative 2>/dev/null
 
 	# Initial Mode Flag
@@ -1630,31 +1730,20 @@ elif [ "$1" = "daemon" ]; then
 
 				if [ "$macfixup" -eq 0 ]; then
 					for wiphy in $wiphys; do
-						# Create a probe interface
-						wifi down
-						iw phy "$wiphy" interface add probe type mesh mesh_id "probe"
-						# Get the probe mac address
-						meshmac=$(iw dev | grep -A 5 "Interface probe" | grep -w "addr" | awk '{printf "%s", $2}')
-						# Delete the probe interface
-						iw dev "probe" del
+						ucimeshconfig=$(uci get $meshconfig.macaddr 2> /dev/null)
 
-						if [ "$meshmac" != "$devicemac" ]; then
+						if [ -z "$ucimeshconfig" ]; then
+							# No mac address fixup, so add one
+							phyindex=$(echo "$wiphy" | awk -F "phy" '{printf "%s", $2}')
+							phyindex=$(printf "%x" $phyindex)
+							mesh_ifname="$mesh_basename""$phyindex"
+							debugtype="notice"
+							syslogmessage="Setting mac address of mesh interface $mesh_ifname to [ $devicemac ]"
+							write_to_syslog
 
-							ucimeshconfig=$(uci get $meshconfig.macaddr 2> /dev/null)
-
-							if [ -z "$ucimeshconfig" ]; then
-								# No mac address fixup, so add one
-								phyindex=$(echo "$wiphy" | awk -F "phy" '{printf "%s", $2}')
-								phyindex=$(printf "%x" $phyindex)
-								mesh_ifname="$mesh_basename""$phyindex"
-								debugtype="notice"
-								syslogmessage="Setting mac address of mesh interface $mesh_ifname to [ $devicemac ]"
-								write_to_syslog
-
-								ucibatch="set wireless.m11s$phyindex.macaddr='$devicemac'"
-								echo "$ucibatch" | uci batch
-								changed=1
-							fi
+							ucibatch="set wireless.m11s$phyindex.macaddr='$devicemac'"
+							echo "$ucibatch" | uci batch
+							changed=1
 						fi
 					done
 
