@@ -467,7 +467,7 @@ mesh_gate_state() {
 		if [ -z "$config_state" ] && [ "$mesh_gate_enable" -eq 1 ]; then
 			ucibatch="set wireless.$gate.disabled='0'"
 			echo "$ucibatch" | uci batch
-		else
+		elif [ -z "$config_state" ] && [ "$mesh_gate_enable" -eq 0 ]; then
 			ucibatch="set wireless.$gate.disabled='1'"
 			echo "$ucibatch" | uci batch
 		fi
