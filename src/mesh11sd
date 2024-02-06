@@ -837,6 +837,7 @@ wait_for_nodes() {
 }
 
 wait_for_mesh() {
+	fixup1=0
 	get_mesh_iflist
 
 	local retries=5
