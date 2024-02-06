@@ -52,6 +52,15 @@ config mesh11sd 'setup'
 	#option mesh_gate_enable '0'
 
 	###########################################################################################
+	# mesh_path_cost (optional)
+	# sets the STP cost of the mesh network
+	# Default: 1
+	# Can be set to any value from 1 to 65534
+	#
+	# Example:
+	#option mesh_path_cost '100'
+
+	###########################################################################################
 	# portal_detect (optional)
 	# Detect if the meshnode is a portal, meaning it has an upstream wan link.
 	# If the upstream link is active, the router hosting the meshnode will serve ipv4 dhcp into the mesh network.

@@ -1,4 +1,32 @@
 mesh11sd (3.0.0)
+  * Fix - missing fixup flag [bluewavenet]
+  * Fix - connect and copy to ensure correct list of nodes is displayed [bluewavenet]
+  * Fix - Try locally administered mac address to fix mesh failure when ap enabled [bluewavenet]
+  * Fix - restore_ip and connect/copy in case where node ipv4 address ends up as static instead of dhcp [bluewavenet]
+  * Fix - restore the lan ip address when switching back to portal mode [bluewavenet]
+  * Add - further refactoring of portal detect and channel tracking [bluewavenet]
+  * Add - check_config_params function and call on startup [bluewavenet]
+  * Fix - detect country code from config as iw reg get returns only if iface is already up [bluewavenet]
+  * Add - Refactor portal_detect and check_channel using odhcp6c [bluewavenet]
+  * Fix - correctly check max and min channels   [bluewavenet]
+  * Fix - set changed flag to signify a mesh restart is needed after autoconfig [bluewavenet]
+  * Fix - default 2.4GHz max and min channels [bluewavenet]
+  * Add - new hwmp defaults [bluewavenet]
+  * Fix - wait for bridge interface to come up after reboot and fix HT40 enable/disable [bluewavenet]
+  * Add - Allow switching of HT40 on 2g band [bluewavenet]
+  * Add - set path cost for all bridge interfaces [bluewavenet]
+  * Fix - enable debuglevel change from cli [bluewavenet]
+  * Add - improve auto_mesh_key key generation [bluewavenet]
+  * Fix - remove unnecessary network restart [bluewavenet]
+  * Fix - output local stations even when there are no other meshnodes [bluewavenet]
+  * Add - Display local stations in status output [bluewavenet]
+  * Add - mesh_path_cost to config and block wan and wan6 as valid mesh zones [bluewavenet]
+  * Add - check zone status, urlencode/decode, display ipaddress of meshnodes [bluewavenet]
+  * Fix - numerous fixes including- read auto_config option from config, auto_mesh_id from config, use linklocal multicast to refresh ndp for remote nodes [bluewavenet]
+  * Add - new default parameters [bluewavenet]
+  * Add - upates to config file [bluewavenet]
+  * Add - Rework of auto_config [bluewavenet]
+  * Add - option auto_mesh_band and auto-configure only that band. Enable stp on bridge interface(s) [bluewavenet]
   * Fix - mute error output if devsatatus fails [bluewavenet]
   * Fix - remove unsupported ra_default option [bluewavenet]
   * Fix - if dnsmasq option authoritive is not set, deal with it. [bluewavenet]
@@ -14,7 +42,7 @@ mesh11sd (3.0.0)
   * Fix - revert uncommitted changes on service stop [bluewavenet]
   * Add - numerous code improvements [bluewavenet]
 
- -- Rob White <dot@blue-wave.net>  Thu, 31 Aug 2023 13:37:55 +0000
+ -- Rob White <dot@blue-wave.net>  Thu, 06 Feb 2024 17:10:05 +0000
 
 mesh11sd (2.0.0)
   * Add - Update config file [bluewavenet]
