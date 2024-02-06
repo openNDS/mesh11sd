@@ -50,7 +50,7 @@ check_mesh_phantom () {
 get_params () {
 	params=$(iw dev $iface mesh_param dump 2> /dev/null)
 
-	if [ "$?" != 0 ]; then
+	if [ "$?" -ne 0 ]; then
 		buffer="/tmp/"$(date | sha256sum | awk '{printf $1}')
 		param_list=$(iw dev $iface get mesh_param 2> /dev/null | grep " - " | awk -F" - " '{printf "%s ", $2}')
 		params=""
@@ -462,8 +462,9 @@ mesh_gate_state() {
 	aplist=$(uci show wireless | grep "mode='ap'" | awk -F "." '{printf "%s ", $2}')
 
 	for gate in $aplist; do
+		config_state=$(echo "get wireless.$gate.disabled" | uci batch 2> /dev/null)
 
-		if [ "$mesh_gate_enable" -eq 1 ]; then
+		if [ -z "$config_state" ] && [ "$mesh_gate_enable" -eq 1 ]; then
 			ucibatch="set wireless.$gate.disabled='0'"
 			echo "$ucibatch" | uci batch
 		else
@@ -1478,8 +1479,8 @@ elif [ "$1" = "connect" ]; then
 			linklocal="${connectto%,*}"
 			ndpmac="${connectto##*,}"
 
-			ispeer=$(echo "$peerlist" | grep "$ndpmac"; echo $?)
-echo "peerlist=$peerlist! ndpmac=$ndpmac! ispeer=$ispeer!"
+			ispeer=$(echo "$peerlist" | grep -q "$ndpmac"; echo $?)
+
 			if [ "$ispeer" -ne 0 ]; then
 				continue
 			fi
@@ -1537,19 +1538,27 @@ elif [ "$1" = "copy" ]; then
 	fi
 
 	if [ ! -z "$peerlist" ]; then
+
 		for connectto in $connectlist; do
 			linklocal="${connectto%,*}"
 			ndpmac="${connectto##*,}"
+
+			ispeer=$(echo "$peerlist" | grep -q "$ndpmac"; echo $?)
+
+			if [ "$ispeer" -ne 0 ]; then
+				continue
+			fi
+
 			ndpmacf=$(printf "%s" "$ndpmac" | tr ":" "-")
+			ip6addr=$(echo "$linklocal" | awk -F "%" '{printf "%s", $1}')
 
 			if [ -z "$nodeaddr" ]; then
-				echo "	$ndpmacf"
-			elif [ "$nodeaddr" = "$ndpmac" ]; then
+				echo "	$ndpmacf	[ ip address: $ip6addr ]"
+			elif [ ! -z "$nodeaddr" ]; then
 
-				if [ ! -z "$filepath" ]; then
+				if [ "$nodeaddr" = "$ndpmac" ] && [ ! -z "$filepath" ]; then
 					echo
 					echo "Trying to copy to meshnode \"$ndpmacf\"....."
-					echo
 					scp "$filepath" "root@[$linklocal]:/tmp/$filename"
 					echo
 					echo "Disconnected from meshnode \"$ndpmacf\""
