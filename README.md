@@ -432,6 +432,7 @@ Mesh11sd is an OpenWrt service daemon and runs continuously in the background. I
 
 **Example status output:**
 
+```
 {
   "setup":{
     "version":"3.0.0beta",
@@ -516,3 +517,4 @@ Mesh11sd is an OpenWrt service daemon and runs continuously in the background. I
     }
   }
 }
+```
