@@ -1871,11 +1871,18 @@ elif [ "$1" = "daemon" ]; then
 					syslogmessage="Portal detection is disabled, forcing portal mode"
 					write_to_syslog
 
+					if [ -e "/var/run/udhcpc-$device.pid" ]; then
+						kill $(cat /var/run/udhcpc-$device.pid)
+					fi
+
+					restore_ipv4
+
 					uci set dhcp.@dnsmasq[0].authoritative='1'
 					echo "set dhcp.$auto_mesh_network.ignore='0'" | uci batch
 					echo "set dhcp.$auto_mesh_network.ra_default='2'" | uci batch
 					echo "set dhcp.$auto_mesh_network.dhcpv6='server'" | uci batch
 					echo "set dhcp.$auto_mesh_network.ra='server'" | uci batch
+					uci set dhcp.@dnsmasq[0].logfacility='-'
 					uci set dhcp.@dnsmasq[0].quietdhcp='1'
 
 					mesh_hwmp_rootmode="4"
