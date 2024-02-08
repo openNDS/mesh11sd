@@ -1,4 +1,6 @@
 mesh11sd (3.0.0)
+  * Fix - ensure ipv4 address is restored when portal_detect is disabled [bluewavenet]
+  * Fix - get_portal_state, wait for gateway ipv4 to come up before setting upstream dns server [bluewavenet]
   * Fix - allow wireless config for ap disable option to take precedence [bluewavenet]
   * Fix - missing fixup flag [bluewavenet]
   * Fix - connect and copy to ensure correct list of nodes is displayed [bluewavenet]

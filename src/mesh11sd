@@ -645,6 +645,7 @@ get_portal_state() {
 	write_to_syslog
 
 	authoritative=$(uci get dhcp.@dnsmasq[0].authoritative 2>/dev/null | awk '{printf "%d", $1}')
+	config_ipaddr=$(uci get network.$auto_mesh_network.ipaddr)
 
 	if [ -z "$authoritative" ]; then
 		authoritative=2 # Meaning not yet set
@@ -656,7 +657,6 @@ get_portal_state() {
 		gwstatus=""
 	else
 		gw_ip=$(echo "$default_gw" | awk -F" " '{printf "%s", $3}')
-		config_ipaddr=$(uci get network.$auto_mesh_network.ipaddr)
 
 		if [ -z "$gw_ip" ] || [ "$config_ipaddr" = "$gw_ip" ]; then
 			is_portal=""
@@ -744,6 +744,7 @@ check_portal() {
 				echo "set dhcp.$auto_mesh_network.dhcpv6='disabled'" | uci batch
 				echo "set dhcp.$auto_mesh_network.dhcpv4='disabled'" | uci batch
 				echo "set dhcp.$auto_mesh_network.ra='disabled'" | uci batch
+				uci set dhcp.@dnsmasq[0].logfacility='-'
 				uci set dhcp.@dnsmasq[0].quietdhcp='1'
 
 				non_portal_mesh_hwmp_rootmode="3"
@@ -751,6 +752,32 @@ check_portal() {
 
 				/sbin/service dnsmasq restart
 				/sbin/service odhcpd restart
+
+				local retries=20
+
+				for retry in $(seq $retries); do
+					default_gw=$(ip route | grep "default via")
+
+					if [ -z "$default_gw" ]; then
+						debugtype="debug"
+						syslogmessage="Waiting for ipv4 default gateway - iteration [ $retry ] ...."
+						write_to_syslog
+						sleep 1
+						continue
+					else
+						gw_ip=$(echo "$default_gw" | awk -F" " '{printf "%s", $3}')
+						break
+					fi
+				done
+
+				if [ ! -z "$gw_ip" ]; then
+					echo "add_list dhcp.@dnsmasq[0].server='$gw_ip'" | uci batch
+				else
+					uci set dhcp.@dnsmasq[0].authoritative='2'
+				fi
+
+				/sbin/service dnsmasq reload
+				/sbin/service system restart
 			fi
 
 			check_channel
@@ -776,12 +803,14 @@ check_portal() {
 				echo "set dhcp.$auto_mesh_network.dhcpv6='server'" | uci batch
 				echo "set dhcp.$auto_mesh_network.dhcpv4='server'" | uci batch
 				echo "set dhcp.$auto_mesh_network.ra='server'" | uci batch
+				uci set dhcp.@dnsmasq[0].logfacility='-'
 				uci set dhcp.@dnsmasq[0].quietdhcp='1'
-
+				echo "del_list dhcp.@dnsmasq[0].server='$config_ipaddr'" | uci batch
 				echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='$mesh_hwmp_rootmode'" | uci batch
 
 				/sbin/service dnsmasq restart
 				/sbin/service odhcpd restart
+				/sbin/service system restart
 
 				if [ "$daemon_startup" -eq 1 ]; then
 					daemon_startup=0
@@ -1842,11 +1871,18 @@ elif [ "$1" = "daemon" ]; then
 					syslogmessage="Portal detection is disabled, forcing portal mode"
 					write_to_syslog
 
+					if [ -e "/var/run/udhcpc-$device.pid" ]; then
+						kill $(cat /var/run/udhcpc-$device.pid)
+					fi
+
+					restore_ipv4
+
 					uci set dhcp.@dnsmasq[0].authoritative='1'
 					echo "set dhcp.$auto_mesh_network.ignore='0'" | uci batch
 					echo "set dhcp.$auto_mesh_network.ra_default='2'" | uci batch
 					echo "set dhcp.$auto_mesh_network.dhcpv6='server'" | uci batch
 					echo "set dhcp.$auto_mesh_network.ra='server'" | uci batch
+					uci set dhcp.@dnsmasq[0].logfacility='-'
 					uci set dhcp.@dnsmasq[0].quietdhcp='1'
 
 					mesh_hwmp_rootmode="4"
