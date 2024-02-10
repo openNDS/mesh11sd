@@ -372,7 +372,7 @@ check_config_params() {
 	mesh_hwmp_rann_interval=$(uci get mesh11sd.mesh_params.mesh_hwmp_rann_interval 2> /dev/null)
 
 	if [ -z "$mesh_hwmp_rann_interval" ]; then
-		mesh_hwmp_rann_interval="5000"
+		mesh_hwmp_rann_interval="15000"
 		echo "set mesh11sd.mesh_params.mesh_hwmp_rann_interval='$mesh_hwmp_rann_interval'" | uci batch
 	fi
 
@@ -381,6 +381,44 @@ check_config_params() {
 	write_to_syslog
 
 	#####
+	mesh_hwmp_root_interval=$(uci get mesh11sd.mesh_params.mesh_hwmp_root_interval 2> /dev/null)
+
+	if [ -z "$mesh_hwmp_root_interval" ]; then
+		mesh_hwmp_root_interval="15000"
+		echo "set mesh11sd.mesh_params.mesh_hwmp_root_interval='$mesh_hwmp_root_interval'" | uci batch
+	fi
+
+	syslogmessage="option mesh_hwmp_root_interval [ $mesh_hwmp_root_interval ]"
+	debugtype="info"
+	write_to_syslog
+
+	#####
+	mesh_hwmp_active_path_timeout=$(uci get mesh11sd.mesh_params.mesh_hwmp_active_path_timeout 2> /dev/null)
+
+	if [ -z "$mesh_hwmp_active_path_timeout" ]; then
+		mesh_hwmp_active_path_timeout="15000"
+		echo "set mesh11sd.mesh_params.mesh_hwmp_active_path_timeout='$mesh_hwmp_active_path_timeout'" | uci batch
+	fi
+
+	syslogmessage="option mesh_hwmp_active_path_timeout [ $mesh_hwmp_active_path_timeout ]"
+	debugtype="info"
+	write_to_syslog
+
+	#####
+
+	mesh_hwmp_active_path_to_root_timeout=$(uci get mesh11sd.mesh_params.mesh_hwmp_active_path_to_root_timeout 2> /dev/null)
+
+	if [ -z "$mesh_hwmp_active_path_to_root_timeout" ]; then
+		mesh_hwmp_active_path_to_root_timeout="15000"
+		echo "set mesh11sd.mesh_params.mesh_hwmp_active_path_to_root_timeout='$mesh_hwmp_active_path_to_root_timeout'" | uci batch
+	fi
+
+	syslogmessage="option mesh_hwmp_active_path_to_root_timeout [ $mesh_hwmp_active_path_to_root_timeout ]"
+	debugtype="info"
+	write_to_syslog
+
+	#####
+
 	mesh_max_peer_links=$(uci get mesh11sd.mesh_params.mesh_max_peer_links 2> /dev/null)
 
 	if [ -z "$mesh_max_peer_links" ]; then
@@ -830,6 +868,7 @@ check_hwmp() {
 
 	for iface in $iflist; do
 		mesh_hwmp_active_path_timeout=$(iw dev $iface get mesh_param mesh_hwmp_active_path_timeout | awk '{printf "%s", $1}')
+		mesh_hwmp_active_path_to_root_timeout=$(iw dev $iface get mesh_param mesh_hwmp_active_path_to_root_timeout | awk '{printf "%s", $1}')
 		mesh_hwmp_rann_interval=$(iw dev $iface get mesh_param mesh_hwmp_rann_interval | awk '{printf "%s", $1}')
 		mesh_hwmp_root_interval=$(iw dev $iface get mesh_param mesh_hwmp_root_interval | awk '{printf "%s", $1}')
 
@@ -840,11 +879,11 @@ check_hwmp() {
 			echo "set mesh11sd.mesh_params.mesh_hwmp_rann_interval='$mesh_hwmp_active_path_timeout'" | uci batch
 		fi
 
-		if [ "$mesh_hwmp_root_interval" -gt "$mesh_hwmp_active_path_timeout" ]; then
+		if [ "$mesh_hwmp_root_interval" -gt "$mesh_hwmp_active_path_to_root_timeout" ]; then
 			debugtype="warn"
 			syslogmessage="mesh_hwmp_root_interval is too large, reducing...."
 			write_to_syslog
-			echo "set mesh11sd.mesh_params.mesh_hwmp_root_interval='$mesh_hwmp_active_path_timeout'" | uci batch
+			echo "set mesh11sd.mesh_params.mesh_hwmp_root_interval='$mesh_hwmp_active_path_to_root_timeout'" | uci batch
 		fi
 
 	done
