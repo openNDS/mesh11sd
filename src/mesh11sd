@@ -31,11 +31,12 @@ get_mesh_iflist () {
 check_mesh_phantom () {
 	nodelist=$(iw dev $iface mpath dump | awk '{printf "%s,%s ", $1, $2}')
 
-	debugtype="debug"
-	syslogmessage="nodelist [$nodelist]"
-	write_to_syslog
-
 	for node in $nodelist; do
+
+		debugtype="debug"
+		syslogmessage="node [$node]"
+		write_to_syslog
+
 		phantom=$(echo "$node" | awk -F"," '$2 == "00:00:00:00:00:00" {printf $1 }')
 
 		if [ ! -z "$phantom" ]; then
@@ -372,7 +373,7 @@ check_config_params() {
 	mesh_hwmp_rann_interval=$(uci get mesh11sd.mesh_params.mesh_hwmp_rann_interval 2> /dev/null)
 
 	if [ -z "$mesh_hwmp_rann_interval" ]; then
-		mesh_hwmp_rann_interval="5000"
+		mesh_hwmp_rann_interval="15000"
 		echo "set mesh11sd.mesh_params.mesh_hwmp_rann_interval='$mesh_hwmp_rann_interval'" | uci batch
 	fi
 
@@ -381,6 +382,44 @@ check_config_params() {
 	write_to_syslog
 
 	#####
+	mesh_hwmp_root_interval=$(uci get mesh11sd.mesh_params.mesh_hwmp_root_interval 2> /dev/null)
+
+	if [ -z "$mesh_hwmp_root_interval" ]; then
+		mesh_hwmp_root_interval="15000"
+		echo "set mesh11sd.mesh_params.mesh_hwmp_root_interval='$mesh_hwmp_root_interval'" | uci batch
+	fi
+
+	syslogmessage="option mesh_hwmp_root_interval [ $mesh_hwmp_root_interval ]"
+	debugtype="info"
+	write_to_syslog
+
+	#####
+	mesh_hwmp_active_path_timeout=$(uci get mesh11sd.mesh_params.mesh_hwmp_active_path_timeout 2> /dev/null)
+
+	if [ -z "$mesh_hwmp_active_path_timeout" ]; then
+		mesh_hwmp_active_path_timeout="15000"
+		echo "set mesh11sd.mesh_params.mesh_hwmp_active_path_timeout='$mesh_hwmp_active_path_timeout'" | uci batch
+	fi
+
+	syslogmessage="option mesh_hwmp_active_path_timeout [ $mesh_hwmp_active_path_timeout ]"
+	debugtype="info"
+	write_to_syslog
+
+	#####
+
+	mesh_hwmp_active_path_to_root_timeout=$(uci get mesh11sd.mesh_params.mesh_hwmp_active_path_to_root_timeout 2> /dev/null)
+
+	if [ -z "$mesh_hwmp_active_path_to_root_timeout" ]; then
+		mesh_hwmp_active_path_to_root_timeout="15000"
+		echo "set mesh11sd.mesh_params.mesh_hwmp_active_path_to_root_timeout='$mesh_hwmp_active_path_to_root_timeout'" | uci batch
+	fi
+
+	syslogmessage="option mesh_hwmp_active_path_to_root_timeout [ $mesh_hwmp_active_path_to_root_timeout ]"
+	debugtype="info"
+	write_to_syslog
+
+	#####
+
 	mesh_max_peer_links=$(uci get mesh11sd.mesh_params.mesh_max_peer_links 2> /dev/null)
 
 	if [ -z "$mesh_max_peer_links" ]; then
@@ -398,7 +437,7 @@ get_mesh_path_cost () {
 	mesh_path_cost=$(uci get mesh11sd.setup.mesh_path_cost 2> /dev/null)
 
 	if [ -z "$mesh_path_cost" ]; then
-		mesh_path_cost="1"
+		mesh_path_cost="0"
 	fi
 
 	syslogmessage="option mesh_path_cost [ $mesh_path_cost ]"
@@ -830,6 +869,7 @@ check_hwmp() {
 
 	for iface in $iflist; do
 		mesh_hwmp_active_path_timeout=$(iw dev $iface get mesh_param mesh_hwmp_active_path_timeout | awk '{printf "%s", $1}')
+		mesh_hwmp_active_path_to_root_timeout=$(iw dev $iface get mesh_param mesh_hwmp_active_path_to_root_timeout | awk '{printf "%s", $1}')
 		mesh_hwmp_rann_interval=$(iw dev $iface get mesh_param mesh_hwmp_rann_interval | awk '{printf "%s", $1}')
 		mesh_hwmp_root_interval=$(iw dev $iface get mesh_param mesh_hwmp_root_interval | awk '{printf "%s", $1}')
 
@@ -840,11 +880,11 @@ check_hwmp() {
 			echo "set mesh11sd.mesh_params.mesh_hwmp_rann_interval='$mesh_hwmp_active_path_timeout'" | uci batch
 		fi
 
-		if [ "$mesh_hwmp_root_interval" -gt "$mesh_hwmp_active_path_timeout" ]; then
+		if [ "$mesh_hwmp_root_interval" -gt "$mesh_hwmp_active_path_to_root_timeout" ]; then
 			debugtype="warn"
 			syslogmessage="mesh_hwmp_root_interval is too large, reducing...."
 			write_to_syslog
-			echo "set mesh11sd.mesh_params.mesh_hwmp_root_interval='$mesh_hwmp_active_path_timeout'" | uci batch
+			echo "set mesh11sd.mesh_params.mesh_hwmp_root_interval='$mesh_hwmp_active_path_to_root_timeout'" | uci batch
 		fi
 
 	done
@@ -974,7 +1014,6 @@ ccpy_setup() {
 				device=$(uci get network.$network.device)
 
 				if [ "$network" != "$network_previous" ]; then
-					#connectlist="$connectlist ""$(ip -6 neigh | grep "fe80::" | grep "$device" | grep "lladdr" | grep "router"| awk '{printf "%s%s%s,%s ", $1, "%", $3, $5}')"
 					connectlist="$connectlist ""$(ip -6 neigh | grep "fe80::" | grep "$device" | grep "lladdr" | awk '{printf "%s%s%s,%s ", $1, "%", $3, $5}')"
 				fi
 
@@ -1049,7 +1088,7 @@ auto_config() {
 					echo "set wireless.m11s$phyindex.network='$auto_mesh_network'" | uci batch
 					echo "set wireless.m11s$phyindex.ifname='$mesh_ifname'" | uci batch
 					echo "set wireless.radio$phyindex.disabled='0'" | uci batch
-					echo "set wireless.radio$phyindex.wmm='1'" | uci batch
+
 
 					country=$(uci get wireless.radio$phyindex.country 2> /dev/null | awk '{printf "%s", $1}')
 
@@ -1793,13 +1832,6 @@ elif [ "$1" = "daemon" ]; then
 			# get a list of interfaces
 			get_mesh_iflist
 
-			# Make sure STP is on
-			stpstatus=$(brctl show $device | grep "yes" | awk '{printf "%s", $3}')
-
-			if [ -z "$stpstatus" ] || [ "$stpstatus" != "yes" ]; then
-				brctl stp "$device" yes
-			fi
-
 			for iface in $iflist; do
 				wait_for_interface "$iface"
 
@@ -1833,20 +1865,30 @@ elif [ "$1" = "daemon" ]; then
 				# Set stp path cost
 				mute=1
 				get_mesh_path_cost
-				brctl setpathcost "$device" "$iface" "$mesh_path_cost"
 
-				br_ifaces=$(brctl showstp "$device" | grep -B 1 -w "port id" | grep "(" | awk '{printf "%s ", $1}')
+				if [ "$mesh_path_cost" -gt 0 ] && [ "$mesh_path_cost" -lt 65535 ]; then
+					# Make sure STP is on
+					stpstatus=$(brctl show $device | grep "yes" | awk '{printf "%s", $3}')
 
-				for br_iface in $br_ifaces; do
-
-					if [ "$br_iface" = "$iface" ]; then
-						continue
+					if [ -z "$stpstatus" ] || [ "$stpstatus" != "yes" ]; then
+						brctl stp "$device" yes
 					fi
 
-					other_path_cost=$(( 65535 - $mesh_path_cost))
-					brctl setpathcost "$device" "$br_iface" "$other_path_cost"
+					brctl setpathcost "$device" "$iface" "$mesh_path_cost"
 
-				done
+					br_ifaces=$(brctl showstp "$device" | grep -B 1 -w "port id" | grep "(" | awk '{printf "%s ", $1}')
+
+					for br_iface in $br_ifaces; do
+
+						if [ "$br_iface" = "$iface" ]; then
+							continue
+						fi
+
+						other_path_cost=$(( 65535 - $mesh_path_cost))
+						brctl setpathcost "$device" "$br_iface" "$other_path_cost"
+
+					done
+				fi
 
 				#Do NOT configure parameters found in wireless config
 				# so change the value of uciname before calling check_mesh_params.

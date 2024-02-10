@@ -1,4 +1,7 @@
 mesh11sd (3.0.0)
+  * Fix - display each node on a new line in syslog instead of all on one line [bluewavenet]
+  * Fix - set hwmp rann and root intervals to reduce background traffic [bluewavenet]
+  * Add - enable/disable STP, mesh_path_cost=0 disables else sets cost value [bluewavenet]
   * Add - radio band to ssid suffix [bluewavenet]
   * Fix - ensure ipv4 address is restored when portal_detect is disabled [bluewavenet]
   * Fix - get_portal_state, wait for gateway ipv4 to come up before setting upstream dns server [bluewavenet]
@@ -46,7 +49,7 @@ mesh11sd (3.0.0)
   * Fix - revert uncommitted changes on service stop [bluewavenet]
   * Add - numerous code improvements [bluewavenet]
 
- -- Rob White <dot@blue-wave.net>  Thu, 06 Feb 2024 17:10:05 +0000
+ -- Rob White <dot@blue-wave.net>  Sat, 10 Feb 2024 07:21:42 +0000
 
 mesh11sd (2.0.0)
   * Add - Update config file [bluewavenet]
