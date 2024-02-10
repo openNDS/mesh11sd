@@ -1054,7 +1054,18 @@ auto_config() {
 	autoconfig=0
 	dfs_etsi="GB"
 
+	# Are we using ath10k drivers?
+	ath10k_ct=$(opkg list-installed | grep "ath10k"| grep -c "\-ct")
+
+	if [ "$ath10k_ct" -gt 0 ]; then
+		debugtype="err"
+		syslogmessage="Unable to autoconfigure. Please install ath10k NON ct drivers for mesh support"
+		write_to_syslog
+		exit 1
+	fi
+
 	if [ "$autoconfig" -eq 0 ]; then
+
 		# do we have a mesh supporting wpad?
 		installed_wpad=$(opkg list-installed | grep "wpad" | awk '{printf "%s", $1}' | awk -F "-" '{print $2}')
 
@@ -1214,6 +1225,7 @@ auto_config() {
 			debugtype="err"
 			syslogmessage="Unable to autoconfigure. Please install package wpad-mesh-mbedtls, wpad-mesh-wolfssl, wpad-mesh-openssl or an equivalent full version"
 			write_to_syslog
+			exit 1
 		fi
 
 		# TODO If we want to call auto_config from cli then we can stop it happening more than once by uncommenting the following:
