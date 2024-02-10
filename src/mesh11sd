@@ -31,11 +31,12 @@ get_mesh_iflist () {
 check_mesh_phantom () {
 	nodelist=$(iw dev $iface mpath dump | awk '{printf "%s,%s ", $1, $2}')
 
-	debugtype="debug"
-	syslogmessage="nodelist [$nodelist]"
-	write_to_syslog
-
 	for node in $nodelist; do
+
+		debugtype="debug"
+		syslogmessage="node [$node]"
+		write_to_syslog
+
 		phantom=$(echo "$node" | awk -F"," '$2 == "00:00:00:00:00:00" {printf $1 }')
 
 		if [ ! -z "$phantom" ]; then
