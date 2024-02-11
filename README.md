@@ -518,3 +518,123 @@ Mesh11sd is an OpenWrt service daemon and runs continuously in the background. I
   }
 }
 ```
+
+**Example of using copy and connect:**
+
+***Get a list of meshnodes:***
+
+```
+root@meshnode-c525:~# mesh11sd connect
+===========================================================================
+ Connect a remote terminal session on a remote meshnode
+    Usage: mesh11sd connect [remote_meshnode_macaddress]
+
+ Waiting for node list to build * * * * *
+
+ If the node you are looking for is not in the list - re-run this command.
+===========================================================================
+ The following meshnodes are available for remote connection:
+	e4-95-6e-44-60-2e	[ ip address: fe80::e695:6eff:fe44:602e ]
+	94-83-c4-20-77-4e	[ ip address: fe80::9683:c4ff:fe20:774e ]
+	94-83-c4-29-f5-a4	[ ip address: fe80::9683:c4ff:fe29:f5a4 ]
+	94-83-c4-08-14-83	[ ip address: fe80::9683:c4ff:fe08:1483 ]
+	94-83-c4-17-16-ad	[ ip address: fe80::9683:c4ff:fe17:16ad ]
+	94-83-c4-2e-ef-d0	[ ip address: fe80::9683:c4ff:fe2e:efd0 ]
+	e4-95-6e-4a-43-e5	[ ip address: fe80::e695:6eff:fe4a:43e5 ]
+	e4-95-6e-45-1a-14	[ ip address: fe80::e695:6eff:fe45:1a14 ]
+	94-83-c4-36-85-ea	[ ip address: fe80::9683:c4ff:fe36:85ea ]
+===========================================================================
+root@meshnode-c525:~#
+
+
+```
+
+***Select a meshnode and a new package version:***
+
+
+```
+
+root@meshnode-c525:~# mesh11sd copy 94-83-c4-08-14-83 /tmp/mesh11sd_3.0.1beta-1_all.ipk
+===========================================================================
+ Copy a file to /tmp on a remote meshnode
+    Usage: mesh11sd copy [remote_meshnode_macaddress] [path_of_source_file]
+
+ Waiting for node list to build * * * * *
+
+
+Trying to copy to meshnode "94-83-c4-08-14-83".....
+root@fe80::9683:c4ff:fe08:1483%br-lan's password:
+
+mesh11sd_3.0.1beta-1_all.ipk    100%   15KB  14.7KB/s   00:00
+
+Disconnected from meshnode "94-83-c4-08-14-83"
+
+===========================================================================
+
+root@meshnode-c525:~#
+
+
+
+```
+
+***Connect to the selected node and check the file was transferred:***
+
+```
+
+root@meshnode-c525:~# mesh11sd connect 94-83-c4-08-14-83
+===========================================================================
+ Connect a remote terminal session on a remote meshnode
+    Usage: mesh11sd connect [remote_meshnode_macaddress]
+
+ Waiting for node list to build * * * * *
+
+
+Trying to connect to meshnode "94-83-c4-08-14-83".....
+root@fe80::9683:c4ff:fe08:1483%br-lan's password:
+
+
+BusyBox v1.36.1 (2023-11-14 13:38:11 UTC) built-in shell (ash)
+
+  _______                     ________        __
+ |       |.-----.-----.-----.|  |  |  |.----.|  |_
+ |   -   ||  _  |  -__|     ||  |  |  ||   _||   _|
+ |_______||   __|_____|__|__||________||__|  |____|
+          |__| W I R E L E S S   F R E E D O M
+ -----------------------------------------------------
+ OpenWrt 23.05.2, r23630-842932a63d
+ -----------------------------------------------------
+root@meshnode-1483:~# ll /tmp
+drwxrwxrwt   18 root     root           540 Feb 11 09:46 ./
+drwxr-xr-x    1 root     root             0 Jan  1  1970 ../
+drwx------    2 root     root           120 Jan 19 18:54 .uci/
+----------    1 root     root             0 Jan 19 18:58 .ujailnoafile
+-rw-r--r--    1 root     root             4 Jan 19 18:58 TZ
+-rw-r--r--    1 root     root           985 Jan  1  1970 board.json
+-rw-r--r--    1 root     root            48 Feb 11 09:46 devicemac
+-rw-r--r--    1 root     root             0 Jan 19 18:54 dhcp.leases
+-rw-r--r--    1 root     root            51 Feb 11 09:46 dhcp6probe
+-rw-r--r--    1 root     root           877 Feb 11 09:45 dhcp6probe.prev
+drwxr-xr-x    2 root     root            40 Jan 19 18:54 dnsmasq.d/
+drwxr-xr-x    3 root     root            80 Jan 19 18:58 etc/
+drwxr-xr-x    2 root     root            60 Jan 19 18:58 hosts/
+drwxr-xr-x    3 root     root            60 Jan 19 18:54 lib/
+drwxrwxrwt    2 root     root           420 Jan 19 18:54 lock/
+drwxr-xr-x    2 root     root            80 Jan 19 18:54 log/
+-rw-r--r--    1 root     root         15072 Feb 11 09:41 mesh11sd_3.0.1beta-1_all.ipk
+drwxr-xr-x    2 root     root            40 Jan 19 18:54 opkg-lists/
+drwxr-xr-x    2 root     root            40 Jan  1  1970 overlay/
+-rw-r--r--    1 root     root            47 Jan 19 18:58 resolv.conf
+drwxr-xr-x    2 root     root            60 Jan 19 18:57 resolv.conf.d/
+drwxr-xr-x    7 root     root           340 Jan 19 18:57 run/
+drwxrwxrwt    2 root     root            40 Jan  1  1970 shm/
+drwxr-xr-x    2 root     root            80 Feb 10 10:07 state/
+drwxr-xr-x    2 root     root            80 Jan  1  1970 sysinfo/
+drwxr-xr-x    2 root     root            40 Jan 19 18:54 tmp/
+drwxr-xr-x    3 root     root            60 Jan 19 18:54 usr/
+root@meshnode-1483:~# ^C
+
+root@meshnode-1483:~#
+
+
+
+```
