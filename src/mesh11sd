@@ -115,11 +115,16 @@ restart_mesh () {
 }
 
 get_current_setup () {
+	mute=0
 	debuglevel=$(uci get mesh11sd.setup.debuglevel 2> /dev/null)
 
 	if [ -z "$debuglevel" ]; then
 		debuglevel=1
 	fi
+
+	syslogmessage="Reading configuration"
+	debugtype="notice"
+	write_to_syslog
 
 	enabled=$(uci get mesh11sd.setup.enabled 2> /dev/null)
 
@@ -723,7 +728,7 @@ get_portal_state() {
 restore_ipv4() {
 	. /tmp/devicemac
 	config_ipaddr=$(uci get network.$auto_mesh_network.ipaddr)
-	active_ipaddr=$(ip addr show dev $auto_mesh_network | grep -w "$config_ipaddr" | awk '{printf "%s", $2}' | awk -F"/" '{printf "%s", $1}')
+	active_ipaddr=$(ip addr show dev $device | grep -w "$config_ipaddr" | awk '{printf "%s", $2}' | awk -F"/" '{printf "%s", $1}')
 
 	if [ "$config_ipaddr" != "$active_ipaddr" ]; then
 		config_netmask=$(uci get network.$auto_mesh_network.netmask)
@@ -1279,7 +1284,15 @@ urldecode() {
 # Start point
 ##############
 
-mesh11sdpid=$(pgrep -f "/bin/sh /usr/sbin/mesh11sd")
+# Wait a little while for things to settle down
+sleep 2
+
+if [ -e "/var/run/mesh11sd.pid" ]; then
+	mesh11sdpid=$(cat /var/run/mesh11sd.pid)
+else
+	mesh11sdpid=$(pgrep -f "/bin/sh /usr/sbin/mesh11sd")
+fi
+
 get_current_setup 2> /dev/null
 
 if [ -z "$1" ] || [ "$1" = "-h" ] || [ $1 = "--help" ] || [ $1 = "help" ]; then
