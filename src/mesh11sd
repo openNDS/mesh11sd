@@ -112,6 +112,13 @@ restart_mesh () {
 	mesh_gate_state
 	wifi
 	wait_for_mesh
+
+	if [ -e "/tmp/devicemac" ]; then
+		. /tmp/devicemac
+		ip link set "$device" arp on
+		ip link set "$device" multicast on
+	fi
+
 }
 
 get_current_setup () {
@@ -744,6 +751,8 @@ restore_ipv4() {
 		broadcast_address="$(( $n1 ^ $b1 )).$(( $n2 ^ $b2 )).$(( $n3 ^ $b3 )).$(( $n4 ^ $b4 ))"
 
 		ip addr add "$cdir_ip" broadcast "$broadcast_address" dev "$device"
+		ip link set "$device" arp on
+		ip link set "$device" multicast on
 	fi
 }
 
