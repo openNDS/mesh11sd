@@ -99,6 +99,11 @@ check_mesh_params () {
 			write_to_syslog
 			iwstatus=$(iw dev $iface set mesh_param $param "$conf" 2>&1)
 
+			if [ "$param" = "mesh_rssi_threshold" ]; then
+				mesh_rssi_threshold=$conf
+				echo "meshinterface=\"$iface\"" > /tmp/meshinterface
+			fi
+
 			if [ ! -z "$iwstatus" ]; then
 				debugtype="err"
 				syslogmessage="$param: $iwstatus"
@@ -998,24 +1003,59 @@ wait_for_mesh() {
 	done
 }
 
-ccpy_setup() {
+mpath_delete_peers() {
+
+	if [ -e "/tmp/meshinterface" ]; then
+		debugtype="debug"
+		syslogmessage="Disconnecting nodes"
+		write_to_syslog
+
+		rm /tmp/meshinterface
+
+		get_wiphys
+
+		if [ ! -z "$wiphys" ]; then
+
+			for wiphy in $wiphys; do
+				mesh_capable=$(iw phy $wiphy info | grep -A 15 "Supported interface modes:" | grep -w "mesh point")
+
+				if [ -z "$mesh_capable" ]; then
+					continue
+				fi
+
+				phyindex=$(echo "$wiphy" | awk -F "phy" '{printf "%s", $2}')
+				phyindex=$(printf "%x" $phyindex)
+
+				echo "set wireless.m11s$phyindex.mesh_rssi_threshold='$mesh_rssi_threshold'" | uci batch
+			done
+		fi
+
+		restart_mesh
+	fi
+}
+
+get_peers() {
 	get_mesh_iflist
 
-	for iface in $iflist; do
-		wait_for_interface "$iface"
+	for miface in $iflist; do
+		wait_for_interface "$miface"
 
 		if [ "$ifstatus" = "down" ]; then
 			continue
 		fi
 
-		peers=$(iw dev $iface mpath dump | grep -c -w $iface)
-		macrouting=$(iw dev $iface mpath dump | awk -F" " 'NR>1 {printf "%s/%s ",$1,$2}')
+		peers=$(iw dev $miface mpath dump | grep -c -w $miface)
+		macrouting=$(iw dev $miface mpath dump | awk -F" " 'NR>1 {printf "%s/%s ",$1,$2}')
 
 		for peer in $macrouting; do
 			peermac=$(echo "$peer" | awk -F"/" '{printf "%s", $1}')
 			peerlist="$peerlist ""$peermac"
 		done
 	done
+}
+
+ccpy_setup() {
+	get_peers
 
 	meshconfigs=$(uci show wireless 2> /dev/null | grep "mode='mesh'" | awk -F ".mode='mesh'" '{printf "%s " $1}')
 	connectlist=""
@@ -1112,6 +1152,7 @@ auto_config() {
 					echo "set wireless.m11s$phyindex.key='$auto_mesh_key'" | uci batch
 					echo "set wireless.m11s$phyindex.network='$auto_mesh_network'" | uci batch
 					echo "set wireless.m11s$phyindex.ifname='$mesh_ifname'" | uci batch
+					echo "set wireless.m11s$phyindex.mesh_rssi_threshold='$mesh_rssi_threshold'" | uci batch
 					echo "set wireless.radio$phyindex.disabled='0'" | uci batch
 
 
@@ -1975,8 +2016,10 @@ elif [ "$1" = "daemon" ]; then
 			check_gate
 			check_hwmp
 			wait_for_mesh
+
 		fi
 
+		mpath_delete_peers
 		debugtype="debug"
 		syslogmessage="checkinterval $checkinterval seconds"
 		write_to_syslog
