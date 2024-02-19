@@ -40,7 +40,7 @@ check_mesh_phantom () {
 		phantom=$(echo "$node" | awk -F"," '$2 == "00:00:00:00:00:00" {printf $1 }')
 
 		if [ ! -z "$phantom" ]; then
-			debugtype="warn"
+			debugtype="info"
 			syslogmessage="Phantom meshnode detected [$phantom] - deleting"
 			write_to_syslog
 			iw dev $iface mpath del $phantom
