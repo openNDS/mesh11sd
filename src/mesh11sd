@@ -84,7 +84,7 @@ check_mesh_params () {
 			continue
 		fi
 
-		param_value=$(iw dev $iface get mesh_param $param | awk '{printf "%s", $1}')
+		param_value=$(iw dev $iface get mesh_param $param 2> /dev/null | awk '{printf "%s", $1}')
 
 		if [ -z "$param_value" ]; then
 			debugtype="info"
