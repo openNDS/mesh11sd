@@ -127,7 +127,6 @@ restart_mesh () {
 }
 
 get_current_setup () {
-	mute=0
 	debuglevel=$(uci get mesh11sd.setup.debuglevel 2> /dev/null)
 
 	if [ -z "$debuglevel" ]; then
@@ -414,7 +413,7 @@ check_config_params() {
 	mesh_hwmp_active_path_timeout=$(uci get mesh11sd.mesh_params.mesh_hwmp_active_path_timeout 2> /dev/null)
 
 	if [ -z "$mesh_hwmp_active_path_timeout" ]; then
-		mesh_hwmp_active_path_timeout="15000"
+		mesh_hwmp_active_path_timeout="30000"
 		echo "set mesh11sd.mesh_params.mesh_hwmp_active_path_timeout='$mesh_hwmp_active_path_timeout'" | uci batch
 	fi
 
@@ -427,7 +426,7 @@ check_config_params() {
 	mesh_hwmp_active_path_to_root_timeout=$(uci get mesh11sd.mesh_params.mesh_hwmp_active_path_to_root_timeout 2> /dev/null)
 
 	if [ -z "$mesh_hwmp_active_path_to_root_timeout" ]; then
-		mesh_hwmp_active_path_to_root_timeout="15000"
+		mesh_hwmp_active_path_to_root_timeout="30000"
 		echo "set mesh11sd.mesh_params.mesh_hwmp_active_path_to_root_timeout='$mesh_hwmp_active_path_to_root_timeout'" | uci batch
 	fi
 
@@ -1333,9 +1332,6 @@ urldecode() {
 ##############
 # Start point
 ##############
-
-# Wait a little while for things to settle down
-sleep 2
 
 if [ -e "/var/run/mesh11sd.pid" ]; then
 	mesh11sdpid=$(cat /var/run/mesh11sd.pid)
