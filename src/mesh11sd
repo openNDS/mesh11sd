@@ -804,7 +804,7 @@ check_portal() {
 				uci set dhcp.@dnsmasq[0].logfacility='-'
 				uci set dhcp.@dnsmasq[0].quietdhcp='1'
 
-				non_portal_mesh_hwmp_rootmode="3"
+				non_portal_mesh_hwmp_rootmode="0"
 				echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='$non_portal_mesh_hwmp_rootmode'" | uci batch
 
 				/sbin/service dnsmasq restart
