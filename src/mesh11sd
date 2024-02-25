@@ -114,6 +114,10 @@ check_mesh_params () {
 }
 
 restart_mesh () {
+
+echo "in restart_mesh"
+
+	set_txpower
 	mesh_gate_state
 	wifi
 	wait_for_mesh
@@ -318,6 +322,17 @@ get_current_setup () {
 	fi
 
 	syslogmessage="option mesh_gate_enable [ $mesh_gate_enable ]"
+	debugtype="info"
+	write_to_syslog
+
+	#####
+	txpower=$(uci get mesh11sd.setup.txpower 2> /dev/null)
+
+	if [ -z "$txpower" ]; then
+		txpower="10"
+	fi
+
+	syslogmessage="option txpower [ $txpower ]"
 	debugtype="info"
 	write_to_syslog
 
@@ -528,6 +543,20 @@ mesh_gate_state() {
 		fi
 	done
 }
+
+set_txpower() {
+	radiolist=$(uci show wireless | grep "wifi-device" | awk -F "=" '{printf "%s ", $1}')
+
+	for radio in $radiolist; do
+		config_state=$(echo "get $radio.txpower" | uci batch 2> /dev/null)
+
+		if [ -z "$config_state" ] && [ ! -z "$is_portal" ]; then
+			ucibatch="set $radio.txpower='$txpower'"
+			echo "$ucibatch" | uci batch
+		fi
+	done
+}
+
 
 check_gate() {
 	is_gate=$(iw dev | grep -w "type AP")
@@ -1443,6 +1472,7 @@ elif [ "$1" = "status" ]; then
 	echo "    \"auto_mesh_band\":\"$auto_mesh_band\","
 	echo "    \"auto_mesh_id\":\"$auto_mesh_id\","
 	echo "    \"mesh_gate_enable\":\"$mesh_gate_enable\","
+	echo "    \"default_txpower\":\"$txpower\","
 	echo "    \"mesh_path_cost\":\"$mesh_path_cost\","
 	echo "    \"checkinterval\":\"$checkinterval\","
 	echo "    \"interface_timeout\":\"$interface_timeout\","
@@ -2015,7 +2045,12 @@ elif [ "$1" = "daemon" ]; then
 
 		fi
 
+		# Special case of when mesh_rssi_threshold has changed
+		uciname="wireless.m11s$phyindex"
+		check_mesh_params
 		mpath_delete_peers
+		#
+
 		debugtype="debug"
 		syslogmessage="checkinterval $checkinterval seconds"
 		write_to_syslog
