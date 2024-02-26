@@ -102,6 +102,7 @@ check_mesh_params () {
 			if [ "$param" = "mesh_rssi_threshold" ]; then
 				mesh_rssi_threshold=$conf
 				echo "meshinterface=\"$iface\"" > /tmp/meshinterface
+				mpath_delete_peers
 			fi
 
 			if [ ! -z "$iwstatus" ]; then
@@ -2044,12 +2045,6 @@ elif [ "$1" = "daemon" ]; then
 			wait_for_mesh
 
 		fi
-
-		# Special case of when mesh_rssi_threshold has changed
-		uciname="wireless.m11s$phyindex"
-		check_mesh_params
-		mpath_delete_peers
-		#
 
 		debugtype="debug"
 		syslogmessage="checkinterval $checkinterval seconds"
