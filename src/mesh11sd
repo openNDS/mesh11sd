@@ -554,6 +554,11 @@ set_txpower() {
 		if [ -z "$config_state" ] && [ ! -z "$is_portal" ]; then
 			ucibatch="set $radio.txpower='$txpower'"
 			echo "$ucibatch" | uci batch
+			portal_mode="enabled"
+		elif [ ! -z "$portal_mode" ] && [ "$portal_mode" = "enabled" ] && [ -z "$is_portal" ]; then
+			ucibatch="delete $radio.txpower='$txpower'"
+			echo "$ucibatch" | uci batch
+			portal_mode="disabled"
 		fi
 	done
 }
@@ -865,6 +870,7 @@ check_portal() {
 
 				/sbin/service dnsmasq reload
 				/sbin/service system restart
+				restart_mesh
 			fi
 
 			check_channel
@@ -898,7 +904,7 @@ check_portal() {
 				/sbin/service dnsmasq restart
 				/sbin/service odhcpd restart
 				/sbin/service system restart
-
+				restart_mesh
 				if [ "$daemon_startup" -eq 1 ]; then
 					daemon_startup=0
 				fi
@@ -2037,6 +2043,7 @@ elif [ "$1" = "daemon" ]; then
 
 					/sbin/service dnsmasq restart
 					/sbin/service odhcpd restart
+					restart_mesh
 				fi
 			fi
 
