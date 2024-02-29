@@ -115,9 +115,6 @@ check_mesh_params () {
 }
 
 restart_mesh () {
-
-echo "in restart_mesh"
-
 	set_txpower
 	mesh_gate_state
 	wifi
@@ -329,13 +326,11 @@ get_current_setup () {
 	#####
 	txpower=$(uci get mesh11sd.setup.txpower 2> /dev/null)
 
-	if [ -z "$txpower" ]; then
-		txpower="10"
+	if [ ! -z "$txpower" ]; then
+		syslogmessage="option txpower [ $txpower ]"
+		debugtype="info"
+		write_to_syslog
 	fi
-
-	syslogmessage="option txpower [ $txpower ]"
-	debugtype="info"
-	write_to_syslog
 
 	#####
 	ssid_suffix_enable=$(uci get mesh11sd.setup.ssid_suffix_enable 2> /dev/null)
@@ -368,8 +363,8 @@ check_config_params() {
 	#####
 	mesh_rssi_threshold=$(uci get mesh11sd.mesh_params.mesh_rssi_threshold 2> /dev/null)
 
-	if [ -z "$mesh_rssi_threshold" ]; then
-		mesh_rssi_threshold="-80"
+	if [ -z "$mesh_rssi_threshold" ] || [ "$mesh_rssi_threshold" -gt 0 ]; then
+		mesh_rssi_threshold="-70"
 		echo "set mesh11sd.mesh_params.mesh_rssi_threshold='$mesh_rssi_threshold'" | uci batch
 	fi
 
@@ -546,21 +541,19 @@ mesh_gate_state() {
 }
 
 set_txpower() {
-	radiolist=$(uci show wireless | grep "wifi-device" | awk -F "=" '{printf "%s ", $1}')
 
-	for radio in $radiolist; do
-		config_state=$(echo "get $radio.txpower" | uci batch 2> /dev/null)
+	if [ ! -z "$txpower" ]; then
+		radiolist=$(uci show wireless | grep "wifi-device" | awk -F "=" '{printf "%s ", $1}')
 
-		if [ -z "$config_state" ] && [ ! -z "$is_portal" ]; then
-			ucibatch="set $radio.txpower='$txpower'"
-			echo "$ucibatch" | uci batch
-			portal_mode="enabled"
-		elif [ ! -z "$portal_mode" ] && [ "$portal_mode" = "enabled" ] && [ -z "$is_portal" ]; then
-			ucibatch="delete $radio.txpower='$txpower'"
-			echo "$ucibatch" | uci batch
-			portal_mode="disabled"
-		fi
-	done
+		for radio in $radiolist; do
+			config_state=$(echo "get $radio.txpower" | uci batch 2> /dev/null)
+
+			if [ -z "$config_state" ]; then
+				ucibatch="set $radio.txpower='$txpower'"
+				echo "$ucibatch" | uci batch
+			fi
+		done
+	fi
 }
 
 
@@ -1365,6 +1358,29 @@ urldecode() {
 	urldecoded=$(echo "$buffer" | awk '{ gsub(/%20/, " "); print }')
 }
 
+arp_setup() {
+	refresh_bridgemac
+	echo 1 > /proc/sys/net/ipv4/conf/all/arp_accept
+	echo 1 > /proc/sys/net/ipv4/conf/default/arp_accept
+	echo 1 > /proc/sys/net/ipv4/conf/$device/arp_accept
+	echo 2 > /proc/sys/net/ipv4/conf/all/arp_announce
+	echo 2 > /proc/sys/net/ipv4/conf/default/arp_announce
+	echo 2 > /proc/sys/net/ipv4/conf/$device/arp_announce
+	echo 0 > /proc/sys/net/ipv4/conf/all/arp_filter
+	echo 0 > /proc/sys/net/ipv4/conf/default/arp_filter
+	echo 0 > /proc/sys/net/ipv4/conf/$device/arp_filter
+	echo 0 > /proc/sys/net/ipv4/conf/all/arp_ignore
+	echo 0 > /proc/sys/net/ipv4/conf/default/arp_ignore
+	echo 0 > /proc/sys/net/ipv4/conf/$device/arp_ignore
+	echo 1 > /proc/sys/net/ipv4/conf/all/arp_notify
+	echo 1 > /proc/sys/net/ipv4/conf/default/arp_notify
+	echo 1 > /proc/sys/net/ipv4/conf/$device/arp_notify
+	echo 1 > /proc/sys/net/ipv4/conf/all/proxy_arp
+	echo 1 > /proc/sys/net/ipv4/conf/default/proxy_arp
+	echo 1 > /proc/sys/net/ipv4/conf/$device/proxy_arp
+
+}
+
 ##############
 # Start point
 ##############
@@ -1785,6 +1801,8 @@ elif [ "$1" = "daemon" ]; then
 
 	check_config_params
 
+	arp_setup
+
 	# Start the main loop
 	while true; do
 		mode=$(($startup + $statusmode + $enabled))
@@ -1935,7 +1953,8 @@ elif [ "$1" = "daemon" ]; then
 			if [ "$firstloop" -eq 1 ] || [ "$changed" -eq 1 ]; then
 				firstloop=0
 				changed=0
-				restart_mesh
+				touch /tmp/meshinterface
+				mpath_delete_peers
 			fi
 			# get a list of interfaces
 			get_mesh_iflist
