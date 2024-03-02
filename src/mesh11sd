@@ -364,7 +364,7 @@ check_config_params() {
 	mesh_rssi_threshold=$(uci get mesh11sd.mesh_params.mesh_rssi_threshold 2> /dev/null)
 
 	if [ -z "$mesh_rssi_threshold" ] || [ "$mesh_rssi_threshold" -gt 0 ]; then
-		mesh_rssi_threshold="-70"
+		mesh_rssi_threshold="-75"
 		echo "set mesh11sd.mesh_params.mesh_rssi_threshold='$mesh_rssi_threshold'" | uci batch
 	fi
 
@@ -832,7 +832,7 @@ check_portal() {
 				uci set dhcp.@dnsmasq[0].logfacility='-'
 				uci set dhcp.@dnsmasq[0].quietdhcp='1'
 
-				non_portal_mesh_hwmp_rootmode="0"
+				non_portal_mesh_hwmp_rootmode="2"
 				echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='$non_portal_mesh_hwmp_rootmode'" | uci batch
 
 				/sbin/service dnsmasq restart
