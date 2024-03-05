@@ -364,7 +364,7 @@ check_config_params() {
 	mesh_rssi_threshold=$(uci get mesh11sd.mesh_params.mesh_rssi_threshold 2> /dev/null)
 
 	if [ -z "$mesh_rssi_threshold" ] || [ "$mesh_rssi_threshold" -gt 0 ]; then
-		mesh_rssi_threshold="-75"
+		mesh_rssi_threshold="-60"
 		echo "set mesh11sd.mesh_params.mesh_rssi_threshold='$mesh_rssi_threshold'" | uci batch
 	fi
 
@@ -400,7 +400,7 @@ check_config_params() {
 	mesh_hwmp_rann_interval=$(uci get mesh11sd.mesh_params.mesh_hwmp_rann_interval 2> /dev/null)
 
 	if [ -z "$mesh_hwmp_rann_interval" ]; then
-		mesh_hwmp_rann_interval="15000"
+		mesh_hwmp_rann_interval="5000"
 		echo "set mesh11sd.mesh_params.mesh_hwmp_rann_interval='$mesh_hwmp_rann_interval'" | uci batch
 	fi
 
@@ -412,7 +412,7 @@ check_config_params() {
 	mesh_hwmp_root_interval=$(uci get mesh11sd.mesh_params.mesh_hwmp_root_interval 2> /dev/null)
 
 	if [ -z "$mesh_hwmp_root_interval" ]; then
-		mesh_hwmp_root_interval="15000"
+		mesh_hwmp_root_interval="5000"
 		echo "set mesh11sd.mesh_params.mesh_hwmp_root_interval='$mesh_hwmp_root_interval'" | uci batch
 	fi
 
@@ -424,7 +424,7 @@ check_config_params() {
 	mesh_hwmp_active_path_timeout=$(uci get mesh11sd.mesh_params.mesh_hwmp_active_path_timeout 2> /dev/null)
 
 	if [ -z "$mesh_hwmp_active_path_timeout" ]; then
-		mesh_hwmp_active_path_timeout="30000"
+		mesh_hwmp_active_path_timeout="50000"
 		echo "set mesh11sd.mesh_params.mesh_hwmp_active_path_timeout='$mesh_hwmp_active_path_timeout'" | uci batch
 	fi
 
@@ -437,7 +437,7 @@ check_config_params() {
 	mesh_hwmp_active_path_to_root_timeout=$(uci get mesh11sd.mesh_params.mesh_hwmp_active_path_to_root_timeout 2> /dev/null)
 
 	if [ -z "$mesh_hwmp_active_path_to_root_timeout" ]; then
-		mesh_hwmp_active_path_to_root_timeout="30000"
+		mesh_hwmp_active_path_to_root_timeout="50000"
 		echo "set mesh11sd.mesh_params.mesh_hwmp_active_path_to_root_timeout='$mesh_hwmp_active_path_to_root_timeout'" | uci batch
 	fi
 
@@ -1550,7 +1550,7 @@ elif [ "$1" = "status" ]; then
 
 				peernum=0
 				peers=$(iw dev $iface mpath dump 2>/dev/null | grep -c -w $iface)
-				macrouting=$(iw dev $iface mpath dump 2>/dev/null | awk -F" " 'NR>1 {printf "%s/%s ",$1,$2}')
+				macrouting=$(iw dev $iface mpath dump 2>/dev/null | awk -F" " 'NR>1 {printf "%s/%s/%s/%s/%s ",$1,$2,$5,$11,$12}')
 				peer_macs="$devicemac ""$(iw dev m-11s-0 mpath dump 2>/dev/null | awk -F" " 'NR>1 {printf "%s ",$1}')"
 
 				echo "      \"this_node\":\"$devicemac\","
@@ -1561,8 +1561,18 @@ elif [ "$1" = "status" ]; then
 					peernum=$((peernum+1))
 					peermac=$(echo "$peer" | awk -F"/" '{printf "%s", $1}')
 					echo "        \"$peermac\":{"
+
 					next_hop=$(echo "$peer" | awk -F"/" '{printf "%s", $2}')
 					echo "          \"next_hop\":\"$next_hop\""
+
+					hop_count=$(echo "$peer" | awk -F"/" '{printf "%s", $4}')
+					echo "          \"hop_count\":\"$hop_count\""
+
+					path_change_count=$(echo "$peer" | awk -F"/" '{printf "%s", $5}')
+					echo "          \"path_change_count\":\"$path_change_count\""
+
+					metric=$(echo "$peer" | awk -F"/" '{printf "%s", $3}')
+					echo "          \"metric\":\"$metric\""
 
 					if [ "$peers" = "$peernum" ]; then
 						echo "        }"
