@@ -1449,16 +1449,23 @@ check_path_changes() {
 						is_connected=$(iw dev $iface station dump | grep -q "$peermac"; echo -n $?)
 
 						if [ "$is_connected" -eq 0 ]; then
-							debugtype="debug"
+							debugtype="info"
 							syslogmessage="[ $hop_count ] hops to station [ $peermac ], [ $path_change_count ] path_change(s) for station detected"
 							write_to_syslog
+							debugtype="info"
+							syslogmessage="There are multiple hops to station [ $peermac ], consider its location or adjust txpower and/or rssi_threshold"
+							write_to_syslog
+							# If we want to make reactive fixups, do them here, for example:
 							#iw dev $iface station del $peermac
 							#iw dev $iface mpath del $peermac
 						fi
 
 					elif [ "$hop_count" -eq 1 ] && [ "$path_change_count" -gt 1 ]; then
+						# If we want to make reactive fixups, do them here, for example:
 						#iw dev $iface mpath del $peermac
-						echo "peermac=$peermac"
+						debugtype="info"
+						syslogmessage="Station [ $peermac ] has multiple path changes, consider its location or adjust txpower and/or rssi_threshold"
+						write_to_syslog
 					fi
 				done
 			fi
