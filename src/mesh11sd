@@ -12,7 +12,7 @@
 #
 # mesh11sd daemon
 #
-version="3.0.1beta"
+version="3.1.0beta"
 fixup1=0
 
 get_mesh_iflist () {
@@ -22,7 +22,7 @@ get_mesh_iflist () {
 	for iface in $all_ifcs; do
 		iftype=$(iw dev $iface info 2> /dev/null | grep "type" | awk '{printf "%s", $2}')
 
-		if [ "$iftype" = "mesh" ]; then
+		if [ ! -z "$iftype" ] && [ "$iftype" = "mesh" ]; then
 			iflist="$iflist $iface"
 		fi
 	done
@@ -40,7 +40,7 @@ check_mesh_phantom () {
 		phantom=$(echo "$node" | awk -F"," '$2 == "00:00:00:00:00:00" {printf $1 }')
 
 		if [ ! -z "$phantom" ]; then
-			debugtype="warn"
+			debugtype="info"
 			syslogmessage="Phantom meshnode detected [$phantom] - deleting"
 			write_to_syslog
 			iw dev $iface mpath del $phantom
@@ -67,7 +67,7 @@ get_params () {
 
 
 
-		if [ -e "$buffer" ]; then
+		if [ -f "$buffer" ]; then
 			params=$(cat $buffer)
 			rm "$buffer"
 		fi
@@ -84,7 +84,7 @@ check_mesh_params () {
 			continue
 		fi
 
-		param_value=$(iw dev $iface get mesh_param $param | awk '{printf "%s", $1}')
+		param_value=$(iw dev $iface get mesh_param $param 2> /dev/null | awk '{printf "%s", $1}')
 
 		if [ -z "$param_value" ]; then
 			debugtype="info"
@@ -94,10 +94,24 @@ check_mesh_params () {
 		fi
 
 		if [ "$param_value" != "$conf" ]; then
-			debugtype="info"
-			syslogmessage="Old value:$param=$param_value, Setting new value:$param=$conf"
-			write_to_syslog
-			iwstatus=$(iw dev $iface set mesh_param $param "$conf" 2>&1)
+
+			if [ "$param" = "mesh_rssi_threshold" ]; then
+				if [ ! -f "/tmp/mesh_rssi_threshold" ]; then
+					debugtype="info"
+					syslogmessage="Old value:$param=$param_value, Setting new value:$param=$conf"
+					write_to_syslog
+					iwstatus=$(iw dev $iface set mesh_param $param "$conf" 2>&1)
+					mesh_rssi_threshold=$conf
+					echo "meshinterface=\"$iface\"" > /tmp/meshinterface
+					all_nodes_rssi_update
+				fi
+			elif [ "$param" != "mesh_rssi_threshold" ]; then
+				debugtype="info"
+				syslogmessage="Old value:$param=$param_value, Setting new value:$param=$conf"
+				write_to_syslog
+				iwstatus=$(iw dev $iface set mesh_param $param "$conf" 2>&1)
+			fi
+
 
 			if [ ! -z "$iwstatus" ]; then
 				debugtype="err"
@@ -109,9 +123,17 @@ check_mesh_params () {
 }
 
 restart_mesh () {
+	set_txpower
 	mesh_gate_state
 	wifi
 	wait_for_mesh
+
+	if [ -f "/tmp/devicemac" ]; then
+		. /tmp/devicemac
+		ip link set "$device" arp on
+		ip link set "$device" multicast on
+	fi
+
 }
 
 get_current_setup () {
@@ -120,6 +142,10 @@ get_current_setup () {
 	if [ -z "$debuglevel" ]; then
 		debuglevel=1
 	fi
+
+	syslogmessage="Reading configuration"
+	debugtype="notice"
+	write_to_syslog
 
 	enabled=$(uci get mesh11sd.setup.enabled 2> /dev/null)
 
@@ -306,6 +332,15 @@ get_current_setup () {
 	write_to_syslog
 
 	#####
+	txpower=$(uci get mesh11sd.setup.txpower 2> /dev/null)
+
+	if [ ! -z "$txpower" ]; then
+		syslogmessage="option txpower [ $txpower ]"
+		debugtype="info"
+		write_to_syslog
+	fi
+
+	#####
 	ssid_suffix_enable=$(uci get mesh11sd.setup.ssid_suffix_enable 2> /dev/null)
 
 	if [ -z "$ssid_suffix_enable" ]; then
@@ -336,8 +371,8 @@ check_config_params() {
 	#####
 	mesh_rssi_threshold=$(uci get mesh11sd.mesh_params.mesh_rssi_threshold 2> /dev/null)
 
-	if [ -z "$mesh_rssi_threshold" ]; then
-		mesh_rssi_threshold="-80"
+	if [ -z "$mesh_rssi_threshold" ] || [ "$mesh_rssi_threshold" -gt 0 ]; then
+		mesh_rssi_threshold="-65"
 		echo "set mesh11sd.mesh_params.mesh_rssi_threshold='$mesh_rssi_threshold'" | uci batch
 	fi
 
@@ -373,7 +408,7 @@ check_config_params() {
 	mesh_hwmp_rann_interval=$(uci get mesh11sd.mesh_params.mesh_hwmp_rann_interval 2> /dev/null)
 
 	if [ -z "$mesh_hwmp_rann_interval" ]; then
-		mesh_hwmp_rann_interval="15000"
+		mesh_hwmp_rann_interval="5000"
 		echo "set mesh11sd.mesh_params.mesh_hwmp_rann_interval='$mesh_hwmp_rann_interval'" | uci batch
 	fi
 
@@ -385,7 +420,7 @@ check_config_params() {
 	mesh_hwmp_root_interval=$(uci get mesh11sd.mesh_params.mesh_hwmp_root_interval 2> /dev/null)
 
 	if [ -z "$mesh_hwmp_root_interval" ]; then
-		mesh_hwmp_root_interval="15000"
+		mesh_hwmp_root_interval="5000"
 		echo "set mesh11sd.mesh_params.mesh_hwmp_root_interval='$mesh_hwmp_root_interval'" | uci batch
 	fi
 
@@ -397,7 +432,7 @@ check_config_params() {
 	mesh_hwmp_active_path_timeout=$(uci get mesh11sd.mesh_params.mesh_hwmp_active_path_timeout 2> /dev/null)
 
 	if [ -z "$mesh_hwmp_active_path_timeout" ]; then
-		mesh_hwmp_active_path_timeout="15000"
+		mesh_hwmp_active_path_timeout="5000"
 		echo "set mesh11sd.mesh_params.mesh_hwmp_active_path_timeout='$mesh_hwmp_active_path_timeout'" | uci batch
 	fi
 
@@ -410,7 +445,7 @@ check_config_params() {
 	mesh_hwmp_active_path_to_root_timeout=$(uci get mesh11sd.mesh_params.mesh_hwmp_active_path_to_root_timeout 2> /dev/null)
 
 	if [ -z "$mesh_hwmp_active_path_to_root_timeout" ]; then
-		mesh_hwmp_active_path_to_root_timeout="15000"
+		mesh_hwmp_active_path_to_root_timeout="6000"
 		echo "set mesh11sd.mesh_params.mesh_hwmp_active_path_to_root_timeout='$mesh_hwmp_active_path_to_root_timeout'" | uci batch
 	fi
 
@@ -513,6 +548,23 @@ mesh_gate_state() {
 	done
 }
 
+set_txpower() {
+
+	if [ ! -z "$txpower" ]; then
+		radiolist=$(uci show wireless | grep "wifi-device" | awk -F "=" '{printf "%s ", $1}')
+
+		for radio in $radiolist; do
+			config_state=$(echo "get $radio.txpower" | uci batch 2> /dev/null)
+
+			if [ -z "$config_state" ]; then
+				ucibatch="set $radio.txpower='$txpower'"
+				echo "$ucibatch" | uci batch
+			fi
+		done
+	fi
+}
+
+
 check_gate() {
 	is_gate=$(iw dev | grep -w "type AP")
 
@@ -529,7 +581,7 @@ check_channel() {
 
 	# We need to scan for working channel if we cannot see a portal
 	# Check for portal every checkinterval_multiplier checkintervals
-	checkinterval_multiplier=6
+	checkinterval_multiplier=2
 
 	timenow=$(date +%s)
 
@@ -557,7 +609,7 @@ check_channel() {
 				ucibatch="get network.$network.device"
 				device=$(echo "$ucibatch" | uci batch)
 
-				if [ -e "/tmp/dhcp6probe" ]; then
+				if [ -f "/tmp/dhcp6probe" ]; then
 					mv "/tmp/dhcp6probe" "/tmp/dhcp6probe.prev"
 				fi
 
@@ -567,7 +619,7 @@ check_channel() {
 
 				for retry in $(seq $retries); do
 
-					if [ -e "/tmp/dhcp6probe" ]; then
+					if [ -f "/tmp/dhcp6probe" ]; then
 						sleep 4
 						break
 					else
@@ -723,7 +775,7 @@ get_portal_state() {
 restore_ipv4() {
 	. /tmp/devicemac
 	config_ipaddr=$(uci get network.$auto_mesh_network.ipaddr)
-	active_ipaddr=$(ip addr show dev $auto_mesh_network | grep -w "$config_ipaddr" | awk '{printf "%s", $2}' | awk -F"/" '{printf "%s", $1}')
+	active_ipaddr=$(ip addr show dev $device | grep -w "$config_ipaddr" | awk '{printf "%s", $2}' | awk -F"/" '{printf "%s", $1}')
 
 	if [ "$config_ipaddr" != "$active_ipaddr" ]; then
 		config_netmask=$(uci get network.$auto_mesh_network.netmask)
@@ -739,6 +791,8 @@ restore_ipv4() {
 		broadcast_address="$(( $n1 ^ $b1 )).$(( $n2 ^ $b2 )).$(( $n3 ^ $b3 )).$(( $n4 ^ $b4 ))"
 
 		ip addr add "$cdir_ip" broadcast "$broadcast_address" dev "$device"
+		ip link set "$device" arp on
+		ip link set "$device" multicast on
 	fi
 }
 
@@ -756,7 +810,7 @@ check_portal() {
 			# This IS NOT a layer 3 mesh portal
 			uci set mesh11sd.mesh_params.mesh_connected_to_as='0'
 
-			if [ ! -e "/var/run/udhcpc-$device.pid" ]; then
+			if [ ! -f "/var/run/udhcpc-$device.pid" ]; then
 
 				hostname=$(uci get system.@system[0].hostname 2>/dev/null)
 
@@ -786,7 +840,7 @@ check_portal() {
 				uci set dhcp.@dnsmasq[0].logfacility='-'
 				uci set dhcp.@dnsmasq[0].quietdhcp='1'
 
-				non_portal_mesh_hwmp_rootmode="3"
+				non_portal_mesh_hwmp_rootmode="2"
 				echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='$non_portal_mesh_hwmp_rootmode'" | uci batch
 
 				/sbin/service dnsmasq restart
@@ -817,6 +871,7 @@ check_portal() {
 
 				/sbin/service dnsmasq reload
 				/sbin/service system restart
+				restart_mesh
 			fi
 
 			check_channel
@@ -825,7 +880,7 @@ check_portal() {
 			# This IS a layer 3 mesh portal
 			uci set mesh11sd.mesh_params.mesh_connected_to_as='1'
 
-			if [ -e "/var/run/udhcpc-$device.pid" ]; then
+			if [ -f "/var/run/udhcpc-$device.pid" ]; then
 				kill $(cat /var/run/udhcpc-$device.pid)
 			fi
 
@@ -850,7 +905,7 @@ check_portal() {
 				/sbin/service dnsmasq restart
 				/sbin/service odhcpd restart
 				/sbin/service system restart
-
+				restart_mesh
 				if [ "$daemon_startup" -eq 1 ]; then
 					daemon_startup=0
 				fi
@@ -909,7 +964,7 @@ wait_for_mesh() {
 	fixup1=0
 	get_mesh_iflist
 
-	local retries=5
+	local retries=2
 
 	for iface in $iflist; do
 
@@ -984,24 +1039,62 @@ wait_for_mesh() {
 	done
 }
 
-ccpy_setup() {
+all_nodes_rssi_update() {
+
+	if [ -f "/tmp/meshinterface" ]; then
+
+		if [ ! -f "/tmp/mesh_rssi_threshold" ]; then
+			debugtype="debug"
+			syslogmessage="Disconnecting nodes"
+			write_to_syslog
+
+			rm /tmp/meshinterface
+
+			get_wiphys
+
+			if [ ! -z "$wiphys" ]; then
+
+				for wiphy in $wiphys; do
+					mesh_capable=$(iw phy $wiphy info | grep -A 15 "Supported interface modes:" | grep -w "mesh point")
+
+					if [ -z "$mesh_capable" ]; then
+						continue
+					fi
+
+					phyindex=$(echo "$wiphy" | awk -F "phy" '{printf "%s", $2}')
+					phyindex=$(printf "%x" $phyindex)
+
+					echo "set wireless.m11s$phyindex.mesh_rssi_threshold='$mesh_rssi_threshold'" | uci batch
+				done
+			fi
+
+			restart_mesh
+		fi
+	fi
+}
+
+get_peers() {
 	get_mesh_iflist
 
-	for iface in $iflist; do
-		wait_for_interface "$iface"
+	for miface in $iflist; do
+		wait_for_interface "$miface"
 
 		if [ "$ifstatus" = "down" ]; then
 			continue
 		fi
 
-		peers=$(iw dev $iface mpath dump | grep -c -w $iface)
-		macrouting=$(iw dev $iface mpath dump | awk -F" " 'NR>1 {printf "%s/%s ",$1,$2}')
+		peers=$(iw dev $miface mpath dump | grep -c -w $miface)
+		macrouting=$(iw dev $miface mpath dump | awk -F" " 'NR>1 {printf "%s/%s ",$1,$2}')
 
 		for peer in $macrouting; do
 			peermac=$(echo "$peer" | awk -F"/" '{printf "%s", $1}')
 			peerlist="$peerlist ""$peermac"
 		done
 	done
+}
+
+ccpy_setup() {
+	get_peers
 
 	meshconfigs=$(uci show wireless 2> /dev/null | grep "mode='mesh'" | awk -F ".mode='mesh'" '{printf "%s " $1}')
 	connectlist=""
@@ -1028,7 +1121,7 @@ ccpy_setup() {
 
 ndp_scan_peer() {
 	# NDP - Send linklocal multicast
-	if [ -e "/tmp/devicemac" ]; then
+	if [ -f "/tmp/devicemac" ]; then
 		. /tmp/devicemac
 		response=$(ping -q -c 2 -I "$device" "ff02::1" &>/dev/null)
 	fi
@@ -1098,6 +1191,7 @@ auto_config() {
 					echo "set wireless.m11s$phyindex.key='$auto_mesh_key'" | uci batch
 					echo "set wireless.m11s$phyindex.network='$auto_mesh_network'" | uci batch
 					echo "set wireless.m11s$phyindex.ifname='$mesh_ifname'" | uci batch
+					echo "set wireless.m11s$phyindex.mesh_rssi_threshold='$mesh_rssi_threshold'" | uci batch
 					echo "set wireless.radio$phyindex.disabled='0'" | uci batch
 
 
@@ -1137,7 +1231,6 @@ auto_config() {
 
 							if [ "$he_mode" -eq 0 ]; then
 								htmode="HE40"
-								#htmode="HT40"
 							else
 								htmode="HT40"
 							fi
@@ -1161,7 +1254,7 @@ auto_config() {
 									chan=$((0x$(printf "$devicemac" | sha256sum | awk '{printf $1}' | tail -c$i | head -c1)))
 
 									#Check for max
-									if [ "$chan" -gt 11 ]; then
+									if [ "$chan" -gt 13 ]; then
 										continue
 									fi
 
@@ -1178,8 +1271,8 @@ auto_config() {
 								chan="$portal_channel"
 
 								#Check for max
-								if [ "$chan" -gt 11 ]; then
-									chan=11
+								if [ "$chan" -gt 13 ]; then
+									chan=13
 								fi
 
 								#Check for min
@@ -1275,11 +1368,120 @@ urldecode() {
 	urldecoded=$(echo "$buffer" | awk '{ gsub(/%20/, " "); print }')
 }
 
+arp_setup() {
+	refresh_bridgemac
+	echo 1 > /proc/sys/net/ipv4/conf/all/arp_accept
+	echo 1 > /proc/sys/net/ipv4/conf/default/arp_accept
+	echo 1 > /proc/sys/net/ipv4/conf/$device/arp_accept
+	echo 2 > /proc/sys/net/ipv4/conf/all/arp_announce
+	echo 2 > /proc/sys/net/ipv4/conf/default/arp_announce
+	echo 2 > /proc/sys/net/ipv4/conf/$device/arp_announce
+	echo 0 > /proc/sys/net/ipv4/conf/all/arp_filter
+	echo 0 > /proc/sys/net/ipv4/conf/default/arp_filter
+	echo 0 > /proc/sys/net/ipv4/conf/$device/arp_filter
+	echo 0 > /proc/sys/net/ipv4/conf/all/arp_ignore
+	echo 0 > /proc/sys/net/ipv4/conf/default/arp_ignore
+	echo 0 > /proc/sys/net/ipv4/conf/$device/arp_ignore
+	echo 1 > /proc/sys/net/ipv4/conf/all/arp_notify
+	echo 1 > /proc/sys/net/ipv4/conf/default/arp_notify
+	echo 1 > /proc/sys/net/ipv4/conf/$device/arp_notify
+	echo 1 > /proc/sys/net/ipv4/conf/all/proxy_arp
+	echo 1 > /proc/sys/net/ipv4/conf/default/proxy_arp
+	echo 1 > /proc/sys/net/ipv4/conf/$device/proxy_arp
+	echo 1 > /proc/sys/net/ipv4/conf/all/proxy_arp_pvlan
+	echo 1 > /proc/sys/net/ipv4/conf/default/proxy_arp_pvlan
+	echo 1 > /proc/sys/net/ipv4/conf/$device/proxy_arp_pvlan
+
+	echo 2 > /proc/sys/net/ipv6/conf/all/accept_ra
+	echo 2 > /proc/sys/net/ipv6/conf/default/accept_ra
+	echo 2 > /proc/sys/net/ipv6/conf/$device/accept_ra
+	echo 1 > /proc/sys/net/ipv6/conf/all/forwarding
+	echo 1 > /proc/sys/net/ipv6/conf/default/forwarding
+	echo 1 > /proc/sys/net/ipv6/conf/$device/forwarding
+	echo 1 > /proc/sys/net/ipv6/conf/all/proxy_ndp
+	echo 1 > /proc/sys/net/ipv6/conf/default/proxy_ndp
+	echo 1 > /proc/sys/net/ipv6/conf/$device/proxy_ndp
+	echo 5 > /proc/sys/net/ipv6/conf/all/router_solicitations
+	echo 5 > /proc/sys/net/ipv6/conf/default/router_solicitations
+	echo 5 > /proc/sys/net/ipv6/conf/$device/router_solicitations
+
+
+}
+check_path_changes() {
+	# get list of interfaces
+	get_mesh_iflist
+
+	if [ -f "/tmp/devicemac" ]; then
+		. /tmp/devicemac
+	fi
+
+	for iface in $iflist; do
+		wait_for_interface "$iface"
+
+		if [ "$ifstatus" = "down" ]; then
+			continue
+		fi
+
+		# get list of mesh parameters for this interface
+		get_params
+
+		if [ -z "$params" ]; then
+			# this is not a mesh interface
+			continue
+		else
+			macrouting=$(iw dev $iface mpath dump 2>/dev/null | awk -F" " 'NR>1 {printf "%s/%s/%s/%s/%s ",$1,$2,$5,$11,$12}')
+
+			if [ ! -z "$macrouting" ]; then
+				for peer in $macrouting; do
+					peermac=$(echo "$peer" | awk -F"/" '{printf "%s", $1}')
+
+					next_hop=$(echo "$peer" | awk -F"/" '{printf "%s", $2}')
+
+					hop_count=$(echo "$peer" | awk -F"/" '{printf "%s", $4}')
+
+					path_change_count=$(echo "$peer" | awk -F"/" '{printf "%s", $5}')
+
+					metric=$(echo "$peer" | awk -F"/" '{printf "%s", $3}')
+
+					if [ "$hop_count" -gt 1 ] && [ "$path_change_count" -gt 1 ]; then
+
+						is_connected=$(iw dev $iface station dump | grep -q "$peermac"; echo -n $?)
+
+						if [ "$is_connected" -eq 0 ]; then
+							debugtype="info"
+							syslogmessage="[ $hop_count ] hops to station [ $peermac ], [ $path_change_count ] path_change(s) for station detected"
+							write_to_syslog
+							debugtype="info"
+							syslogmessage="There are multiple hops to station [ $peermac ], consider its location or adjust txpower and/or rssi_threshold"
+							write_to_syslog
+							# If we want to make reactive fixups, do them here, for example:
+							#iw dev $iface station del $peermac
+							#iw dev $iface mpath del $peermac
+						fi
+
+					elif [ "$hop_count" -eq 1 ] && [ "$path_change_count" -gt 1 ]; then
+						# If we want to make reactive fixups, do them here, for example:
+						#iw dev $iface mpath del $peermac
+						debugtype="info"
+						syslogmessage="Station [ $peermac ] has multiple path changes, consider its location or adjust txpower and/or rssi_threshold"
+						write_to_syslog
+					fi
+				done
+			fi
+		fi
+	done
+}
+
 ##############
 # Start point
 ##############
 
-mesh11sdpid=$(pgrep -f "/bin/sh /usr/sbin/mesh11sd")
+if [ -f "/var/run/mesh11sd.pid" ]; then
+	mesh11sdpid=$(cat /var/run/mesh11sd.pid)
+else
+	mesh11sdpid=$(pgrep -f "/bin/sh /usr/sbin/mesh11sd")
+fi
+
 get_current_setup 2> /dev/null
 
 if [ -z "$1" ] || [ "$1" = "-h" ] || [ $1 = "--help" ] || [ $1 = "help" ]; then
@@ -1314,6 +1516,24 @@ if [ -z "$1" ] || [ "$1" = "-h" ] || [ $1 = "--help" ] || [ $1 = "help" ]; then
   Copy a file to /tmp on a remote meshnode
   Usage: mesh11sd copy [remote_meshnode_macaddress] [path_of_source_file]
     If the remote meshnode mac address is null, or both arguments are omitted, a list of meshnode mac addresses available for copy is listed
+
+  Option: txpower
+  Change the mesh transmit power
+  Usage: mesh11sd txpower [+|-]
+    where \"+\" increments by 3dBm and \"-\" decrements by 3dBm
+    Takes effect immediately
+
+  Option: mesh_rssi_threshold
+  Change the mesh rssi threshold
+  Usage: mesh11sd mesh_rssi_threshold [+|-] [force]
+    where \"+\" increments by 3dBm and \"-\" decrements by 3dBm
+    Takes effect immediately on NEW connections
+    The keyword \"force\" forces the new threshold on all connected peers
+    Warning - \"force\" will briefly remove this node from the mesh network, taking a few seconds to rejoin
+
+  Option: commit_changes
+  Usage: mesh11sd commit_changes
+    Commits changes to txpower and rssi_threshold to non volatile configuration (make permanent)
 
   For further documentation, see: https://github.com/openNDS/mesh11sd#readme
 
@@ -1365,7 +1585,7 @@ elif [ "$1" = "status" ]; then
 	# get list of interfaces
 	get_mesh_iflist
 
-	if [ -e "/tmp/devicemac" ]; then
+	if [ -f "/tmp/devicemac" ]; then
 		. /tmp/devicemac
 	fi
 
@@ -1384,6 +1604,23 @@ elif [ "$1" = "status" ]; then
 	echo "    \"auto_mesh_band\":\"$auto_mesh_band\","
 	echo "    \"auto_mesh_id\":\"$auto_mesh_id\","
 	echo "    \"mesh_gate_enable\":\"$mesh_gate_enable\","
+
+	# get list of interfaces
+	get_mesh_iflist
+
+	for iface in $iflist; do
+		wait_for_interface "$iface"
+
+		if [ "$ifstatus" = "down" ]; then
+			continue
+		fi
+
+		txpower=$(iwinfo | grep -A 7 "$iface" | grep -w "Tx-Power:" | awk '{printf "%s", $2}')
+		break
+	done
+
+
+	echo "    \"txpower\":\"$txpower\","
 	echo "    \"mesh_path_cost\":\"$mesh_path_cost\","
 	echo "    \"checkinterval\":\"$checkinterval\","
 	echo "    \"interface_timeout\":\"$interface_timeout\","
@@ -1438,7 +1675,7 @@ elif [ "$1" = "status" ]; then
 
 				peernum=0
 				peers=$(iw dev $iface mpath dump 2>/dev/null | grep -c -w $iface)
-				macrouting=$(iw dev $iface mpath dump 2>/dev/null | awk -F" " 'NR>1 {printf "%s/%s ",$1,$2}')
+				macrouting=$(iw dev $iface mpath dump 2>/dev/null | awk -F" " 'NR>1 {printf "%s/%s/%s/%s/%s ",$1,$2,$5,$11,$12}')
 				peer_macs="$devicemac ""$(iw dev m-11s-0 mpath dump 2>/dev/null | awk -F" " 'NR>1 {printf "%s ",$1}')"
 
 				echo "      \"this_node\":\"$devicemac\","
@@ -1449,8 +1686,18 @@ elif [ "$1" = "status" ]; then
 					peernum=$((peernum+1))
 					peermac=$(echo "$peer" | awk -F"/" '{printf "%s", $1}')
 					echo "        \"$peermac\":{"
+
 					next_hop=$(echo "$peer" | awk -F"/" '{printf "%s", $2}')
 					echo "          \"next_hop\":\"$next_hop\""
+
+					hop_count=$(echo "$peer" | awk -F"/" '{printf "%s", $4}')
+					echo "          \"hop_count\":\"$hop_count\""
+
+					path_change_count=$(echo "$peer" | awk -F"/" '{printf "%s", $5}')
+					echo "          \"path_change_count\":\"$path_change_count\""
+
+					metric=$(echo "$peer" | awk -F"/" '{printf "%s", $3}')
+					echo "          \"metric\":\"$metric\""
 
 					if [ "$peers" = "$peernum" ]; then
 						echo "        }"
@@ -1658,6 +1905,197 @@ elif [ "$1" = "copy" ]; then
 
 	exit 0
 
+elif [ "$1" = "txpower" ]; then
+	# get list of interfaces
+	get_mesh_iflist
+	new_current_power=""
+
+	for iface in $iflist; do
+		wait_for_interface "$iface"
+
+		if [ "$ifstatus" = "down" ]; then
+			continue
+		fi
+
+		current_power=$(iwinfo | grep -A 7 "$iface" | grep -w "Tx-Power:" | awk '{printf "%s", $2}')
+		break
+	done
+
+	echo "==========================================================================="
+
+	echo "Change the mesh transmit power"
+
+	if [ -z "$2" ]; then
+		echo "    Current TX power [ $current_power ] dBm "
+		echo "    Usage: mesh11sd txpower [+|-] "
+		echo "    where \"+\" increments by 3dBm and \"-\" decrements by 3dBm"
+
+	elif [ "$2" = "+" ]; then
+		echo "    Previous TX power [ $current_power ] dBm "
+		new_power=$(($current_power + 3))
+		iw dev $iface set txpower fixed "$(($new_power * 100))"
+		new_current_power=$(iwinfo | grep -A 7 "$iface" | grep -w "Tx-Power:" | awk '{printf "%s", $2}')
+		echo
+		echo "    New TX power - [ $new_current_power ] dBm "
+
+	elif [ "$2" = "-" ]; then
+		echo "    Previous TX power [ $current_power ] dBm "
+		new_power=$(($current_power - 3))
+		iw dev $iface set txpower fixed "$(($new_power * 100))"
+		new_current_power=$(iwinfo | grep -A 7 "$iface" | grep -w "Tx-Power:" | awk '{printf "%s", $2}')
+		echo
+		echo "    New TX power - [ $new_current_power ] dBm "
+	fi
+
+	if [ ! -z "$new_current_power" ]; then
+		echo "set mesh11sd.setup.txpower='$new_current_power'" | uci batch
+	fi
+
+	echo "==========================================================================="
+	echo
+	exit 0
+
+elif [ "$1" = "stations" ]; then
+	# get list of interfaces
+	get_mesh_iflist
+
+	echo "==========================================================================="
+
+	echo "Stations connected to this node:"
+
+	for iface in $iflist; do
+		wait_for_interface "$iface"
+
+		if [ "$ifstatus" = "down" ]; then
+			continue
+		fi
+
+		iw dev $iface station dump
+	done
+
+	echo "==========================================================================="
+	echo
+	exit 0
+
+elif [ "$1" = "commit_changes" ]; then
+
+	changes=$(uci changes mesh11sd)
+	changelist=$(echo "$changes" | awk '{printf "%s ", $1}')
+
+	mesh_rssi_threshold_change=$(echo "$changes" | grep "mesh_rssi_threshold" | tail -n 1)
+	txpower_change=$(echo "$changes" | grep "txpower" | tail -n 1)
+
+	echo "==========================================================================="
+
+	echo "Commit changes, making them non volatile on restart/reboot"
+
+	if [ -z "$2" ] || [ "$2" != "commit" ]; then
+		echo "    Usage: mesh11sd commit_changes commit "
+		echo "    Writes changes to configuration file "
+	elif [ "$2" = "commit" ]; then
+		uci revert mesh11sd
+		echo "set $mesh_rssi_threshold_change" | uci batch
+		echo "set $txpower_change" | uci batch
+		uci commit mesh11sd
+
+		for change in $changelist; do
+			is_txpower=$(echo "$change" | grep -q "txpower"; echo -n $?)
+			is_mesh_rssi_threshold=$(echo "$change" | grep -q "mesh_rssi_threshold"; echo -n $?)
+
+			if [ "$is_txpower" -eq 0 ] || [ "$is_mesh_rssi_threshold" -eq 0 ]; then
+				continue
+			fi
+
+			echo "set $change" | uci batch
+
+		done
+	fi
+
+
+	echo "==========================================================================="
+	echo
+	exit 0
+
+elif [ "$1" = "mesh_rssi_threshold" ]; then
+	# get list of interfaces
+	get_mesh_iflist
+
+	for iface in $iflist; do
+		wait_for_interface "$iface"
+
+		if [ "$ifstatus" = "down" ]; then
+			continue
+		fi
+
+		current_rssi=$(iw dev $iface get mesh_param mesh_rssi_threshold | awk '{printf "%s", $1}')
+		break
+	done
+
+	echo "==========================================================================="
+
+	echo "Change the mesh rssi threshold"
+
+	if [ -z "$2" ]; then
+		echo "    Current threshold for new connections [ $current_rssi ] dBm "
+		echo "    Usage: mesh11sd mesh_rssi_threshold [+|-] [force]"
+		echo "    where \"+\" increments by 3dBm and \"-\" decrements by 3dBm"
+		echo "    The keyword \"force\" forces the new threshold on all peers"
+
+	elif [ "$2" = "+" ]; then
+		new_rssi=$(($current_rssi + 3))
+		echo "    Previous threshold [ $current_rssi ] dBm "
+
+		if [ -z "$3" ]; then
+			touch /tmp/mesh_rssi_threshold
+			iw dev $iface set mesh_param mesh_rssi_threshold $new_rssi
+			echo "set mesh11sd.mesh_params.mesh_rssi_threshold='$new_rssi'" | uci batch
+			new_current_rssi=$(iw dev $iface get mesh_param mesh_rssi_threshold | awk '{printf "%s", $1}')
+
+		elif [ "$3" = "force" ]; then
+			echo "set mesh11sd.mesh_params.mesh_rssi_threshold='$new_rssi'" | uci batch
+			echo
+			echo "    Forcing new threshold on all peers..."
+
+			if [ -f "/tmp/mesh_rssi_threshold" ]; then
+				rm /tmp/mesh_rssi_threshold
+			fi
+
+			new_current_rssi=$new_rssi
+		fi
+
+		echo
+		echo "    New threshold - [ $new_current_rssi ] dBm "
+
+	elif [ "$2" = "-" ]; then
+		new_rssi=$(($current_rssi - 3))
+		echo "    Previous threshold [ $current_rssi ] dBm "
+
+		if [ -z "$3" ]; then
+			touch /tmp/mesh_rssi_threshold
+			iw dev $iface set mesh_param mesh_rssi_threshold $new_rssi
+			echo "set mesh11sd.mesh_params.mesh_rssi_threshold='$new_rssi'" | uci batch
+			new_current_rssi=$(iw dev $iface get mesh_param mesh_rssi_threshold | awk '{printf "%s", $1}')
+
+		elif [ "$3" = "force" ]; then
+			echo "set mesh11sd.mesh_params.mesh_rssi_threshold='$new_rssi'" | uci batch
+			echo
+			echo "    Forcing new threshold on all peers..."
+
+			if [ -f "/tmp/mesh_rssi_threshold" ]; then
+				rm /tmp/mesh_rssi_threshold
+			fi
+
+			new_current_rssi=$new_rssi
+		fi
+
+		echo
+		echo "    New threshold - [ $new_current_rssi ] dBm "
+	fi
+
+	echo "==========================================================================="
+	echo
+	exit 0
+
 elif [ "$1" = "daemon" ]; then
 	uci revert mesh11sd
 	uci revert wireless
@@ -1665,6 +2103,14 @@ elif [ "$1" = "daemon" ]; then
 	debugtype="notice"
 	syslogmessage="mesh11sd is in startup"
 	write_to_syslog
+
+	if [ -f "/tmp/mesh_rssi_threshold" ]; then
+		rm /tmp/mesh_rssi_threshold
+	fi
+
+	if [ -f "/tmp/dhcp6probe" ]; then
+		mv "/tmp/dhcp6probe" "/tmp/dhcp6probe.prev"
+	fi
 
 	#Default flags
 	startup=4 # bit 2
@@ -1688,6 +2134,8 @@ elif [ "$1" = "daemon" ]; then
 	lastmode=0
 
 	check_config_params
+
+	arp_setup
 
 	# Start the main loop
 	while true; do
@@ -1839,7 +2287,9 @@ elif [ "$1" = "daemon" ]; then
 			if [ "$firstloop" -eq 1 ] || [ "$changed" -eq 1 ]; then
 				firstloop=0
 				changed=0
-				restart_mesh
+
+				touch /tmp/meshinterface
+				all_nodes_rssi_update
 			fi
 			# get a list of interfaces
 			get_mesh_iflist
@@ -1928,7 +2378,7 @@ elif [ "$1" = "daemon" ]; then
 					syslogmessage="Portal detection is disabled, forcing portal mode"
 					write_to_syslog
 
-					if [ -e "/var/run/udhcpc-$device.pid" ]; then
+					if [ -f "/var/run/udhcpc-$device.pid" ]; then
 						kill $(cat /var/run/udhcpc-$device.pid)
 					fi
 
@@ -1947,14 +2397,17 @@ elif [ "$1" = "daemon" ]; then
 
 					/sbin/service dnsmasq restart
 					/sbin/service odhcpd restart
+					restart_mesh
 				fi
 			fi
 
 			check_gate
 			check_hwmp
 			wait_for_mesh
+
 		fi
 
+		check_path_changes
 		debugtype="debug"
 		syslogmessage="checkinterval $checkinterval seconds"
 		write_to_syslog

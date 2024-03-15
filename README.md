@@ -28,7 +28,7 @@
 
   Without mesh11sd, many mesh parameters cannot be set in the uci wireless config file as the mesh interface must be up before the parameters can be set. Some of those that are supported, would fail to be implemented when the network is (re)started resulting in errors or dropped nodes.
 
-  The mesh11sd daemon dynamically checks parameters that are set in the wireless config and sets them as required. Parameters can also be set in the mesh11sd config and these settings will override any mesh parameter settings in the wireless config.
+  The mesh11sd daemon dynamically checks and sets parameters set in its config file, overriding any that are set in the wireless config. Parameters must be be set in the mesh11sd config.
 
 Depending on the wireless drivers/hardware, mesh parameters set in the wireless config may not only fail on startup, but may also generate errors and in the worst case may cause the wireless driver to crash.
 For this reason it is recommended that all parameter settings are moved from the wireless config and placed into the mesh11sd config.
@@ -98,7 +98,6 @@ A *typical* and ***optional*** manual mesh interface configuration in /etc/confi
 ### Default configuration file (/etc/config/mesh11sd):
 
 ```
-
 config mesh11sd 'setup'
 	###########################################################################################
 	# enabled (optional)
@@ -154,8 +153,9 @@ config mesh11sd 'setup'
 	###########################################################################################
 	# mesh_path_cost (optional)
 	# sets the STP cost of the mesh network
-	# Default: 1
-	# Can be set to any value from 1 to 65534
+	# Default: 0
+	# Can be set to any value from 0 to 65534
+	# Setting to 0 disables STP
 	#
 	# Example:
 	#option mesh_path_cost '100'
@@ -182,7 +182,7 @@ config mesh11sd 'setup'
 	#
 	# All mesh peer and mesh gate nodes will autonomously track the mesh portal channel
 	# regardless of the configured auto_mesh_band
-	#
+	# 
 	#option portal_channel 'auto'
 	# or
 	#option portal_channel '4'
@@ -232,21 +232,36 @@ config mesh11sd 'setup'
 	#
 	#option auto_mesh_network 'guest'
 
+	###########################################################################################
+	# txpower (optional)
+	# Set the mesh radio transmit power in dBm.
+
+	# Default - use driver default or value set in wireless config
+	# Values outside the limits defined by the regulatory domain will be ignored
+	#
+	#option txpower '15'
+
+	###########################################################################################
+	# ssid_suffix_enable (optional)
+	# Add a 4 digit suffix to the ssid
+	# The 4 digits are the last 4 digits of the mac address of the mesh interface
+	# Default 1 (enabled)
+	#
+	#option ssid_suffix_enable '0'
+
 config mesh11sd 'mesh_params'
 	# A minimum set of parameters is automatically set for initial startup and do not have to be configured here
 	#
 	# Any mesh parameter supported by the wireless driver can be specified here
 	# and will be dynamically set and continuously checked every "checkinterval"
-	#
+	# 
 	# Examples:
 	#option mesh_rssi_threshold '-70'
 	#option mesh_max_peer_links '20'
 
 	#
 	# The command: "mesh11sd status" gives a full list of supported parameters.
-
 ```
-
 All mesh parameter settings in the config file are dynamic and will take effect immediately.
 
 **NOTE:** From version 3 onwards, the setup option `portal_detect` is enabled by default.
@@ -272,7 +287,10 @@ Access to the remote meshnode peers will not be possible using the ipv4 address 
 * portal_detect - (optional) - Detect if the meshnode is a portal, meaning it has an upstream wan link. If the upstream link is active, the router hosting the meshnode will serve ipv4 dhcp into the mesh network. If the upstream link is not connected, dhcp will be disabled and the meshnode will function as a level 2 bridge on the mesh network. Default 1 (enabled). Set to 0 to disable.
 
 * portal_channel - valid only when portal detect is disabled.
+
 * interface_timeout - the time in seconds that mesh11sd will wait for a mesh interface to establish before continuing. Default 10 seconds
+
+* mesh_path_cost - sets the STP cost of the mesh network. Default: 0. Can be set to any value from 0 to 65534. Setting to 0 disables STP
 
 * auto_config - (optional) - autonomously configures the mesh network. Default 1 (enabled). Set to 0 to disable
 
@@ -288,6 +306,9 @@ Access to the remote meshnode peers will not be possible using the ipv4 address 
 
 * mesh_gate_enable - enables any access points configured on the meshnode. Default 1 (enabled). Set to 0 to disable. **Note:** If there is an interface level "disable option" (in wireless config), mesh11sd will use that setting.
 
+* txpower - set the mesh radio transmit power in dBm. Takes effect immediately.
+
+* ssid_suffix_enable - Add a 4 digit suffix to the ssid. The 4 digits are the last 4 digits of the mac address of the mesh interface.
 
 **Example**:
 Set the debuglevel to 2
