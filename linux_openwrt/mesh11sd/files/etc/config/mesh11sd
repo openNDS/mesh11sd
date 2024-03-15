@@ -133,6 +133,23 @@ config mesh11sd 'setup'
 	#
 	#option auto_mesh_network 'guest'
 
+	###########################################################################################
+	# txpower (optional)
+	# Set the mesh radio transmit power in dBm.
+
+	# Default - use driver default or value set in wireless config
+	# Values outside the limits defined by the regulatory domain will be ignored
+	#
+	#option txpower '15'
+
+	###########################################################################################
+	# ssid_suffix_enable (optional)
+	# Add a 4 digit suffix to the ssid
+	# The 4 digits are the last 4 digits of the mac address of the mesh interface
+	# Default 1 (enabled)
+	#
+	#option ssid_suffix_enable '0'
+
 config mesh11sd 'mesh_params'
 	# A minimum set of parameters is automatically set for initial startup and do not have to be configured here
 	#

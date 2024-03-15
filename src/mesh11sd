@@ -1231,7 +1231,6 @@ auto_config() {
 
 							if [ "$he_mode" -eq 0 ]; then
 								htmode="HE40"
-								#htmode="HT40"
 							else
 								htmode="HT40"
 							fi
@@ -1517,6 +1516,24 @@ if [ -z "$1" ] || [ "$1" = "-h" ] || [ $1 = "--help" ] || [ $1 = "help" ]; then
   Copy a file to /tmp on a remote meshnode
   Usage: mesh11sd copy [remote_meshnode_macaddress] [path_of_source_file]
     If the remote meshnode mac address is null, or both arguments are omitted, a list of meshnode mac addresses available for copy is listed
+
+  Option: txpower
+  Change the mesh transmit power
+  Usage: mesh11sd txpower [+|-]
+    where \"+\" increments by 3dBm and \"-\" decrements by 3dBm
+    Takes effect immediately
+
+  Option: mesh_rssi_threshold
+  Change the mesh rssi threshold
+  Usage: mesh11sd mesh_rssi_threshold [+|-] [force]
+    where \"+\" increments by 3dBm and \"-\" decrements by 3dBm
+    Takes effect immediately on NEW connections
+    The keyword \"force\" forces the new threshold on all connected peers
+    Warning - \"force\" will briefly remove this node from the mesh network, taking a few seconds to rejoin
+
+  Option: commit_changes
+  Usage: mesh11sd commit_changes
+    Commits changes to txpower and rssi_threshold to non volatile configuration (make permanent)
 
   For further documentation, see: https://github.com/openNDS/mesh11sd#readme
 
@@ -2020,8 +2037,9 @@ elif [ "$1" = "mesh_rssi_threshold" ]; then
 
 	if [ -z "$2" ]; then
 		echo "    Current threshold for new connections [ $current_rssi ] dBm "
-		echo "    Usage: mesh11sd mesh_rssi_threshold [+|-] "
+		echo "    Usage: mesh11sd mesh_rssi_threshold [+|-] [force]"
 		echo "    where \"+\" increments by 3dBm and \"-\" decrements by 3dBm"
+		echo "    The keyword \"force\" forces the new threshold on all peers"
 
 	elif [ "$2" = "+" ]; then
 		new_rssi=$(($current_rssi + 3))
