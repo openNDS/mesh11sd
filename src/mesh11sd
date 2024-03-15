@@ -1523,6 +1523,10 @@ if [ -z "$1" ] || [ "$1" = "-h" ] || [ $1 = "--help" ] || [ $1 = "help" ]; then
     where \"+\" increments by 3dBm and \"-\" decrements by 3dBm
     Takes effect immediately
 
+  Option: stations
+  List all mesh peer stations directly connected to this mesh peer station (one hop)
+  Usage: mesh11sd stations
+
   Option: mesh_rssi_threshold
   Change the mesh rssi threshold
   Usage: mesh11sd mesh_rssi_threshold [+|-] [force]
