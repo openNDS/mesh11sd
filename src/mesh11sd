@@ -12,7 +12,7 @@
 #
 # mesh11sd daemon
 #
-version="3.0.1beta"
+version="3.1.0beta"
 fixup1=0
 
 get_mesh_iflist () {
