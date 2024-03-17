@@ -474,6 +474,14 @@ Mesh11sd is an OpenWrt service daemon and runs continuously in the background. I
           Usage: mesh11sd commit_changes
           Commits changes to txpower and rssi_threshold to non volatile configuration (make permanent)
 
+        Option: opkg_force_ipv4
+        Usage: mesh11sd opkg_force_ipv4
+          Forces opkg to use ipv4 for its downloads
+
+        Option: opkg_revert_to_default
+        Usage: mesh11sd opkg_revert_to_default
+          Reverts opkg to default for its downloads
+
 **Example status output:**
 
 ```
