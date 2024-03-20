@@ -1469,6 +1469,7 @@ check_path_changes() {
 			if [ ! -z "$macrouting" ]; then
 				for peer in $macrouting; do
 					peermac=$(echo "$peer" | awk -F"/" '{printf "%s", $1}')
+					peermac_id=$(echo -n "$peermac" | sha256sum | awk '{printf $1}')
 
 					next_hop=$(echo "$peer" | awk -F"/" '{printf "%s", $2}')
 
@@ -1478,28 +1479,39 @@ check_path_changes() {
 
 					metric=$(echo "$peer" | awk -F"/" '{printf "%s", $3}')
 
-					if [ "$hop_count" -gt 1 ] && [ "$path_change_count" -gt 1 ]; then
+					if [ -f "/tmp/$peermac_id" ]; then
+						. /tmp/$peermac_id
+					else
+						previous_path_change_count=1
+					fi
 
-						is_connected=$(iw dev $iface station dump | grep -q "$peermac"; echo -n $?)
+					if [ "$path_change_count" -ne "$previous_path_change_count" ]; then
 
-						if [ "$is_connected" -eq 0 ]; then
-							debugtype="info"
-							syslogmessage="[ $hop_count ] hops to station [ $peermac ], [ $path_change_count ] path_change(s) for station detected"
-							write_to_syslog
-							debugtype="info"
-							syslogmessage="There are multiple hops to station [ $peermac ], consider its location or adjust txpower and/or rssi_threshold"
-							write_to_syslog
+						if [ "$hop_count" -gt 1 ] && [ "$path_change_count" -gt 1 ]; then
+
+							is_connected=$(iw dev $iface station dump | grep -q "$peermac"; echo -n $?)
+
+							if [ "$is_connected" -eq 0 ]; then
+								debugtype="warn"
+								syslogmessage="[ $hop_count ] hops to station [ $peermac ], [ $path_change_count ] path_change(s) for station detected"
+								write_to_syslog
+								debugtype="warn"
+								syslogmessage="There are multiple hops to station [ $peermac ], consider its location or adjust txpower and/or rssi_threshold"
+								write_to_syslog
+								# If we want to make reactive fixups, do them here, for example:
+								#iw dev $iface station del $peermac
+								#iw dev $iface mpath del $peermac
+							fi
+
+						elif [ "$hop_count" -eq 1 ] && [ "$path_change_count" -gt 1 ]; then
 							# If we want to make reactive fixups, do them here, for example:
-							#iw dev $iface station del $peermac
 							#iw dev $iface mpath del $peermac
+							debugtype="warn"
+							syslogmessage="Station [ $peermac ] has [ $path_change_count ] path changes, consider its location or adjust txpower and/or rssi_threshold"
+							write_to_syslog
 						fi
 
-					elif [ "$hop_count" -eq 1 ] && [ "$path_change_count" -gt 1 ]; then
-						# If we want to make reactive fixups, do them here, for example:
-						#iw dev $iface mpath del $peermac
-						debugtype="info"
-						syslogmessage="Station [ $peermac ] has multiple path changes, consider its location or adjust txpower and/or rssi_threshold"
-						write_to_syslog
+						echo "previous_path_change_count=$path_change_count" > /tmp/$peermac_id
 					fi
 				done
 			fi
@@ -2260,6 +2272,7 @@ elif [ "$1" = "daemon" ]; then
 	autoconfig=0
 	macfixup=0 # Used if we need to fix the mesh interface mac address
 	mute=0 # Mute some debug messages in function calls
+	previous_path_change_count=1
 
 	# Clear the dhcp authoritative flag
 	uci delete dhcp.@dnsmasq[0].authoritative 2>/dev/null
