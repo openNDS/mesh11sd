@@ -1,3 +1,26 @@
+mesh11sd (3.1.0)
+  * Fix - diplay warning message only if path_change_count changes [bluewavenet]
+  * Add - adjust bridge ruleset and do checks to ensure bridge ports all have different mac addresses [bluewavenet]
+  * Fix - remove ruleset on daemon stop [bluewavenet]
+  * Add - Block mesh bridge loops if segments of backhaul are non-mesh [bluewavenet]
+  * Add - informational syslog messages for path changes [bluewavenet]
+  * Add - ability to adjust txpwower and rssi_threshold and to commit changes [bluewavenet]
+  * Add - mpath info to status [bluewavenet]
+  * Fix - ensure txpower and mesh_rssi_threshold can be overridden by wireless config [bluewavenet]
+  * Fix - reduce timeout when detecting wireless driver bug [bluewavenet]
+  * Fix - restore txpower when auto switching to peer mode [bluewavenet]
+  * Fix - move mpath_delete_peers to check_mesh_params. Ensures mesh_rssi_threshold is set for all nodes [bluewavenet]
+  * Add - allow setting of tx power, can be overridden by wireless config [bluewavenet]
+  * Fix - change phantom meshnode detection message from warn to info [bluewavenet]
+  * Fix - disconnect nodes after rssi_threshold change as rssi_threshold only takes effect on attempted connection [bluewavenet]
+  * Fix - ensure ipv4 arp and ipv6 multicast are both on [bluewavenet]
+  * Fix - allow 2GHz channel 13 where appropriate [bluewavenet]
+  * Fix - restore_ipv4 function to use correct device name. On some SoCs this caused ipv4 forwarding to fail [bluewavenet]
+  * Fix - set procd parameters to respawn zombie nodes [bluewavenet]
+  * Add - README examples of using copy/connect [bluewavenet]
+
+ -- Rob White <dot@blue-wave.net>  Sat, 20 Mar 2024 11:38:51 +0000
+
 mesh11sd (3.0.0)
   * Add - startup check for ath10k-ct drivers and terminate if found [bluewavenet]
   * Fix - display each node on a new line in syslog instead of all on one line [bluewavenet]

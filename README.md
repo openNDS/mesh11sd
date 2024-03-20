@@ -12,9 +12,11 @@
 
 **Auto_configuration:**
 
-  From version 3 onwards, by default, Mesh11sd checks the wireless configuration for mesh options including a mesh capable version of the wpad package.
+  From version 3.0.0 onwards, by default, Mesh11sd checks the wireless configuration for mesh options including a mesh capable version of the wpad package.
 
   If a suitable version of wpad is installed (eg wpad-mesh-mbedtls), mesh11sd adds options to the wireless configuration to bring up 802.11s mesh interfaces, if they are not already present.
+
+  From version 3.1.0 onwards, non-mesh peer links are supported. Bridge loops are blocked and mesh links are given higher priority in the spanning tree. This is intended only to be used to connect remote segments of the backhaul that are out of useable radio range.
 
 **Mesh Parameters:**
 
@@ -153,7 +155,7 @@ config mesh11sd 'setup'
 	###########################################################################################
 	# mesh_path_cost (optional)
 	# sets the STP cost of the mesh network
-	# Default: 0
+	# Default: 10
 	# Can be set to any value from 0 to 65534
 	# Setting to 0 disables STP
 	#
@@ -451,25 +453,58 @@ Mesh11sd is an OpenWrt service daemon and runs continuously in the background. I
 		  Usage: mesh11sd copy [remote_meshnode_macaddress] [path_of_source_file]
 			If the remote meshnode mac address is null, or both arguments are omitted, a list of meshnode mac addresses available for copy is listed.
 
+        Option: txpower
+          Change the mesh transmit power
+          Usage: mesh11sd txpower [+|-]
+          where \"+\" increments by 3dBm and \"-\" decrements by 3dBm
+          Takes effect immediately
+
+        Option: stations
+        List all mesh peer stations directly connected to this mesh peer station (one hop)
+        Usage: mesh11sd stations
+
+
+        Option: mesh_rssi_threshold
+          Change the mesh rssi threshold
+          Usage: mesh11sd mesh_rssi_threshold [+|-] [force]
+          where \"+\" increments by 3dBm and \"-\" decrements by 3dBm
+          Takes effect immediately on NEW connections
+          The keyword \"force\" forces the new threshold on all connected peers
+          Warning - \"force\" will briefly remove this node from the mesh network, taking a few seconds to rejoin
+
+        Option: commit_changes
+          Usage: mesh11sd commit_changes
+          Commits changes to txpower and rssi_threshold to non volatile configuration (make permanent)
+
+        Option: opkg_force_ipv4
+        Usage: mesh11sd opkg_force_ipv4
+          Forces opkg to use ipv4 for its downloads
+
+        Option: opkg_revert_to_default
+        Usage: mesh11sd opkg_revert_to_default
+          Reverts opkg to default for its downloads
+
 **Example status output:**
 
 ```
 {
   "setup":{
-    "version":"3.0.0beta",
+    "version":"3.0.1beta",
     "enabled":"1",
     "procd_status":"running",
     "portal_detect":"1",
-    "portal_channel":"default",
+    "portal_channel":"1",
     "mesh_basename":"m-11s-",
     "auto_config":"1",
     "auto_mesh_network":"lan",
     "auto_mesh_band":"2g40",
     "auto_mesh_id":"92d490daf46cfe534c56ddd669297e",
     "mesh_gate_enable":"1",
-    "mesh_path_cost":"1",
+    "txpower":"17",
+    "mesh_path_cost":"0",
     "checkinterval":"10",
     "interface_timeout":"10",
+    "ssid_suffix_enable":"1",
     "debuglevel":"3"
   }
   "interfaces":{
@@ -493,7 +528,7 @@ Mesh11sd is an OpenWrt service daemon and runs continuously in the background. I
       "mesh_gate_announcements":"1",
       "mesh_fwding":"1",
       "mesh_sync_offset_max_neighor":"50",
-      "mesh_rssi_threshold":"-80",
+      "mesh_rssi_threshold":"-65",
       "mesh_hwmp_active_path_to_root_timeout":"6000",
       "mesh_hwmp_root_interval":"5000",
       "mesh_hwmp_confirmation_interval":"2000",
@@ -506,38 +541,36 @@ Mesh11sd is an OpenWrt service daemon and runs continuously in the background. I
       "mesh_id":"92d490daf46cfe534c56ddd669297e",
       "device":"radio0",
       "channel":"1",
-      "tx_packets":"83312",
-      "tx_bytes":"98170667",
-      "rx_packets":"46822",
-      "rx_bytes":"4359233",
-      "this_node":"94:83:c4:36:85:ea",
-      "active_peers":"3",
+      "tx_packets":"1659061",
+      "tx_bytes":"2097020097",
+      "rx_packets":"960176",
+      "rx_bytes":"107095864",
+      "this_node":"94:83:c4:08:14:83",
+      "active_peers":"2",
       "peers":{
-        "94:83:c4:08:09:f9":{
-          "next_hop":"94:83:c4:08:09:f9"
+        "94:83:c4:29:f5:a4":{
+          "next_hop":"e4:95:6e:44:60:2e"
+          "hop_count":"2"
+          "path_change_count":"3"
+          "metric":"623"
         },
-        "e4:95:6e:42:4f:93":{
-          "next_hop":"e4:95:6e:42:4f:93"
-        },
-        "94:83:c4:09:5c:00":{
-          "next_hop":"94:83:c4:09:5c:00"
+        "e4:95:6e:44:60:2e":{
+          "next_hop":"e4:95:6e:44:60:2e"
+          "hop_count":"1"
+          "path_change_count":"1"
+          "metric":"255"
         }
       }
-      "active_stations":"3",
+      "active_stations":"1",
       "stations":{
-        "dc:0e:a1:35:5c:43":{
-          "proxy_node":"94:83:c4:08:09:f9"
-        },
-        "74:de:2b:b1:70:33":{
-          "proxy_node":"e4:95:6e:42:4f:93"
-        },
-        "84:38:38:98:38:1a":{
-          "proxy_node":"94:83:c4:08:09:f9"
+        "ea:7f:79:4d:96:55":{
+          "proxy_node":"94:83:c4:08:14:83"
         }
       }
     }
   }
 }
+
 ```
 
 **Example of using copy and connect:**
