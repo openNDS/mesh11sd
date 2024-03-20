@@ -12,9 +12,11 @@
 
 **Auto_configuration:**
 
-  From version 3 onwards, by default, Mesh11sd checks the wireless configuration for mesh options including a mesh capable version of the wpad package.
+  From version 3.0.0 onwards, by default, Mesh11sd checks the wireless configuration for mesh options including a mesh capable version of the wpad package.
 
   If a suitable version of wpad is installed (eg wpad-mesh-mbedtls), mesh11sd adds options to the wireless configuration to bring up 802.11s mesh interfaces, if they are not already present.
+
+  From version 3.1.0 onwards, non-mesh peer links are supported. Bridge loops are blocked and mesh links are given higher priority in the spanning tree. This is intended only to be used to connect remote segments of the backhaul that are out of useable radio range.
 
 **Mesh Parameters:**
 
@@ -153,7 +155,7 @@ config mesh11sd 'setup'
 	###########################################################################################
 	# mesh_path_cost (optional)
 	# sets the STP cost of the mesh network
-	# Default: 0
+	# Default: 10
 	# Can be set to any value from 0 to 65534
 	# Setting to 0 disables STP
 	#

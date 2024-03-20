@@ -54,7 +54,7 @@ config mesh11sd 'setup'
 	###########################################################################################
 	# mesh_path_cost (optional)
 	# sets the STP cost of the mesh network
-	# Default: 0
+	# Default: 10
 	# Can be set to any value from 0 to 65534
 	# Setting to 0 disables STP
 	#
