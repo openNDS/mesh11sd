@@ -472,7 +472,7 @@ get_mesh_path_cost () {
 	mesh_path_cost=$(uci get mesh11sd.setup.mesh_path_cost 2> /dev/null)
 
 	if [ -z "$mesh_path_cost" ]; then
-		mesh_path_cost="65435"
+		mesh_path_cost="10"
 	fi
 
 	syslogmessage="option mesh_path_cost [ $mesh_path_cost ]"
@@ -974,6 +974,22 @@ convert_from_la() {
 	mac_from_la="$la_octet:$p2:$p3:$p4:$p5:$p6"
 }
 
+make_indexed_mac() {
+	local mac_to_convert="$1"
+	local index="$2"
+	eval $(echo "$mac_to_convert" | awk -F":" '{printf "p1=%s p2=%s p3=%s p4=%s p5=%s p6=%s", $1 ,$2, $3, $4, $5, $6}')
+	indexed_octet=$(printf '%x\n' "$(( 0x$index + 0x$p4 ))")
+	local len=${#indexed_octet}
+	indexed_octet=${indexed_octet:$(($len-2)):2}
+
+	if [ "$len" -eq 1 ]; then
+		indexed_octet="0$indexed_octet"
+	fi
+
+	mac_indexed="$p1:$p2:$p3:$indexed_octet:$p5:$p6"
+}
+
+
 wait_for_mesh() {
 	fixup1=0
 	get_mesh_iflist
@@ -1407,6 +1423,9 @@ arp_setup() {
 	echo 1 > /proc/sys/net/ipv4/conf/all/proxy_arp_pvlan
 	echo 1 > /proc/sys/net/ipv4/conf/default/proxy_arp_pvlan
 	echo 1 > /proc/sys/net/ipv4/conf/$device/proxy_arp_pvlan
+	echo 1 > /proc/sys/net/ipv4/conf/all/bc_forwarding
+	echo 1 > /proc/sys/net/ipv4/conf/default/bc_forwarding
+	echo 1 > /proc/sys/net/ipv4/conf/$device/bc_forwarding
 
 	echo 2 > /proc/sys/net/ipv6/conf/all/accept_ra
 	echo 2 > /proc/sys/net/ipv6/conf/default/accept_ra
@@ -1496,12 +1515,16 @@ block_bridge_loops() {
 		# Create the table
 		nft add table bridge mesh11s
 		# Create the chain
-		nft add chain bridge mesh11s mesh_PRE { type filter hook prerouting priority -100\; }
+		nft add chain bridge mesh11s mesh_PRE { type filter hook prerouting priority -350\; }
 	fi
 
 	. /tmp/devicemac
 	local br_iface
 	local br_ifaces=$(brctl showstp "$device" | grep -B 1 -w "port id" | grep "(" | awk '{printf "%s ", $1}')
+
+	get_mesh_iflist
+	br_mac_list=$devicemac
+	local index=0
 
 	for br_iface in $br_ifaces; do
 		rulecount=$(nft -a list table bridge mesh11s 2> /dev/null | grep -w -c "$br_iface" | awk '{printf "%s", $1}')
@@ -1512,6 +1535,34 @@ block_bridge_loops() {
 			rule_status=$(nft add rule bridge mesh11s mesh_PRE meta iifname { $br_iface } counter accept; echo -n $?)
 			check_rule_status
 		fi
+
+		index=$(($index + 1))
+		convert_to_la "$devicemac"
+		is_meshif=$(echo "$iflist" | grep -q "$br_iface"; echo -n $?)
+
+		if [ $is_meshif -ne 0 ]; then
+			# This is not a mesh interface
+			local br_iface_mac=$(ip link | grep -A 1 "$br_iface" | grep "link/ether" | awk 'NR==1 {printf "%s", $2}')
+			is_same=$(echo "$br_mac_list" | grep -q "$br_iface_mac"; echo -n $?)
+
+			if [ "$is_same" -eq 0 ]; then
+				#This is a duplicate mac address so change it
+				# get la
+
+				# increment by index
+				#Now not a duplicate so save it in the list
+				br_mac_list="$br_mac_list $br_iface_mac"
+
+				#change mac of iface
+
+				make_indexed_mac "$mac_la" "$index"
+				ip link set $br_iface down; ip link set $br_iface up address $mac_indexed
+			else
+				#Not a duplicate so save it in the list
+				br_mac_list="$devicemac $br_iface_mac"
+			fi
+		fi
+
 	done
 
 }
@@ -2435,6 +2486,8 @@ elif [ "$1" = "daemon" ]; then
 						brctl setpathcost "$device" "$br_iface" "$other_path_cost"
 
 					done
+				elif [ "$mesh_path_cost" -eq 0 ]; then
+					brctl stp "$device" no
 				fi
 
 				#Do NOT configure parameters found in wireless config
