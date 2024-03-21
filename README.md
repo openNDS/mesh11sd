@@ -184,7 +184,7 @@ config mesh11sd 'setup'
 	#
 	# All mesh peer and mesh gate nodes will autonomously track the mesh portal channel
 	# regardless of the configured auto_mesh_band
-	# 
+	#
 	#option portal_channel 'auto'
 	# or
 	#option portal_channel '4'
@@ -292,7 +292,7 @@ Access to the remote meshnode peers will not be possible using the ipv4 address 
 
 * interface_timeout - the time in seconds that mesh11sd will wait for a mesh interface to establish before continuing. Default 10 seconds
 
-* mesh_path_cost - sets the STP cost of the mesh network. Default: 0. Can be set to any value from 0 to 65534. Setting to 0 disables STP
+* mesh_path_cost - sets the STP cost of the mesh network. Default: 10. Can be set to any value from 0 to 65534. Setting to 0 disables STP
 
 * auto_config - (optional) - autonomously configures the mesh network. Default 1 (enabled). Set to 0 to disable
 
