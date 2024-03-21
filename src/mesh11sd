@@ -1493,10 +1493,9 @@ check_path_changes() {
 
 							if [ "$is_connected" -eq 0 ]; then
 								debugtype="warn"
-								syslogmessage="[ $hop_count ] hops to station [ $peermac ], [ $path_change_count ] path_change(s) for station detected"
+								syslogmessage="Warning! Station [ $peermac ] is [ $hop_count ] hops away and [ $path_change_count ] path_change(s) for station have been detected"
 								write_to_syslog
-								debugtype="warn"
-								syslogmessage="There are multiple hops to station [ $peermac ], consider its location or adjust txpower and/or rssi_threshold"
+								syslogmessage="Warning! Station [ $peermac ], consider its location or adjust txpower and/or rssi_threshold"
 								write_to_syslog
 								# If we want to make reactive fixups, do them here, for example:
 								#iw dev $iface station del $peermac
@@ -1504,14 +1503,20 @@ check_path_changes() {
 							fi
 
 						elif [ "$hop_count" -eq 1 ] && [ "$path_change_count" -gt 1 ]; then
+							debugtype="warn"
+							syslogmessage="Warning! Station [ $peermac ] is an immediate neighbour, but has had [ $path_change_count ] path_change(s) detected"
+							write_to_syslog
+							syslogmessage="Warning! Station [ $peermac ], consider its location or adjust txpower and/or rssi_threshold"
+							write_to_syslog
 							# If we want to make reactive fixups, do them here, for example:
 							#iw dev $iface mpath del $peermac
-							debugtype="warn"
-							syslogmessage="Station [ $peermac ] has [ $path_change_count ] path changes, consider its location or adjust txpower and/or rssi_threshold"
-							write_to_syslog
 						fi
 
 						echo "previous_path_change_count=$path_change_count" > /tmp/$peermac_id
+					else
+						debugtype="info"
+						syslogmessage="Path to station [ $peermac ] is stable"
+						write_to_syslog
 					fi
 				done
 			fi
