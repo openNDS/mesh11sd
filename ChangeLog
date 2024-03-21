@@ -1,4 +1,5 @@
 mesh11sd (3.1.0)
+  * Add - send meaningful multipath warnings to syslog [bluewavenet]
   * Fix - diplay warning message only if path_change_count changes [bluewavenet]
   * Add - adjust bridge ruleset and do checks to ensure bridge ports all have different mac addresses [bluewavenet]
   * Fix - remove ruleset on daemon stop [bluewavenet]
@@ -19,7 +20,7 @@ mesh11sd (3.1.0)
   * Fix - set procd parameters to respawn zombie nodes [bluewavenet]
   * Add - README examples of using copy/connect [bluewavenet]
 
- -- Rob White <dot@blue-wave.net>  Sat, 20 Mar 2024 11:38:51 +0000
+ -- Rob White <dot@blue-wave.net>  Thu, 21 Mar 2024 07:55:51 +0000
 
 mesh11sd (3.0.0)
   * Add - startup check for ath10k-ct drivers and terminate if found [bluewavenet]
