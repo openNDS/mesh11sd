@@ -1536,8 +1536,14 @@ block_bridge_loops() {
 	fi
 
 	. /tmp/devicemac
+	local mac_changed=0
 	local br_iface
 	local br_ifaces=$(brctl showstp "$device" | grep -B 1 -w "port id" | grep "(" | awk '{printf "%s ", $1}')
+
+	if [ ! -e "/tmp/mesh11s/brmac_la" ]; then
+		br_ifaces="$br_ifaces $device"
+		touch "/tmp/mesh11s/brmac_la"
+	fi
 
 	get_mesh_iflist
 	br_mac_list=$devicemac
@@ -1574,6 +1580,7 @@ block_bridge_loops() {
 
 				make_indexed_mac "$mac_la" "$index"
 				ip link set $br_iface down; ip link set $br_iface up address $mac_indexed
+				mac_changed=1
 			else
 				#Not a duplicate so save it in the list
 				br_mac_list="$devicemac $br_iface_mac"
@@ -1581,6 +1588,12 @@ block_bridge_loops() {
 		fi
 
 	done
+
+	refresh_bridgemac
+
+	if [ "$mac_changed" -eq 1 ]; then
+		restart_mesh
+	fi
 
 }
 
@@ -2256,6 +2269,12 @@ elif [ "$1" = "daemon" ]; then
 	syslogmessage="mesh11sd is in startup"
 	write_to_syslog
 
+	mkdir -p /tmp/mesh11s
+
+	if [ -e "/tmp/mesh11s/brmac_la" ]; then
+		rm "/tmp/mesh11s/brmac_la"
+	fi
+
 	if [ -f "/tmp/mesh_rssi_threshold" ]; then
 		rm /tmp/mesh_rssi_threshold
 	fi
@@ -2560,7 +2579,6 @@ elif [ "$1" = "daemon" ]; then
 			check_gate
 			check_hwmp
 			wait_for_mesh
-
 		fi
 
 		block_bridge_loops
