@@ -962,16 +962,42 @@ wait_for_nodes() {
 
 convert_to_la() {
 	local mac_to_convert="$1"
+
 	eval $(echo "$mac_to_convert" | awk -F":" '{printf "p1=%s p2=%s p3=%s p4=%s p5=%s p6=%s", $1 ,$2, $3, $4, $5, $6}')
-	la_octet=$(printf '%x\n' "$(( 0x2 | 0x$p1 ))")
-	mac_la="$la_octet:$p2:$p3:$p4:$p5:$p6"
+
+	la_check=$(printf '%x\n' "$(( 0x2 & 0x$p1 ))")
+
+	if [ "$la_check" -eq 0 ]; then
+		octet=$(printf '%x\n' "$(( 0x2 | 0x$p1 ))")
+
+		debugtype="debug"
+		syslogmessage="mac p1 octet [ $octet ]"
+		write_to_syslog
+	else
+		octet="$p1"
+	fi
+
+	mac_la="$octet:$p2:$p3:$p4:$p5:$p6"
 }
 
 convert_from_la() {
 	local mac_to_convert="$1"
+
 	eval $(echo "$mac_to_convert" | awk -F":" '{printf "p1=%s p2=%s p3=%s p4=%s p5=%s p6=%s", $1 ,$2, $3, $4, $5, $6}')
-	la_octet=$(printf '%x\n' "$(( 0x2 ^ 0x$p1 ))")
-	mac_from_la="$la_octet:$p2:$p3:$p4:$p5:$p6"
+
+	la_check=$(printf '%x\n' "$(( 0x2 & 0x$p1 ))")
+
+	if [ "$la_check" -eq 2 ]; then
+		octet=$(printf '%x\n' "$(( 0x2 ^ 0x$p1 ))")
+
+		debugtype="debug"
+		syslogmessage="mac p1 octet [ $octet ]"
+		write_to_syslog
+	else
+		octet="$p1"
+	fi
+
+	mac_from_la="$octet:$p2:$p3:$p4:$p5:$p6"
 }
 
 make_indexed_mac() {
@@ -1119,6 +1145,7 @@ get_peers() {
 		for peer in $macrouting; do
 			peermac=$(echo "$peer" | awk -F"/" '{printf "%s", $1}')
 			peerlist="$peerlist ""$peermac"
+			mute=1
 			convert_from_la "$peermac"
 			peerlist="$peerlist ""$mac_from_la"
 		done
