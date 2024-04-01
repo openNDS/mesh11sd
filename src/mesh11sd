@@ -1179,10 +1179,10 @@ ccpy_setup() {
 }
 
 ndp_scan_peer() {
-	# NDP - Send linklocal multicast
+	# NDP - Send linklocal multicast ip6-allrouters
 	if [ -f "/tmp/devicemac" ]; then
 		. /tmp/devicemac
-		response=$(ping -q -c 2 -I "$device" "ff02::1" &>/dev/null)
+		response=$(ping -q -c 3 "ff02::2%$device" &>/dev/null)
 	fi
 }
 
