@@ -1182,7 +1182,7 @@ ndp_scan_peer() {
 	# NDP - Send linklocal multicast ip6-allrouters
 	if [ -f "/tmp/devicemac" ]; then
 		. /tmp/devicemac
-		response=$(ping -q -c 3 "ff02::2%$device" &>/dev/null)
+		response=$(ping -q -c 2 "ff02::2%$device" &>/dev/null)
 	fi
 }
 
@@ -1636,6 +1636,22 @@ check_rule_status() {
 	fi
 }
 
+check_if_peer() {
+	ispeer=1
+	eval $(echo "$ndpmac" | awk -F":" '{printf "p1=%s p2=%s p3=%s p4=%s p5=%s p6=%s", $1 ,$2, $3, $4, $5, $6}')
+	local ndpmacid="$p2-$p3-$p5-$p6"
+
+	for peermac in $peerlist; do
+		eval $(echo "$peermac" | awk -F":" '{printf "p1=%s p2=%s p3=%s p4=%s p5=%s p6=%s", $1 ,$2, $3, $4, $5, $6}')
+		local peermacid="$p2-$p3-$p5-$p6"
+
+		if [ "$peermacid" = "$ndpmacid" ]; then
+			ispeer=0
+			break
+		fi
+	done
+}
+
 ##############
 # Start point
 ##############
@@ -1981,12 +1997,13 @@ elif [ "$1" = "connect" ]; then
 	fi
 
 	if [ ! -z "$peerlist" ]; then
+		# peerlist is a list of mac addresses of peers, both la and non la
 
 		for connectto in $connectlist; do
 			linklocal="${connectto%,*}"
 			ndpmac="${connectto##*,}"
 
-			ispeer=$(echo "$peerlist" | grep -q "$ndpmac"; echo $?)
+			check_if_peer
 
 			if [ "$ispeer" -ne 0 ]; then
 				continue
@@ -2050,7 +2067,7 @@ elif [ "$1" = "copy" ]; then
 			linklocal="${connectto%,*}"
 			ndpmac="${connectto##*,}"
 
-			ispeer=$(echo "$peerlist" | grep -q "$ndpmac"; echo $?)
+			check_if_peer
 
 			if [ "$ispeer" -ne 0 ]; then
 				continue
