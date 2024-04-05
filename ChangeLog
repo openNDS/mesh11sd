@@ -1,3 +1,12 @@
+mesh11sd (3.1.1)
+  * Fix - use portal detect only if auto_config is enabled [bluewavenet]
+  * Add - check_if_peer making peer identification more reliable [bluewavenet]
+  * Fix - improved ndp_scan_peer, send linklocal multicast ip6-allrouters [bluewavenet]
+  * Fix - convert_to/from_la only if not already done [bluewavenet]
+  * Fix - failure of access point interface on some SoC eg MT7628 when mesh enabled [bluewavenet]
+
+ -- Rob White <dot@blue-wave.net>  Fri, 05 Apr 2024 14:57:59 +0000
+
 mesh11sd (3.1.0)
   * Add - send meaningful multipath warnings to syslog [bluewavenet]
   * Fix - diplay warning message only if path_change_count changes [bluewavenet]
