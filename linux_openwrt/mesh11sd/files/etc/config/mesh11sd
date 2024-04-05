@@ -67,6 +67,7 @@ config mesh11sd 'setup'
 	# If the upstream link is active, the router hosting the meshnode will serve ipv4 dhcp into the mesh network.
 	# If the upstream link is not connected, dhcp will be disabled and the meshnode will function as a level 2 bridge on the mesh network.
 	# If portal_detect is disabled, the meshnode will be forced into portal mode.
+	# Has no effect if auto_config is disabled.
 	# Default 1 (enabled). Set to 0 to disable.
 	#
 	#option portal_detect '0'
@@ -90,6 +91,7 @@ config mesh11sd 'setup'
 
 	###########################################################################################
 	# auto_config (optional)
+	# Enables autonomous dynamic mesh configuration.
 	# Auto configure mesh interfaces in the wireless configuration.
 	# Default 1 (enabled). Set to 0 to disable.
 	#
