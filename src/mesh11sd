@@ -2580,9 +2580,10 @@ elif [ "$1" = "daemon" ]; then
 				check_mesh_phantom
 			done
 
-			if [ "$portal_detect" -eq 1 ]; then
+			if [ "$portal_detect" -eq 1 ] && [ "$auto_config" -eq 1 ]; then
 				check_portal
-			else
+
+			elif [ "$portal_detect" -eq 0 ] && [ "$auto_config" -eq 1 ]; then
 				# portal_detect is not enabled - force portal mode:
 				authoritative=$(uci get dhcp.@dnsmasq[0].authoritative 2>/dev/null | awk '{printf "%d", $1}')
 
