@@ -962,16 +962,42 @@ wait_for_nodes() {
 
 convert_to_la() {
 	local mac_to_convert="$1"
+
 	eval $(echo "$mac_to_convert" | awk -F":" '{printf "p1=%s p2=%s p3=%s p4=%s p5=%s p6=%s", $1 ,$2, $3, $4, $5, $6}')
-	la_octet=$(printf '%x\n' "$(( 0x2 | 0x$p1 ))")
-	mac_la="$la_octet:$p2:$p3:$p4:$p5:$p6"
+
+	la_check=$(printf '%x\n' "$(( 0x2 & 0x$p1 ))")
+
+	if [ "$la_check" -eq 0 ]; then
+		octet=$(printf '%x\n' "$(( 0x2 | 0x$p1 ))")
+
+		debugtype="debug"
+		syslogmessage="mac p1 octet [ $octet ]"
+		write_to_syslog
+	else
+		octet="$p1"
+	fi
+
+	mac_la="$octet:$p2:$p3:$p4:$p5:$p6"
 }
 
 convert_from_la() {
 	local mac_to_convert="$1"
+
 	eval $(echo "$mac_to_convert" | awk -F":" '{printf "p1=%s p2=%s p3=%s p4=%s p5=%s p6=%s", $1 ,$2, $3, $4, $5, $6}')
-	la_octet=$(printf '%x\n' "$(( 0x2 ^ 0x$p1 ))")
-	mac_from_la="$la_octet:$p2:$p3:$p4:$p5:$p6"
+
+	la_check=$(printf '%x\n' "$(( 0x2 & 0x$p1 ))")
+
+	if [ "$la_check" -eq 2 ]; then
+		octet=$(printf '%x\n' "$(( 0x2 ^ 0x$p1 ))")
+
+		debugtype="debug"
+		syslogmessage="mac p1 octet [ $octet ]"
+		write_to_syslog
+	else
+		octet="$p1"
+	fi
+
+	mac_from_la="$octet:$p2:$p3:$p4:$p5:$p6"
 }
 
 make_indexed_mac() {
@@ -1119,6 +1145,7 @@ get_peers() {
 		for peer in $macrouting; do
 			peermac=$(echo "$peer" | awk -F"/" '{printf "%s", $1}')
 			peerlist="$peerlist ""$peermac"
+			mute=1
 			convert_from_la "$peermac"
 			peerlist="$peerlist ""$mac_from_la"
 		done
@@ -1152,10 +1179,10 @@ ccpy_setup() {
 }
 
 ndp_scan_peer() {
-	# NDP - Send linklocal multicast
+	# NDP - Send linklocal multicast ip6-allrouters
 	if [ -f "/tmp/devicemac" ]; then
 		. /tmp/devicemac
-		response=$(ping -q -c 2 -I "$device" "ff02::1" &>/dev/null)
+		response=$(ping -q -c 2 "ff02::2%$device" &>/dev/null)
 	fi
 }
 
@@ -1536,8 +1563,14 @@ block_bridge_loops() {
 	fi
 
 	. /tmp/devicemac
+	local mac_changed=0
 	local br_iface
 	local br_ifaces=$(brctl showstp "$device" | grep -B 1 -w "port id" | grep "(" | awk '{printf "%s ", $1}')
+
+	if [ ! -e "/tmp/mesh11s/brmac_la" ]; then
+		br_ifaces="$br_ifaces $device"
+		touch "/tmp/mesh11s/brmac_la"
+	fi
 
 	get_mesh_iflist
 	br_mac_list=$devicemac
@@ -1574,6 +1607,7 @@ block_bridge_loops() {
 
 				make_indexed_mac "$mac_la" "$index"
 				ip link set $br_iface down; ip link set $br_iface up address $mac_indexed
+				mac_changed=1
 			else
 				#Not a duplicate so save it in the list
 				br_mac_list="$devicemac $br_iface_mac"
@@ -1581,6 +1615,12 @@ block_bridge_loops() {
 		fi
 
 	done
+
+	refresh_bridgemac
+
+	if [ "$mac_changed" -eq 1 ]; then
+		restart_mesh
+	fi
 
 }
 
@@ -1594,6 +1634,22 @@ check_rule_status() {
 		syslogmessage="WARNING! A severe mesh bridge-loop storm is likely to occur if any non-mesh backhaul segments are used!"
 		write_to_syslog
 	fi
+}
+
+check_if_peer() {
+	ispeer=1
+	eval $(echo "$ndpmac" | awk -F":" '{printf "p1=%s p2=%s p3=%s p4=%s p5=%s p6=%s", $1 ,$2, $3, $4, $5, $6}')
+	local ndpmacid="$p2-$p3-$p5-$p6"
+
+	for peermac in $peerlist; do
+		eval $(echo "$peermac" | awk -F":" '{printf "p1=%s p2=%s p3=%s p4=%s p5=%s p6=%s", $1 ,$2, $3, $4, $5, $6}')
+		local peermacid="$p2-$p3-$p5-$p6"
+
+		if [ "$peermacid" = "$ndpmacid" ]; then
+			ispeer=0
+			break
+		fi
+	done
 }
 
 ##############
@@ -1941,12 +1997,13 @@ elif [ "$1" = "connect" ]; then
 	fi
 
 	if [ ! -z "$peerlist" ]; then
+		# peerlist is a list of mac addresses of peers, both la and non la
 
 		for connectto in $connectlist; do
 			linklocal="${connectto%,*}"
 			ndpmac="${connectto##*,}"
 
-			ispeer=$(echo "$peerlist" | grep -q "$ndpmac"; echo $?)
+			check_if_peer
 
 			if [ "$ispeer" -ne 0 ]; then
 				continue
@@ -2010,7 +2067,7 @@ elif [ "$1" = "copy" ]; then
 			linklocal="${connectto%,*}"
 			ndpmac="${connectto##*,}"
 
-			ispeer=$(echo "$peerlist" | grep -q "$ndpmac"; echo $?)
+			check_if_peer
 
 			if [ "$ispeer" -ne 0 ]; then
 				continue
@@ -2255,6 +2312,12 @@ elif [ "$1" = "daemon" ]; then
 	debugtype="notice"
 	syslogmessage="mesh11sd is in startup"
 	write_to_syslog
+
+	mkdir -p /tmp/mesh11s
+
+	if [ -e "/tmp/mesh11s/brmac_la" ]; then
+		rm "/tmp/mesh11s/brmac_la"
+	fi
 
 	if [ -f "/tmp/mesh_rssi_threshold" ]; then
 		rm /tmp/mesh_rssi_threshold
@@ -2517,9 +2580,10 @@ elif [ "$1" = "daemon" ]; then
 				check_mesh_phantom
 			done
 
-			if [ "$portal_detect" -eq 1 ]; then
+			if [ "$portal_detect" -eq 1 ] && [ "$auto_config" -eq 1 ]; then
 				check_portal
-			else
+
+			elif [ "$portal_detect" -eq 0 ] && [ "$auto_config" -eq 1 ]; then
 				# portal_detect is not enabled - force portal mode:
 				authoritative=$(uci get dhcp.@dnsmasq[0].authoritative 2>/dev/null | awk '{printf "%d", $1}')
 
@@ -2560,7 +2624,6 @@ elif [ "$1" = "daemon" ]; then
 			check_gate
 			check_hwmp
 			wait_for_mesh
-
 		fi
 
 		block_bridge_loops
