@@ -969,10 +969,6 @@ convert_to_la() {
 
 	if [ "$la_check" -eq 0 ]; then
 		octet=$(printf '%x\n' "$(( 0x2 | 0x$p1 ))")
-
-		debugtype="debug"
-		syslogmessage="mac p1 octet [ $octet ]"
-		write_to_syslog
 	else
 		octet="$p1"
 	fi
@@ -1573,8 +1569,10 @@ block_bridge_loops() {
 	fi
 
 	get_mesh_iflist
-	br_mac_list=$devicemac
-	local index=0
+
+	# Don't change the bridge mac for kernel 6+
+	#br_mac_list=$devicemac
+	local index=1
 
 	for br_iface in $br_ifaces; do
 		rulecount=$(nft -a list table bridge mesh11s 2> /dev/null | grep -w -c "$br_iface" | awk '{printf "%s", $1}')
@@ -1589,7 +1587,7 @@ block_bridge_loops() {
 		index=$(($index + 1))
 		convert_to_la "$devicemac"
 		is_meshif=$(echo "$iflist" | grep -q "$br_iface"; echo -n $?)
-
+is_meshif=0
 		if [ $is_meshif -ne 0 ]; then
 			# This is not a mesh interface
 			local br_iface_mac=$(ip link | grep -A 1 "$br_iface" | grep "link/ether" | awk 'NR==1 {printf "%s", $2}')
@@ -1650,6 +1648,24 @@ check_if_peer() {
 			break
 		fi
 	done
+}
+
+get_kernel_version() {
+	if [ -e "/proc/version" ]; then
+		kmajor=$(awk '{print $3}' /proc/version | awk -F"." '{printf "%s", $1}')
+		kminor=$(awk '{print $3}' /proc/version | awk -F"." '{printf "%s", $2}')
+		kpatch=$(awk '{print $3}' /proc/version | awk -F"." '{printf "%s", $3}')
+		debugtype="debug"
+		syslogmessage="Kernel version: Major [ $kmajor ], Minor [ $kminor ], Patch [ $kpatch ]"
+		write_to_syslog
+	else
+		kmajor=0
+		kminor=0
+		kpatch=0
+		debugtype="warn"
+		syslogmessage="WARNING: Unable to determine kernel version"
+		write_to_syslog
+	fi
 }
 
 ##############
@@ -2472,8 +2488,8 @@ elif [ "$1" = "daemon" ]; then
 				. /tmp/devicemac
 				get_wiphys
 
-				#### Disable macfixup:
-				# macfixup=1
+				#### Disable macfixup by setting to 1:
+				macfixup=0
 
 				if [ "$macfixup" -eq 0 ]; then
 					for wiphy in $wiphys; do
