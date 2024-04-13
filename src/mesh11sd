@@ -1583,7 +1583,10 @@ block_bridge_loops() {
 		index=$(($index + 1))
 		convert_to_la "$devicemac"
 		is_meshif=$(echo "$iflist" | grep -q "$br_iface"; echo -n $?)
-is_meshif=0
+
+		# To ensure there are no duplicate bridge interface mac addresses, comment next line
+		is_meshif=0
+
 		if [ $is_meshif -ne 0 ]; then
 			# This is not a mesh interface
 			local br_iface_mac=$(ip link | grep -A 1 "$br_iface" | grep "link/ether" | awk 'NR==1 {printf "%s", $2}')
