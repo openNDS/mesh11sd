@@ -985,10 +985,6 @@ convert_from_la() {
 
 	if [ "$la_check" -eq 2 ]; then
 		octet=$(printf '%x\n' "$(( 0x2 ^ 0x$p1 ))")
-
-		debugtype="debug"
-		syslogmessage="mac p1 octet [ $octet ]"
-		write_to_syslog
 	else
 		octet="$p1"
 	fi
