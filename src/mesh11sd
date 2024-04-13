@@ -2487,7 +2487,9 @@ elif [ "$1" = "daemon" ]; then
 				. /tmp/devicemac
 				get_wiphys
 
-				#### Disable macfixup by setting to 1:
+				#### The mesh interface MUST have a unique mac address ie not duplicated from another interface.
+				# We will set it ip as a locally administered version of the bridge mac for facilitating connect/copy functionality
+				# Disable macfixup by setting to 1:
 				macfixup=0
 
 				if [ "$macfixup" -eq 0 ]; then
