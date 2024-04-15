@@ -212,7 +212,9 @@ get_current_setup () {
 	#####
 	auto_config=$(uci get mesh11sd.setup.auto_config 2> /dev/null)
 
-	if [ -z "$auto_config" ] || [ "$auto_config" -gt 0 ]; then
+	if [ -z "$auto_config" ]; then
+		auto_config=0
+	elif [ "$auto_config" -ne 0 ]; then
 		auto_config=1
 	fi
 
