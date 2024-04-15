@@ -713,7 +713,7 @@ get_portal_state() {
 	syslogmessage="In get_portal_state. firstloop=$firstloop..."
 	write_to_syslog
 
-	if [ "$firstloop" -eq 1 ]; then
+	if [ "$firstloop" -eq 1 ] && [ "$portal_detect" -eq 1 ]; then
 		local retries=10
 
 		for retry in $(seq $retries); do
@@ -727,11 +727,12 @@ get_portal_state() {
 				continue
 			fi
 		done
-
+	elif [ "$portal_detect" -eq 2 ]; then
+		uci set dhcp.@dnsmasq[0].authoritative='2'
+		default_gw=""
 	else
 		default_gw=$(ip route | grep "default via")
 	fi
-
 
 	debugtype="debug"
 	syslogmessage="default_gw=$default_gw...."
@@ -780,7 +781,6 @@ get_portal_state() {
 	debugtype="debug"
 	syslogmessage="leaving get_portal_state - is_portal=$is_portal.. gwstatus=$gwstatus.. gw_ip=$gw_ip.."
 	write_to_syslog
-
 }
 
 restore_ipv4() {
@@ -2214,8 +2214,14 @@ elif [ "$1" = "commit_changes" ]; then
 		echo "    Writes changes to configuration file "
 	elif [ "$2" = "commit" ]; then
 		uci revert mesh11sd
-		echo "set $mesh_rssi_threshold_change" | uci batch
-		echo "set $txpower_change" | uci batch
+
+		if [ ! -z "$mesh_rssi_threshold_change" ]; then
+			echo "set $mesh_rssi_threshold_change" | uci batch
+		fi
+
+		if [ ! -z "$txpower_change" ]; then
+			echo "set $txpower_change" | uci batch
+		fi
 		uci commit mesh11sd
 
 		for change in $changelist; do
@@ -2613,7 +2619,7 @@ elif [ "$1" = "daemon" ]; then
 				check_mesh_phantom
 			done
 
-			if [ "$portal_detect" -eq 1 ] && [ "$auto_config" -eq 1 ]; then
+			if [ "$portal_detect" -gt 0 ] && [ "$auto_config" -eq 1 ]; then
 				check_portal
 
 			elif [ "$portal_detect" -eq 0 ] && [ "$auto_config" -eq 1 ]; then
