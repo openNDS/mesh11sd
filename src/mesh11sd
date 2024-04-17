@@ -712,6 +712,7 @@ get_portal_state() {
 	debugtype="debug"
 	syslogmessage="In get_portal_state. firstloop=$firstloop..."
 	write_to_syslog
+	. /tmp/devicemac
 
 	if [ "$firstloop" -eq 1 ] && [ "$portal_detect" -eq 1 ]; then
 		local retries=10
@@ -727,10 +728,18 @@ get_portal_state() {
 				continue
 			fi
 		done
+
 	elif [ "$portal_detect" -eq 2 ]; then
-		uci set dhcp.@dnsmasq[0].authoritative='2'
+		uci set dhcp.@dnsmasq[0].authoritative='0'
 		default_gw=""
 	else
+		default_gw=$(ip route | grep "default via")
+
+		if [ -z "$default_gw" ]; then
+			dhcpdevice=$(uci get network.wan.device | awk '{printf "%s", $1}')
+			dhcp4_renew
+		fi
+
 		default_gw=$(ip route | grep "default via")
 	fi
 
@@ -738,14 +747,10 @@ get_portal_state() {
 	syslogmessage="default_gw=$default_gw...."
 	write_to_syslog
 
-	authoritative=$(uci get dhcp.@dnsmasq[0].authoritative 2>/dev/null | awk '{printf "%d", $1}')
 	config_ipaddr=$(uci get network.$auto_mesh_network.ipaddr)
+	brg_check=$(echo "$default_gw" | grep -q -w "$device"; echo $? ) # 0 if contains $device, 1 if does not
 
-	if [ -z "$authoritative" ]; then
-		authoritative=2 # Meaning not yet set
-	fi
-
-	if [ -z "$default_gw" ]; then
+	if [ -z "$default_gw" ] || [ "$brg_check" -eq 0 ]; then
 		is_portal=""
 		gw_ip=""
 		gwstatus=""
@@ -756,10 +761,10 @@ get_portal_state() {
 			is_portal=""
 		else
 
-			gwproto=$(echo "$default_gw" | grep -q -w "proto"; echo $? ) # 0 if cantains proto, 1 if does not
+			gwproto=$(echo "$default_gw" | grep -q -w "proto"; echo $? ) # 0 if contains proto, 1 if does not
 			gwsrc=$(echo "$default_gw" | grep -q -w "src"; echo $? ) # 0 if contains src, 1 if does not
 
-			if [ "$gwproto" -eq 1 ] && [ "$gwsrc" -eq 0 ]; then
+			if [ "$gwproto" -eq 1 ] || [ "$gwsrc" -eq 1 ]; then
 				# must test if upstream gateway is actually up
 				# On an ethernet link to eg an isp router, trigger arp with a ping:
 				gwstatus=$(ping -q -c 2 -W 1 "$gw_ip" &>/dev/null; ip neigh | grep "$gw_ip" | awk '{printf "%s", $NF}')
@@ -776,6 +781,13 @@ get_portal_state() {
 				is_portal=""
 			fi
 		fi
+	fi
+
+	# Set detected state
+	if [ -z "$is_portal" ]; then
+		detected_state="peer"
+	else
+		detected_state="portal"
 	fi
 
 	debugtype="debug"
@@ -801,9 +813,23 @@ restore_ipv4() {
 		eval $(echo "$broadcast_mask" | awk -F"." '{printf "b1=%s b2=%s b3=%s b4=%s", $1 ,$2, $3, $4}')
 		broadcast_address="$(( $n1 ^ $b1 )).$(( $n2 ^ $b2 )).$(( $n3 ^ $b3 )).$(( $n4 ^ $b4 ))"
 
+		debugtype="debug"
+		syslogmessage=" addr add \"$cdir_ip\" broadcast \"$broadcast_address\" dev \"$device\""
+		write_to_syslog
+
 		ip addr add "$cdir_ip" broadcast "$broadcast_address" dev "$device"
 		ip link set "$device" arp on
 		ip link set "$device" multicast on
+	fi
+}
+
+dhcp4_renew() {
+	hostname=$(uci get system.@system[0].hostname 2>/dev/null)
+	udhcpc -p /var/run/udhcpc-renew-$dhcpdevice.pid -f -q -n -t0 -A 0 -i eth0.2 -x hostname:$hostname &
+	sleep 3
+
+	if [ -f "/var/run/udhcpc-renew-$dhcpdevice.pid" ]; then
+		kill $(cat /var/run/udhcpc-renew-$dhcpdevice.pid)
 	fi
 }
 
@@ -821,8 +847,21 @@ check_portal() {
 			# This IS NOT a layer 3 mesh portal
 			uci set mesh11sd.mesh_params.mesh_connected_to_as='0'
 
-			if [ ! -f "/var/run/udhcpc-$device.pid" ]; then
+			if [ "$detected_state" = "peer" ] && [ "$last_state" = "initial" ]; then
+				last_state="portal"
+			fi
 
+			if [ "$detected_state" = "peer" ] && [ "$last_state" = "portal" ]; then
+				last_state="peer"
+				debugtype="debug"
+				syslogmessage="This meshnode is NOT a portal"
+				write_to_syslog
+
+				if [ -f "/var/run/udhcpc-$device.pid" ]; then
+					kill $(cat /var/run/udhcpc-$device.pid)
+				fi
+
+				ip route flush default
 				hostname=$(uci get system.@system[0].hostname 2>/dev/null)
 
 				# Start the dhcp client
@@ -835,12 +874,6 @@ check_portal() {
 					syslogmessage="Remote dhcpv4 server found"
 					write_to_syslog
 				fi
-			fi
-
-			if [ "$authoritative" -eq 1 ] || [ "$authoritative" -eq 2 ]; then
-				debugtype="debug"
-				syslogmessage="This meshnode is NOT a portal"
-				write_to_syslog
 
 				uci set dhcp.@dnsmasq[0].authoritative='0'
 				echo "set dhcp.$auto_mesh_network.ignore='1'" | uci batch
@@ -876,13 +909,11 @@ check_portal() {
 
 				if [ ! -z "$gw_ip" ]; then
 					echo "add_list dhcp.@dnsmasq[0].server='$gw_ip'" | uci batch
-				else
-					uci set dhcp.@dnsmasq[0].authoritative='2'
+					uci set dhcp.@dnsmasq[0].authoritative='0'
 				fi
 
 				/sbin/service dnsmasq reload
 				/sbin/service system restart
-				restart_mesh
 			fi
 
 			check_channel
@@ -895,9 +926,12 @@ check_portal() {
 				kill $(cat /var/run/udhcpc-$device.pid)
 			fi
 
-			restore_ipv4
+			if [ "$detected_state" = "portal" ] && [ "$last_state" = "initial" ]; then
+				last_state="peer"
+			fi
 
-			if [ "$authoritative" -eq 0 ] || [ "$authoritative" -eq 2 ]; then
+			if [ "$detected_state" = "portal" ] && [ "$last_state" = "peer" ]; then
+				last_state="portal"
 				debugtype="debug"
 				syslogmessage="This meshnode is an upstream portal"
 				write_to_syslog
@@ -913,10 +947,11 @@ check_portal() {
 				echo "del_list dhcp.@dnsmasq[0].server='$config_ipaddr'" | uci batch
 				echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='$mesh_hwmp_rootmode'" | uci batch
 
+				restore_ipv4
 				/sbin/service dnsmasq restart
 				/sbin/service odhcpd restart
 				/sbin/service system restart
-				restart_mesh
+
 				if [ "$daemon_startup" -eq 1 ]; then
 					daemon_startup=0
 				fi
@@ -1023,7 +1058,7 @@ wait_for_mesh() {
 	fixup1=0
 	get_mesh_iflist
 
-	local retries=2
+	local retries=4
 
 	for iface in $iflist; do
 
@@ -2339,12 +2374,15 @@ elif [ "$1" = "opkg_revert_to_default" ]; then
 exit 0
 
 elif [ "$1" = "daemon" ]; then
-	uci revert mesh11sd
-	uci revert wireless
-	uci revert dhcp
 	debugtype="notice"
 	syslogmessage="mesh11sd is in startup"
 	write_to_syslog
+
+	uci revert mesh11sd
+	uci revert wireless
+	uci revert dhcp
+	/sbin/service dnsmasq restart
+	wifi
 
 	mkdir -p /tmp/mesh11s
 
@@ -2377,6 +2415,9 @@ elif [ "$1" = "daemon" ]; then
 
 	# Clear the dhcp authoritative flag
 	uci delete dhcp.@dnsmasq[0].authoritative 2>/dev/null
+
+	# default state
+	last_state="initial"
 
 	# Initial Mode Flag
 	mode=$(($startup + $statusmode + $enabled ))
