@@ -288,7 +288,7 @@ get_current_setup () {
 		auto_mesh_network="lan"
 	fi
 
-	zone_status=$(uci show firewall | grep -w "name='$auto_mesh_network'" &>/dev/null ; echo $?)
+	zone_status=$(uci show firewall | grep -w "name='$auto_mesh_network'" &>/dev/null ; echo -n "$?")
 
 	if [ "$zone_status" -eq 1 ]; then
 		syslogmessage="network zone [ $auto_mesh_network ] does not exist"
@@ -630,7 +630,7 @@ check_channel() {
 					fi
 				done
 
-				link_to_portal=$(cat /tmp/dhcp6probe | grep -q -w "Got a valid ADVERTISE" ; echo $?)
+				link_to_portal=$(cat /tmp/dhcp6probe | grep -q -w "Got a valid ADVERTISE" ; echo -n "$?")
 				instances=$(pgrep odhcp6c | awk '{printf "%s ", $1}')
 
 				for instance in $instances; do
@@ -748,7 +748,7 @@ get_portal_state() {
 	write_to_syslog
 
 	config_ipaddr=$(uci get network.$auto_mesh_network.ipaddr)
-	brg_check=$(echo "$default_gw" | grep -q -w "$device"; echo $? ) # 0 if contains $device, 1 if does not
+	brg_check=$(echo "$default_gw" | grep -q -w "$device"; echo -n "$?" ) # 0 if contains $device, 1 if does not
 
 	if [ -z "$default_gw" ] || [ "$brg_check" -eq 0 ]; then
 		is_portal=""
@@ -761,8 +761,8 @@ get_portal_state() {
 			is_portal=""
 		else
 
-			gwproto=$(echo "$default_gw" | grep -q -w "proto"; echo $? ) # 0 if contains proto, 1 if does not
-			gwsrc=$(echo "$default_gw" | grep -q -w "src"; echo $? ) # 0 if contains src, 1 if does not
+			gwproto=$(echo "$default_gw" | grep -q -w "proto"; echo -n "$?" ) # 0 if contains proto, 1 if does not
+			gwsrc=$(echo "$default_gw" | grep -q -w "src"; echo -n "$?" ) # 0 if contains src, 1 if does not
 
 			if [ "$gwproto" -eq 1 ] || [ "$gwsrc" -eq 1 ]; then
 				# must test if upstream gateway is actually up
@@ -833,6 +833,24 @@ dhcp4_renew() {
 	fi
 }
 
+check_dns_server() {
+	default_gw=$(ip route | grep "default via")
+
+	if [ ! -z "$default_gw" ]; then
+		gw_ip=$(echo "$default_gw" | awk -F" " '{printf "%s", $3}')
+
+		if [ ! -z "$gw_ip" ]; then
+			dns_server_config=$(uci get dhcp.@dnsmasq[0].server &> /dev/null; echo -n "$?")
+
+			if [ "$dns_server_config" -eq 1 ]; then
+				echo "add_list dhcp.@dnsmasq[0].server='$gw_ip'" | uci batch
+				uci set dhcp.@dnsmasq[0].authoritative='0'
+				/sbin/service dnsmasq reload
+			fi
+		fi
+	fi
+}
+
 check_portal() {
 	is_portal=""
 	debugtype="debug"
@@ -890,7 +908,7 @@ check_portal() {
 				/sbin/service dnsmasq restart
 				/sbin/service odhcpd restart
 
-				local retries=20
+				local retries=10
 
 				for retry in $(seq $retries); do
 					default_gw=$(ip route | grep "default via")
@@ -916,6 +934,7 @@ check_portal() {
 				/sbin/service system restart
 			fi
 
+			check_dns_server
 			check_channel
 
 		else
@@ -1324,7 +1343,7 @@ auto_config() {
 
 						if [ "$auto_mesh_band" = "2g40" ]; then
 							originalhtmode=$(echo "get wireless.radio$phyindex.htmode" | uci batch)
-							he_mode=$(echo "$originalhtmode" | grep -q "HE"; echo $?)
+							he_mode=$(echo "$originalhtmode" | grep -q "HE"; echo -n "$?")
 
 							if [ "$he_mode" -eq 0 ]; then
 								htmode="HE40"
