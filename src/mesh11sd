@@ -2405,6 +2405,8 @@ elif [ "$1" = "daemon" ]; then
 	syslogmessage="mesh11sd is in startup"
 	write_to_syslog
 
+	get_kernel_version
+
 	uci revert mesh11sd
 	uci revert wireless
 	uci revert dhcp
