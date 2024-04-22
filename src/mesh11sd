@@ -128,8 +128,8 @@ restart_mesh () {
 	wifi
 	wait_for_mesh
 
-	if [ -f "/tmp/devicemac" ]; then
-		. /tmp/devicemac
+	if [ -f "$tmpdir/devicemac" ]; then
+		. $tmpdir/devicemac
 		ip link set "$device" arp on
 		ip link set "$device" multicast on
 	fi
@@ -611,17 +611,17 @@ check_channel() {
 				ucibatch="get network.$network.device"
 				device=$(echo "$ucibatch" | uci batch)
 
-				if [ -f "/tmp/dhcp6probe" ]; then
-					mv "/tmp/dhcp6probe" "/tmp/dhcp6probe.prev"
+				if [ -f "$tmpdir/dhcp6probe" ]; then
+					mv "$tmpdir/dhcp6probe" "$tmpdir/dhcp6probe.prev"
 				fi
 
-				odhcp6c -ev "$device" 2>/tmp/dhcp6probe &
+				odhcp6c -ev "$device" 2>$tmpdir/dhcp6probe &
 
 				local retries=20
 
 				for retry in $(seq $retries); do
 
-					if [ -f "/tmp/dhcp6probe" ]; then
+					if [ -f "$tmpdir/dhcp6probe" ]; then
 						sleep 4
 						break
 					else
@@ -630,7 +630,7 @@ check_channel() {
 					fi
 				done
 
-				link_to_portal=$(cat /tmp/dhcp6probe | grep -q -w "Got a valid ADVERTISE" ; echo -n "$?")
+				link_to_portal=$(cat $tmpdir/dhcp6probe | grep -q -w "Got a valid ADVERTISE" ; echo -n "$?")
 				instances=$(pgrep odhcp6c | awk '{printf "%s ", $1}')
 
 				for instance in $instances; do
@@ -712,7 +712,7 @@ get_portal_state() {
 	debugtype="debug"
 	syslogmessage="In get_portal_state. firstloop=$firstloop..."
 	write_to_syslog
-	. /tmp/devicemac
+	. $tmpdir/devicemac
 
 	if [ "$firstloop" -eq 1 ] && [ "$portal_detect" -eq 1 ]; then
 		local retries=10
@@ -796,7 +796,7 @@ get_portal_state() {
 }
 
 restore_ipv4() {
-	. /tmp/devicemac
+	. $tmpdir/devicemac
 	config_ipaddr=$(uci get network.$auto_mesh_network.ipaddr)
 	active_ipaddr=$(ip addr show dev $device | grep -w "$config_ipaddr" | awk '{printf "%s", $2}' | awk -F"/" '{printf "%s", $1}')
 
@@ -825,7 +825,7 @@ restore_ipv4() {
 
 dhcp4_renew() {
 	hostname=$(uci get system.@system[0].hostname 2>/dev/null)
-	udhcpc -p /var/run/udhcpc-renew-$dhcpdevice.pid -f -q -n -t0 -A 0 -i eth0.2 -x hostname:$hostname &
+	udhcpc -p /var/run/udhcpc-renew-$dhcpdevice.pid -f -q -n -t0 -A 0 -i $dhcpdevice -x hostname:$hostname &
 	sleep 3
 
 	if [ -f "/var/run/udhcpc-renew-$dhcpdevice.pid" ]; then
@@ -859,7 +859,7 @@ check_portal() {
 
 	if [ "$enabled" -eq 1 ]; then
 		get_portal_state
-		. /tmp/devicemac
+		. $tmpdir/devicemac
 
 		if [ -z "$is_portal" ]; then
 			# This IS NOT a layer 3 mesh portal
@@ -1096,7 +1096,7 @@ wait_for_mesh() {
 			syslogmessage="First attempt at fixup: Mesh interface $iface failed - Possible wireless driver bug...."
 			write_to_syslog
 
-			. /tmp/devicemac
+			. $tmpdir/devicemac
 			convert_to_la "$devicemac"
 
 			uci_section_name=$(uci show wireless | grep "ifname='$iface'" | awk -F "." '{printf "%s", $2}')
@@ -1237,8 +1237,8 @@ ccpy_setup() {
 
 ndp_scan_peer() {
 	# NDP - Send linklocal multicast ip6-allrouters
-	if [ -f "/tmp/devicemac" ]; then
-		. /tmp/devicemac
+	if [ -f "$tmpdir/devicemac" ]; then
+		. $tmpdir/devicemac
 		response=$(ping -q -c 2 "ff02::2%$device" &>/dev/null)
 	fi
 }
@@ -1249,11 +1249,11 @@ get_wiphys() {
 }
 
 refresh_bridgemac() {
-	# get the device device mac and write it to /tmp/devicemac
+	# get the device device mac and write it to $tmpdir/devicemac
 	device=$(uci get network.$auto_mesh_network.device)
 	wait_for_interface "$device"
 	devicemac=$(ip link | grep -A 1 "$device:" | grep -w "link/ether" | awk '{printf "%s", $2}')
-	echo "device=\"$device\" ; devicemac=\"$devicemac\"" > /tmp/devicemac
+	echo "device=\"$device\" ; devicemac=\"$devicemac\"" > $tmpdir/devicemac
 }
 
 auto_config() {
@@ -1281,7 +1281,7 @@ auto_config() {
 		if [ "$installed_wpad" = "mesh" ] || [ "$installed_wpad" = "mbedtls" ] || [ "$installed_wpad" = "wolfssl" ] || [ "$installed_wpad" = "openssl" ]; then
 
 			refresh_bridgemac
-			. /tmp/devicemac
+			. $tmpdir/devicemac
 			get_wiphys
 
 			if [ ! -z "$wiphys" ]; then
@@ -1530,8 +1530,8 @@ check_path_changes() {
 	# get list of interfaces
 	get_mesh_iflist
 
-	if [ -f "/tmp/devicemac" ]; then
-		. /tmp/devicemac
+	if [ -f "$tmpdir/devicemac" ]; then
+		. $tmpdir/devicemac
 	fi
 
 	for iface in $iflist; do
@@ -1563,8 +1563,8 @@ check_path_changes() {
 
 					metric=$(echo "$peer" | awk -F"/" '{printf "%s", $3}')
 
-					if [ -f "/tmp/$peermac_id" ]; then
-						. /tmp/$peermac_id
+					if [ -f "$tmpdir/$peermac_id" ]; then
+						. $tmpdir/$peermac_id
 					else
 						previous_path_change_count=1
 					fi
@@ -1596,7 +1596,7 @@ check_path_changes() {
 							#iw dev $iface mpath del $peermac
 						fi
 
-						echo "previous_path_change_count=$path_change_count" > /tmp/$peermac_id
+						echo "previous_path_change_count=$path_change_count" > $tmpdir/$peermac_id
 					else
 						debugtype="info"
 						syslogmessage="Path to station [ $peermac ] is stable"
@@ -1619,7 +1619,7 @@ block_bridge_loops() {
 		nft add chain bridge mesh11s mesh_PRE { type filter hook prerouting priority -350\; }
 	fi
 
-	. /tmp/devicemac
+	. $tmpdir/devicemac
 	local mac_changed=0
 	local br_iface
 	local br_ifaces=$(brctl showstp "$device" | grep -B 1 -w "port id" | grep "(" | awk '{printf "%s ", $1}')
@@ -1640,9 +1640,7 @@ block_bridge_loops() {
 
 		if [ "$rulecount" -lt 2 ]; then
 			rule_status=$(nft add rule bridge mesh11s mesh_PRE meta iifname { $br_iface } ether saddr "\"$devicemac\"" counter drop; echo -n $?)
-			check_rule_status
 			rule_status=$(nft add rule bridge mesh11s mesh_PRE meta iifname { $br_iface } counter accept; echo -n $?)
-			check_rule_status
 		fi
 
 		index=$(($index + 1))
@@ -1678,6 +1676,7 @@ block_bridge_loops() {
 
 	done
 
+	check_rule_status
 	refresh_bridgemac
 
 	if [ "$mac_changed" -eq 1 ]; then
@@ -1689,12 +1688,19 @@ block_bridge_loops() {
 check_rule_status() {
 
 	if [ "$rule_status" -gt 0 ]; then
-		debugtype="warn"
-		syslogmessage="ERROR adding nftables rule - error code [ $rule_status ] Is kmod-nft-bridge package installed?"
+		debugtype="info"
+		syslogmessage="-------------------------------------------------------------------------------------------------------------------------"
 		write_to_syslog
-		debugtype="warn"
-		syslogmessage="WARNING! A severe mesh bridge-loop storm is likely to occur if any non-mesh backhaul segments are used!"
+		debugtype="info"
+		syslogmessage="******* WARNING ******* Unable to add nftables rule(s) - error code [ $rule_status ]. Is the kmod-nft-bridge package installed?"
 		write_to_syslog
+		debugtype="info"
+		syslogmessage="******* WARNING ******* A severe mesh bridge-loop storm is likely to occur if any non-mesh backhaul segments are used!"
+		write_to_syslog
+		debugtype="info"
+		syslogmessage="-------------------------------------------------------------------------------------------------------------------------"
+		write_to_syslog
+
 	fi
 }
 
@@ -1857,8 +1863,8 @@ elif [ "$1" = "status" ]; then
 	# get list of interfaces
 	get_mesh_iflist
 
-	if [ -f "/tmp/devicemac" ]; then
-		. /tmp/devicemac
+	if [ -f "$tmpdir/devicemac" ]; then
+		. $tmpdir/devicemac
 	fi
 
 	procd_status=$(/etc/init.d/mesh11sd status)
@@ -2397,13 +2403,17 @@ elif [ "$1" = "daemon" ]; then
 	syslogmessage="mesh11sd is in startup"
 	write_to_syslog
 
+	get_kernel_version
+
 	uci revert mesh11sd
 	uci revert wireless
 	uci revert dhcp
 	/sbin/service dnsmasq restart
 	wifi
 
-	mkdir -p /tmp/mesh11s
+	tmpdir="/tmp/mesh11sd"
+	mkdir -p "$tmpdir"
+	
 
 	if [ -e "/tmp/mesh11s/brmac_la" ]; then
 		rm "/tmp/mesh11s/brmac_la"
@@ -2413,8 +2423,8 @@ elif [ "$1" = "daemon" ]; then
 		rm /tmp/mesh_rssi_threshold
 	fi
 
-	if [ -f "/tmp/dhcp6probe" ]; then
-		mv "/tmp/dhcp6probe" "/tmp/dhcp6probe.prev"
+	if [ -f "$tmpdir/dhcp6probe" ]; then
+		mv "$tmpdir/dhcp6probe" "$tmpdir/dhcp6probe.prev"
 	fi
 
 	#Default flags
@@ -2524,17 +2534,6 @@ elif [ "$1" = "daemon" ]; then
 					syslogmessage="auto_config is disabled. Please configure a mesh interface or enable auto_config...."
 					write_to_syslog
 					sleep $checkinterval
-
-					auto_config=$(uci get mesh11sd.setup.auto_config 2> /dev/null)
-
-					if [ -z "$auto_config" ] || [ "$auto_config" -gt 0 ]; then
-						auto_config=1
-					fi
-
-					syslogmessage="option auto_config [ $auto_config ]"
-					debugtype="info"
-					write_to_syslog
-
 				fi
 
 				########################
@@ -2563,7 +2562,7 @@ elif [ "$1" = "daemon" ]; then
 
 				# set mesh mac address for this meshconfig
 				refresh_bridgemac
-				. /tmp/devicemac
+				. $tmpdir/devicemac
 				get_wiphys
 
 				#### The mesh interface MUST have a unique mac address ie not duplicated from another interface.
