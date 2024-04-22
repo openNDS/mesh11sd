@@ -1640,9 +1640,9 @@ block_bridge_loops() {
 
 		if [ "$rulecount" -lt 2 ]; then
 			rule_status=$(nft add rule bridge mesh11s mesh_PRE meta iifname { $br_iface } ether saddr "\"$devicemac\"" counter drop; echo -n $?)
-			check_rule_status
+			#check_rule_status
 			rule_status=$(nft add rule bridge mesh11s mesh_PRE meta iifname { $br_iface } counter accept; echo -n $?)
-			check_rule_status
+			#check_rule_status
 		fi
 
 		index=$(($index + 1))
@@ -1678,6 +1678,7 @@ block_bridge_loops() {
 
 	done
 
+	check_rule_status
 	refresh_bridgemac
 
 	if [ "$mac_changed" -eq 1 ]; then
@@ -1689,12 +1690,19 @@ block_bridge_loops() {
 check_rule_status() {
 
 	if [ "$rule_status" -gt 0 ]; then
-		debugtype="warn"
-		syslogmessage="ERROR adding nftables rule - error code [ $rule_status ] Is kmod-nft-bridge package installed?"
+		debugtype="info"
+		syslogmessage="-------------------------------------------------------------------------------------------------------------------------"
 		write_to_syslog
-		debugtype="warn"
-		syslogmessage="WARNING! A severe mesh bridge-loop storm is likely to occur if any non-mesh backhaul segments are used!"
+		debugtype="info"
+		syslogmessage="******* WARNING ******* Unable to add nftables rule(s) - error code [ $rule_status ]. Is the kmod-nft-bridge package installed?"
 		write_to_syslog
+		debugtype="info"
+		syslogmessage="******* WARNING ******* A severe mesh bridge-loop storm is likely to occur if any non-mesh backhaul segments are used!"
+		write_to_syslog
+		debugtype="info"
+		syslogmessage="-------------------------------------------------------------------------------------------------------------------------"
+		write_to_syslog
+
 	fi
 }
 
@@ -2524,17 +2532,6 @@ elif [ "$1" = "daemon" ]; then
 					syslogmessage="auto_config is disabled. Please configure a mesh interface or enable auto_config...."
 					write_to_syslog
 					sleep $checkinterval
-
-					auto_config=$(uci get mesh11sd.setup.auto_config 2> /dev/null)
-
-					if [ -z "$auto_config" ] || [ "$auto_config" -gt 0 ]; then
-						auto_config=1
-					fi
-
-					syslogmessage="option auto_config [ $auto_config ]"
-					debugtype="info"
-					write_to_syslog
-
 				fi
 
 				########################
