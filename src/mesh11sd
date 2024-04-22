@@ -825,7 +825,7 @@ restore_ipv4() {
 
 dhcp4_renew() {
 	hostname=$(uci get system.@system[0].hostname 2>/dev/null)
-	udhcpc -p /var/run/udhcpc-renew-$dhcpdevice.pid -f -q -n -t0 -A 0 -i eth0.2 -x hostname:$hostname &
+	udhcpc -p /var/run/udhcpc-renew-$dhcpdevice.pid -f -q -n -t0 -A 0 -i $dhcpdevice -x hostname:$hostname &
 	sleep 3
 
 	if [ -f "/var/run/udhcpc-renew-$dhcpdevice.pid" ]; then
@@ -1563,8 +1563,8 @@ check_path_changes() {
 
 					metric=$(echo "$peer" | awk -F"/" '{printf "%s", $3}')
 
-					if [ -f "/tmp/$peermac_id" ]; then
-						. /tmp/$peermac_id
+					if [ -f "$tmpdir/$peermac" ]; then
+						. $tmpdir/$peermac
 					else
 						previous_path_change_count=1
 					fi
@@ -1596,7 +1596,7 @@ check_path_changes() {
 							#iw dev $iface mpath del $peermac
 						fi
 
-						echo "previous_path_change_count=$path_change_count" > /tmp/$peermac_id
+						echo "previous_path_change_count=$path_change_count" > $tmpdir/$peermac
 					else
 						debugtype="info"
 						syslogmessage="Path to station [ $peermac ] is stable"
@@ -1640,9 +1640,7 @@ block_bridge_loops() {
 
 		if [ "$rulecount" -lt 2 ]; then
 			rule_status=$(nft add rule bridge mesh11s mesh_PRE meta iifname { $br_iface } ether saddr "\"$devicemac\"" counter drop; echo -n $?)
-			#check_rule_status
 			rule_status=$(nft add rule bridge mesh11s mesh_PRE meta iifname { $br_iface } counter accept; echo -n $?)
-			#check_rule_status
 		fi
 
 		index=$(($index + 1))
@@ -2413,7 +2411,9 @@ elif [ "$1" = "daemon" ]; then
 	/sbin/service dnsmasq restart
 	wifi
 
-	mkdir -p /tmp/mesh11s
+	tmpdir="/tmp/mesh11sd"
+	mkdir -p "$tmpdir"
+	
 
 	if [ -e "/tmp/mesh11s/brmac_la" ]; then
 		rm "/tmp/mesh11s/brmac_la"
