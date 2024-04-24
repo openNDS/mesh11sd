@@ -1120,7 +1120,7 @@ wait_for_mesh() {
 	fixup1=0
 	get_mesh_iflist
 
-	local retries=4
+	local retries=8
 
 	for iface in $iflist; do
 
@@ -1712,8 +1712,13 @@ block_bridge_loops() {
 		convert_to_la "$devicemac"
 		is_meshif=$(echo "$iflist" | grep -q "$br_iface"; echo -n $?)
 
-		# To ensure there are no duplicate bridge interface mac addresses, comment next line
-		is_meshif=0
+		# If kernel version is 6 or higher ensure there are no duplicate bridge interface mac addresses:
+
+		if [ "$kmajor" -ge 6 ]; then
+			is_meshif=1
+		else
+			is_meshif=0
+		fi
 
 		if [ $is_meshif -ne 0 ]; then
 			# This is not a mesh interface
