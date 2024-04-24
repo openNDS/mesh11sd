@@ -137,7 +137,7 @@ restart_mesh () {
 }
 
 get_current_setup () {
-	debuglevel=$(uci get mesh11sd.setup.debuglevel 2> /dev/null)
+	debuglevel=$(uci get mesh11sd.setup.debuglevel 2> /dev/null | awk '{printf "%i", $1}')
 
 	if [ -z "$debuglevel" ]; then
 		debuglevel=1
@@ -323,6 +323,47 @@ get_current_setup () {
 	write_to_syslog
 
 	#####
+	mesh_gate_encryption=$(uci get mesh11sd.setup.mesh_gate_encryption 2> /dev/null)
+
+	if [ -z "$mesh_gate_encryption" ]; then
+		mesh_gate_encryption=0
+	fi
+
+	if [ "$mesh_gate_encryption" -eq "$mesh_gate_encryption" ] 2> /dev/null; then
+		syslogmessage="option mesh_gate_encryption [ $mesh_gate_encryption ]"
+		debugtype="info"
+		write_to_syslog
+	else
+		syslogmessage="option mesh_gate_encryption must be 0 (none), 1 (sae, aka wpa3), 2 (sae-mixed, aka wpa2/wpa3) or 3 (psk2, aka wpa2)"
+		debugtype="err"
+		write_to_syslog
+	fi
+
+	#####
+
+	#####
+	mesh_gate_key=$(uci get mesh11sd.setup.mesh_gate_key 2> /dev/null)
+
+	if [ -z "$mesh_gate_key" ]; then
+		mesh_gate_key=""
+	fi
+
+	keylen=$((${#mesh_gate_key}))
+
+	if [ "$keylen" -le 7 ] && [ "$keylen" -gt 0 ]; then
+		syslogmessage="mesh_gate_key [ $mesh_gate_key ] is too short, it must be 8 or more characters in length"
+		debugtype="err"
+		write_to_syslog
+		mesh_gate_key=""
+	else
+		syslogmessage="option mesh_gate_key [ $mesh_gate_key ]"
+		debugtype="info"
+		write_to_syslog
+	fi
+
+	#####
+
+	#####
 	mesh_gate_enable=$(uci get mesh11sd.setup.mesh_gate_enable 2> /dev/null)
 
 	if [ -z "$mesh_gate_enable" ]; then
@@ -334,6 +375,8 @@ get_current_setup () {
 	write_to_syslog
 
 	#####
+
+
 	txpower=$(uci get mesh11sd.setup.txpower 2> /dev/null)
 
 	if [ ! -z "$txpower" ]; then
@@ -1077,7 +1120,7 @@ wait_for_mesh() {
 	fixup1=0
 	get_mesh_iflist
 
-	local retries=4
+	local retries=8
 
 	for iface in $iflist; do
 
@@ -1402,9 +1445,11 @@ auto_config() {
 					fi
 				done
 
+				# get list of access points
+				aplist=$(uci show wireless 2> /dev/null | grep "='ap'" | awk -F "." '{printf "%s.%s ", $1, $2}')
+
 				#Add suffix to ssid
 				if [ "$ssid_suffix_enable" -eq 1 ]; then
-					aplist=$(uci show wireless 2> /dev/null | grep "='ap'" | awk -F "." '{printf "%s.%s ", $1, $2}')
 					suffix=$(echo $devicemac | awk -F":" '{printf "%s%s", $5, $6}')
 
 					for ap in $aplist; do
@@ -1417,6 +1462,26 @@ auto_config() {
 					echo "set system.@system[0].hostname='meshnode-$suffix'" | uci batch
 					/sbin/service system restart
 				fi
+
+				#Configure gate encryption
+				if [ "$mesh_gate_encryption" -gt 0 ] && [ ! -z "$mesh_gate_key" ]; then
+
+					case $mesh_gate_encryption in
+						0) encryption_type="none";;
+						1) encryption_type="sae";;
+						2) encryption_type="sae-mixed+aes";;
+						3) encryption_type="psk2+aes";;
+						*) encryption_type="none";;
+					esac
+
+					for ap in $aplist; do
+						radio=$(uci get "$ap.device" 2> /dev/null)
+						echo "set $ap.encryption='$encryption_type'" | uci batch
+						echo "set $ap.key='$mesh_gate_key'" | uci batch
+					done
+
+				fi
+
 
 				debugtype="debug"
 				syslogmessage="auto config complete...."
@@ -1624,9 +1689,9 @@ block_bridge_loops() {
 	local br_iface
 	local br_ifaces=$(brctl showstp "$device" | grep -B 1 -w "port id" | grep "(" | awk '{printf "%s ", $1}')
 
-	if [ ! -e "/tmp/mesh11s/brmac_la" ]; then
+	if [ ! -e "/tmp/mesh11sd/brmac_la" ]; then
 		br_ifaces="$br_ifaces $device"
-		touch "/tmp/mesh11s/brmac_la"
+		touch "/tmp/mesh11sd/brmac_la"
 	fi
 
 	get_mesh_iflist
@@ -1639,16 +1704,21 @@ block_bridge_loops() {
 		rulecount=$(nft -a list table bridge mesh11s 2> /dev/null | grep -w -c "$br_iface" | awk '{printf "%s", $1}')
 
 		if [ "$rulecount" -lt 2 ]; then
-			rule_status=$(nft add rule bridge mesh11s mesh_PRE meta iifname { $br_iface } ether saddr "\"$devicemac\"" counter drop; echo -n $?)
-			rule_status=$(nft add rule bridge mesh11s mesh_PRE meta iifname { $br_iface } counter accept; echo -n $?)
+			rule_status=$(nft add rule bridge mesh11s mesh_PRE meta iifname { $br_iface } ether saddr "\"$devicemac\"" counter drop 2> /dev/null; echo -n $?)
+			rule_status=$(nft add rule bridge mesh11s mesh_PRE meta iifname { $br_iface } counter accept 2> /dev/null; echo -n $?)
 		fi
 
 		index=$(($index + 1))
 		convert_to_la "$devicemac"
 		is_meshif=$(echo "$iflist" | grep -q "$br_iface"; echo -n $?)
 
-		# To ensure there are no duplicate bridge interface mac addresses, comment next line
-		is_meshif=0
+		# If kernel version is 6 or higher ensure there are no duplicate bridge interface mac addresses:
+
+		if [ "$kmajor" -ge 6 ]; then
+			is_meshif=1
+		else
+			is_meshif=0
+		fi
 
 		if [ $is_meshif -ne 0 ]; then
 			# This is not a mesh interface
@@ -2259,6 +2329,9 @@ elif [ "$1" = "stations" ]; then
 
 elif [ "$1" = "commit_changes" ]; then
 
+	rssi_change_flag=0
+	txpower_change_flag=0
+
 	changes=$(uci changes mesh11sd)
 	changelist=$(echo "$changes" | awk '{printf "%s ", $1}')
 
@@ -2277,10 +2350,12 @@ elif [ "$1" = "commit_changes" ]; then
 
 		if [ ! -z "$mesh_rssi_threshold_change" ]; then
 			echo "set $mesh_rssi_threshold_change" | uci batch
+			rssi_change_flag=1
 		fi
 
 		if [ ! -z "$txpower_change" ]; then
 			echo "set $txpower_change" | uci batch
+			txpower_change_flag=1
 		fi
 		uci commit mesh11sd
 
@@ -2295,6 +2370,19 @@ elif [ "$1" = "commit_changes" ]; then
 			echo "set $change" | uci batch
 
 		done
+
+		if [ "$txpower_change_flag" -eq 1 ]; then
+			echo "TX power change committed"
+		fi
+
+		if [ "$rssi_change_flag" -eq 1 ]; then
+			echo "Mesh RSSI change committed"
+		fi
+
+		if [ "$rssi_change_flag" -eq 0 ] && [ "$txpower_change_flag" -eq 0 ]; then
+			echo "No changes found"
+		fi
+
 	fi
 
 
