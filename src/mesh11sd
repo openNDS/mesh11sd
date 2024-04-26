@@ -810,7 +810,7 @@ get_portal_state() {
 			if [ "$gwproto" -eq 1 ] || [ "$gwsrc" -eq 1 ]; then
 				# must test if upstream gateway is actually up
 				# On an ethernet link to eg an isp router, trigger arp with a ping:
-				gwstatus=$(ping -q -c 2 -W 1 "$gw_ip" &>/dev/null; ip neigh | grep "$gw_ip" | awk '{printf "%s", $NF}')
+				gwstatus=$(ping -q -c 2 -W 1 "$gw_ip" &>/dev/null; ip neigh | grep "$gw_ip" | awk 'NR==1 {printf "%s", $NF}')
 
 			else
 				gwstatus="REACHABLE"
@@ -1056,7 +1056,7 @@ check_hwmp() {
 wait_for_nodes() {
 	local tics=5
 
-	echo -n " Waiting for node list to build "
+	echo -n " Building node list * "
 
 	ccpy_setup
 
@@ -1065,6 +1065,7 @@ wait_for_nodes() {
 		echo -n "* "
 	done
 
+	sleep 1
 	echo
 }
 
@@ -1117,10 +1118,10 @@ make_indexed_mac() {
 
 
 wait_for_mesh() {
-	fixup1=0
+	fixup1=1
 	get_mesh_iflist
 
-	local retries=8
+	local retries=16
 
 	for iface in $iflist; do
 
@@ -1282,7 +1283,7 @@ ndp_scan_peer() {
 	# NDP - Send linklocal multicast ip6-allrouters
 	if [ -f "$tmpdir/devicemac" ]; then
 		. $tmpdir/devicemac
-		response=$(ping -q -c 2 "ff02::2%$device" &>/dev/null)
+		response=$(ping -q -c 8 "ff02::2%$device" &>/dev/null)
 	fi
 }
 
@@ -1674,7 +1675,8 @@ check_path_changes() {
 }
 
 block_bridge_loops() {
-
+	rule_status=0
+	refresh_bridgemac
 	table_ruleset=$(nft -a list table bridge mesh11s 2> /dev/null)
 
 	if [ "$?" -gt 0 ]; then
@@ -1690,15 +1692,13 @@ block_bridge_loops() {
 	local br_ifaces=$(brctl showstp "$device" | grep -B 1 -w "port id" | grep "(" | awk '{printf "%s ", $1}')
 
 	if [ ! -e "/tmp/mesh11sd/brmac_la" ]; then
-		br_ifaces="$br_ifaces $device"
+		#br_ifaces="$br_ifaces $device"
 		touch "/tmp/mesh11sd/brmac_la"
 	fi
 
 	get_mesh_iflist
 
-	# Don't change the bridge mac for kernel 6+
-	#br_mac_list=$devicemac
-	local index=1
+	br_mac_list=""
 
 	for br_iface in $br_ifaces; do
 		rulecount=$(nft -a list table bridge mesh11s 2> /dev/null | grep -w -c "$br_iface" | awk '{printf "%s", $1}')
@@ -1708,51 +1708,38 @@ block_bridge_loops() {
 			rule_status=$(nft add rule bridge mesh11s mesh_PRE meta iifname { $br_iface } counter accept 2> /dev/null; echo -n $?)
 		fi
 
-		index=$(($index + 1))
 		convert_to_la "$devicemac"
 		is_meshif=$(echo "$iflist" | grep -q "$br_iface"; echo -n $?)
 
-		# If kernel version is 6 or higher ensure there are no duplicate bridge interface mac addresses:
+		# If kernel version is 6 or higher we have to ensure there are no duplicate bridge interface mac addresses
+		# But it is safe to fix up mac addresses for kernel < 6 if we do it correctly:
+		macfixenable=6
+		# macfixenable=$kmajor # uncomment to only fixup macs if kernel is version 6 or greater
 
-		if [ "$kmajor" -ge 6 ]; then
-			is_meshif=1
-		else
-			is_meshif=0
-		fi
+		if [ "$macfixenable" -ge 6 ]; then
+			if [ $is_meshif -ne 0 ]; then
+				# This is not a mesh interface
+				local br_iface_mac=$(ip link | grep -A 1 "$br_iface" | grep "link/ether" | awk 'NR==1 {printf "%s", $2}')
+				is_same=$(echo "$br_mac_list" | grep -q "$br_iface_mac"; echo -n $?)
 
-		if [ $is_meshif -ne 0 ]; then
-			# This is not a mesh interface
-			local br_iface_mac=$(ip link | grep -A 1 "$br_iface" | grep "link/ether" | awk 'NR==1 {printf "%s", $2}')
-			is_same=$(echo "$br_mac_list" | grep -q "$br_iface_mac"; echo -n $?)
+				if [ "$is_same" -eq 0 ]; then
+					#This is a duplicate mac address so change it
+					index=$(($index + 1))
+					make_indexed_mac "$mac_la" "$index"
 
-			if [ "$is_same" -eq 0 ]; then
-				#This is a duplicate mac address so change it
-				# get la
-
-				# increment by index
-				#Now not a duplicate so save it in the list
-				br_mac_list="$br_mac_list $br_iface_mac"
-
-				#change mac of iface
-
-				make_indexed_mac "$mac_la" "$index"
-				ip link set $br_iface down; ip link set $br_iface up address $mac_indexed
-				mac_changed=1
-			else
-				#Not a duplicate so save it in the list
-				br_mac_list="$devicemac $br_iface_mac"
+					ip link set $br_iface down; ip link set $br_iface up address $mac_indexed
+					mac_changed=1
+				else
+					#Not a duplicate so save it in the list
+					br_mac_list="$br_mac_list $br_iface_mac"
+				fi
 			fi
 		fi
-
 	done
 
 	check_rule_status
 	refresh_bridgemac
-
-	if [ "$mac_changed" -eq 1 ]; then
-		restart_mesh
-	fi
-
+	# we do not and should not restart the mesh here
 }
 
 check_rule_status() {
@@ -1770,7 +1757,6 @@ check_rule_status() {
 		debugtype="info"
 		syslogmessage="-------------------------------------------------------------------------------------------------------------------------"
 		write_to_syslog
-
 	fi
 }
 
@@ -2503,8 +2489,8 @@ elif [ "$1" = "daemon" ]; then
 	mkdir -p "$tmpdir"
 	
 
-	if [ -e "/tmp/mesh11s/brmac_la" ]; then
-		rm "/tmp/mesh11s/brmac_la"
+	if [ -e "/tmp/mesh11sd/brmac_la" ]; then
+		rm "/tmp/mesh11sd/brmac_la"
 	fi
 
 	if [ -f "/tmp/mesh_rssi_threshold" ]; then
@@ -2529,6 +2515,7 @@ elif [ "$1" = "daemon" ]; then
 	macfixup=0 # Used if we need to fix the mesh interface mac address
 	mute=0 # Mute some debug messages in function calls
 	previous_path_change_count=1
+	index=0
 
 	# Clear the dhcp authoritative flag
 	uci delete dhcp.@dnsmasq[0].authoritative 2>/dev/null
