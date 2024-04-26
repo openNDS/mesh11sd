@@ -2642,8 +2642,6 @@ elif [ "$1" = "daemon" ]; then
 
 				#### The mesh interface MUST have a unique mac address ie not duplicated from another interface.
 				# We will set it ip as a locally administered version of the bridge mac for facilitating connect/copy functionality
-				# Disable macfixup by setting to 1:
-				macfixup=0
 
 				if [ "$macfixup" -eq 0 ]; then
 					for wiphy in $wiphys; do
@@ -2663,6 +2661,17 @@ elif [ "$1" = "daemon" ]; then
 							echo "$ucibatch" | uci batch
 							changed=1
 						fi
+					done
+
+					# do the same for ap interfaces but index the la mac
+					aplist=$(uci show wireless | grep "mode='ap'" | awk -F "." '{printf "%s ", $2}')
+
+					convert_to_la "$devicemac"
+
+					for ap in $aplist; do
+						index=$(($index + 1))
+						make_indexed_mac "$mac_la" "$index"
+						echo "set wireless.$ap.macaddr=$mac_indexed" | uci batch
 					done
 
 					macfixup=1
