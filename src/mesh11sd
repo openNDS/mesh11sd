@@ -1056,7 +1056,7 @@ check_hwmp() {
 wait_for_nodes() {
 	local tics=5
 
-	echo -n " Waiting for node list to build "
+	echo -n " Building node list * "
 
 	ccpy_setup
 
@@ -1065,6 +1065,7 @@ wait_for_nodes() {
 		echo -n "* "
 	done
 
+	sleep 1
 	echo
 }
 
@@ -1282,7 +1283,7 @@ ndp_scan_peer() {
 	# NDP - Send linklocal multicast ip6-allrouters
 	if [ -f "$tmpdir/devicemac" ]; then
 		. $tmpdir/devicemac
-		response=$(ping -q -c 2 "ff02::2%$device" &>/dev/null)
+		response=$(ping -q -c 8 "ff02::2%$device" &>/dev/null)
 	fi
 }
 
