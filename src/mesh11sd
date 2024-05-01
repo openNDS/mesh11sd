@@ -1739,7 +1739,8 @@ block_bridge_loops() {
 
 	check_rule_status
 	refresh_bridgemac
-	# we do not and should not restart the mesh here
+
+	# we do not and need not restart the mesh here
 }
 
 check_rule_status() {
@@ -2479,12 +2480,13 @@ elif [ "$1" = "daemon" ]; then
 
 	get_kernel_version
 
+	# We do not know the state everything is in so reinitialise everything
 	uci revert mesh11sd
 	uci revert wireless
 	uci revert dhcp
+	/sbin/service network restart
 	/sbin/service dnsmasq restart
-	wifi
-
+	sleep 5
 	tmpdir="/tmp/mesh11sd"
 	mkdir -p "$tmpdir"
 	
