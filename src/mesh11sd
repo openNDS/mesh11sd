@@ -1795,6 +1795,26 @@ get_kernel_version() {
 	fi
 }
 
+probe_interface_mac() {
+	# Create a wireless probe interface
+	wifi down
+	get_wiphys
+	dsa_mesh_maclist=""
+
+	for wiphy in $wiphys; do
+		iw phy "$wiphy" interface add probe type mesh mesh_id "probe"
+		# Get the probe mac address
+		meshmac=$(iw dev | grep -A 5 "Interface probe" | grep -w "addr" | awk '{printf "%s", $2}')
+		dsa_mesh_maclist="$dsa_mesh_maclist $meshmac"
+		# Delete the probe interface
+		iw dev "probe" del
+	done
+
+	debugtype="debug"
+	syslogmessage="dsa_mesh_maclist [ $dsa_mesh_maclist ]"
+	write_to_syslog
+}
+
 ##############
 # Start point
 ##############
@@ -2487,6 +2507,9 @@ elif [ "$1" = "daemon" ]; then
 	/sbin/service network restart
 	/sbin/service dnsmasq restart
 	sleep 5
+
+	probe_interface_mac
+
 	tmpdir="/tmp/mesh11sd"
 	mkdir -p "$tmpdir"
 	
