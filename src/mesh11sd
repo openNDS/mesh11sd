@@ -376,6 +376,22 @@ get_current_setup () {
 
 	#####
 
+	#####
+	mesh_gate_only=$(uci get mesh11sd.setup.mesh_gate_only 2> /dev/null)
+
+	if [ -z "$mesh_gate_only" ]; then
+		mesh_gate_only="0"
+	fi
+
+	if [ "$mesh_gate_only" -eq 1 ] && [ "$mesh_gate_enable" -eq 0 ]; then
+		mesh_gate_only="0"
+	fi
+
+	syslogmessage="option mesh_gate_only [ $mesh_gate_only ]"
+	debugtype="info"
+	write_to_syslog
+
+	#####
 
 	txpower=$(uci get mesh11sd.setup.txpower 2> /dev/null)
 
@@ -406,8 +422,13 @@ check_config_params() {
 
 	if [ -z "$mesh_fwding" ]; then
 		mesh_fwding="1"
-		echo "set mesh11sd.mesh_params.mesh_fwding='$mesh_fwding'" | uci batch
 	fi
+
+	if [ "$mesh_fwding" -eq 1 ] && [ "$mesh_gate_only" -eq 1 ]; then
+		mesh_fwding="0"
+	fi
+
+	echo "set mesh11sd.mesh_params.mesh_fwding='$mesh_fwding'" | uci batch
 
 	syslogmessage="option mesh_fwding [ $mesh_fwding ]"
 	debugtype="info"
@@ -430,8 +451,13 @@ check_config_params() {
 
 	if [ -z "$mesh_gate_announcements" ]; then
 		mesh_gate_announcements="1"
-		echo "set mesh11sd.mesh_params.mesh_gate_announcements='$mesh_gate_announcements'" | uci batch
 	fi
+
+	if [ "$mesh_gate_announcements" -eq 1 ] && [ "$mesh_gate_enable" -eq 0 ]; then
+		mesh_gate_announcements="0"
+	fi
+
+	echo "set mesh11sd.mesh_params.mesh_gate_announcements='$mesh_gate_announcements'" | uci batch
 
 	syslogmessage="option mesh_gate_announcements [ $mesh_gate_announcements ]"
 	debugtype="info"
@@ -945,7 +971,12 @@ check_portal() {
 				uci set dhcp.@dnsmasq[0].logfacility='-'
 				uci set dhcp.@dnsmasq[0].quietdhcp='1'
 
-				non_portal_mesh_hwmp_rootmode="2"
+				if [ "$mesh_gate_only" -eq 0 ]; then
+					non_portal_mesh_hwmp_rootmode="2"
+				else
+					non_portal_mesh_hwmp_rootmode="0"
+				fi
+
 				echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='$non_portal_mesh_hwmp_rootmode'" | uci batch
 
 				/sbin/service dnsmasq restart
@@ -1007,6 +1038,13 @@ check_portal() {
 				uci set dhcp.@dnsmasq[0].logfacility='-'
 				uci set dhcp.@dnsmasq[0].quietdhcp='1'
 				echo "del_list dhcp.@dnsmasq[0].server='$config_ipaddr'" | uci batch
+
+				if [ "$mesh_gate_only" -eq 0 ]; then
+					mesh_hwmp_rootmode="4"
+				else
+					mesh_hwmp_rootmode="0"
+				fi
+
 				echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='$mesh_hwmp_rootmode'" | uci batch
 
 				restore_ipv4
@@ -1959,6 +1997,7 @@ elif [ "$1" = "status" ]; then
 	echo "    \"auto_mesh_band\":\"$auto_mesh_band\","
 	echo "    \"auto_mesh_id\":\"$auto_mesh_id\","
 	echo "    \"mesh_gate_enable\":\"$mesh_gate_enable\","
+	echo "    \"mesh_gate_only\":\"$mesh_gate_only\","
 
 	# get list of interfaces
 	get_mesh_iflist
@@ -2819,7 +2858,11 @@ elif [ "$1" = "daemon" ]; then
 					uci set dhcp.@dnsmasq[0].logfacility='-'
 					uci set dhcp.@dnsmasq[0].quietdhcp='1'
 
-					mesh_hwmp_rootmode="4"
+					if [ "$mesh_gate_only" -eq 0 ]; then
+						mesh_hwmp_rootmode="4"
+					else
+						mesh_hwmp_rootmode="0"
+					fi
 					echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='$mesh_hwmp_rootmode'" | uci batch
 
 					/sbin/service dnsmasq restart
