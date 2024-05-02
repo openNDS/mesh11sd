@@ -1853,6 +1853,32 @@ probe_interface_mac() {
 	write_to_syslog
 }
 
+check_mesh_gate_only() {
+	current_mgo_option=$(uci get mesh11sd.setup.mesh_gate_only 2> /dev/null | awk '{printf "%s", $1}')
+
+	if [ "$current_mgo_option" -ne "$mesh_gate_only" ]; then
+		#option has changed
+
+		if [ "$current_mgo_option" -eq 1 ]; then
+			echo "set mesh11sd.mesh_params.mesh_fwding='0'" | uci batch
+			echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='0'" | uci batch
+		elif [ "$current_mgo_option" -eq 0 ]; then
+
+			if [ -z "$is_portal" ]; then
+				# This IS NOT a layer 3 mesh portal
+				rootmode=2
+			else
+				rootmode=4
+			fi
+
+			echo "set mesh11sd.mesh_params.mesh_fwding='1'" | uci batch
+			echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='$rootmode'" | uci batch
+		fi
+
+		mesh_gate_only=$current_mgo_option
+	fi
+}
+
 ##############
 # Start point
 ##############
@@ -1916,9 +1942,13 @@ if [ -z "$1" ] || [ "$1" = "-h" ] || [ $1 = "--help" ] || [ $1 = "help" ]; then
     The keyword \"force\" forces the new threshold on all connected peers
     Warning - \"force\" will briefly remove this node from the mesh network, taking a few seconds to rejoin
 
+  Option: mesh_gate_only
+  Usage: mesh11sd mesh_gate_only [enable/disable]
+  If enabled, the mesh node connects to the mesh backhaul but does not forward packets or contribute to the mesh.
+
   Option: commit_changes
   Usage: mesh11sd commit_changes
-    Commits changes to txpower and rssi_threshold to non volatile configuration (make permanent)
+    Commits changes to mesh_gate_only, txpower and rssi_threshold to non volatile configuration (make permanent)
 
   Option: opkg_force_ipv4
   Usage: mesh11sd opkg_force_ipv4
@@ -2373,16 +2403,44 @@ elif [ "$1" = "stations" ]; then
 	echo
 	exit 0
 
+elif [ "$1" = "mesh_gate_only" ]; then
+
+	if [ -z "$2" ]; then
+		echo "Usage: mesh11sd mesh_gate_only [enable/disable]"
+		outputstring="Option mesh_gate_only current value [ $mesh_gate_only ]"
+	elif [ "$2" = "enable" ]; then
+		mesh_gate_only=1
+		echo "set mesh11sd.setup.mesh_gate_only='$mesh_gate_only'" | uci batch
+		outputstring="Option mesh_gate_only set to [ $mesh_gate_only ]"
+	elif [ "$2" = "disable" ]; then
+		mesh_gate_only=0
+		echo "set mesh11sd.setup.mesh_gate_only='$mesh_gate_only'" | uci batch
+		outputstring="Option mesh_gate_only set to [ $mesh_gate_only ]"
+	else
+		outputstring="Invalid option [ $2 ]"
+	fi
+
+	echo "==========================================================================="
+
+	echo "$outputstring"
+
+	echo "==========================================================================="
+	echo
+	exit 0
+
+
 elif [ "$1" = "commit_changes" ]; then
 
 	rssi_change_flag=0
 	txpower_change_flag=0
+	mesh_gate_only_change_flag=0
 
 	changes=$(uci changes mesh11sd)
 	changelist=$(echo "$changes" | awk '{printf "%s ", $1}')
 
 	mesh_rssi_threshold_change=$(echo "$changes" | grep "mesh_rssi_threshold" | tail -n 1)
 	txpower_change=$(echo "$changes" | grep "txpower" | tail -n 1)
+	mesh_gate_only_change=$(echo "$changes" | grep "mesh_gate_only" | tail -n 1)
 
 	echo "==========================================================================="
 
@@ -2403,13 +2461,20 @@ elif [ "$1" = "commit_changes" ]; then
 			echo "set $txpower_change" | uci batch
 			txpower_change_flag=1
 		fi
+
+		if [ ! -z "$mesh_gate_only_change" ]; then
+			echo "set $mesh_gate_only_change" | uci batch
+			mesh_gate_only_change_flag=1
+		fi
+
 		uci commit mesh11sd
 
 		for change in $changelist; do
 			is_txpower=$(echo "$change" | grep -q "txpower"; echo -n $?)
 			is_mesh_rssi_threshold=$(echo "$change" | grep -q "mesh_rssi_threshold"; echo -n $?)
+			is_mesh_gate_only=$(echo "$change" | grep -q "mesh_gate_only"; echo -n $?)
 
-			if [ "$is_txpower" -eq 0 ] || [ "$is_mesh_rssi_threshold" -eq 0 ]; then
+			if [ "$is_txpower" -eq 0 ] || [ "$is_mesh_rssi_threshold" -eq 0 ] || [ "$is_mesh_gate_only" -eq 0 ]; then
 				continue
 			fi
 
@@ -2425,7 +2490,11 @@ elif [ "$1" = "commit_changes" ]; then
 			echo "Mesh RSSI change committed"
 		fi
 
-		if [ "$rssi_change_flag" -eq 0 ] && [ "$txpower_change_flag" -eq 0 ]; then
+		if [ "$mesh_gate_only_change_flag" -eq 1 ]; then
+			echo "Mesh gate only change committed"
+		fi
+
+		if [ "$rssi_change_flag" -eq 0 ] && [ "$txpower_change_flag" -eq 0 ] && [ "$mesh_gate_only_change_flag" -eq 0 ]; then
 			echo "No changes found"
 		fi
 
@@ -2872,12 +2941,13 @@ elif [ "$1" = "daemon" ]; then
 			fi
 
 			check_gate
+			check_mesh_gate_only
 			check_hwmp
 			wait_for_mesh
+			block_bridge_loops
+			check_path_changes
 		fi
 
-		block_bridge_loops
-		check_path_changes
 		debugtype="debug"
 		syslogmessage="checkinterval $checkinterval seconds"
 		write_to_syslog
