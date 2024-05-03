@@ -14,6 +14,9 @@
 #
 version="4.0.0beta"
 fixup1=0
+tmpdir="/tmp/mesh11sd"
+mkdir -p "$tmpdir"
+
 
 get_mesh_iflist () {
 	iflist=""
@@ -818,13 +821,12 @@ get_portal_state() {
 
 	config_ipaddr=$(uci get network.$auto_mesh_network.ipaddr)
 	brg_check=$(echo "$default_gw" | grep -q -w "$device"; echo -n "$?" ) # 0 if contains $device, 1 if does not
+	gw_ip=$(echo "$default_gw" | awk -F" " '{printf "%s", $3}')
 
 	if [ -z "$default_gw" ] || [ "$brg_check" -eq 0 ]; then
 		is_portal=""
-		gw_ip=""
 		gwstatus=""
 	else
-		gw_ip=$(echo "$default_gw" | awk -F" " '{printf "%s", $3}')
 
 		if [ -z "$gw_ip" ] && [ "$config_ipaddr" = "$gw_ip" ]; then
 			is_portal=""
@@ -855,6 +857,20 @@ get_portal_state() {
 	# Set detected state
 	if [ -z "$is_portal" ]; then
 		detected_state="peer"
+
+		#Check ipv4 connectivity to portal
+		pingresult=$(ping -q -W 1 -c 2 "$gw_ip" &>/dev/null; echo $?)
+
+		if [ "$pingresult" -eq 1 ]; then
+
+			dhcpdevice=$(echo "get network.$auto_mesh_network.device" | uci batch | awk '{printf "%s", $1}')
+
+			debugtype="debug"
+			syslogmessage="ipV4 link to portal fail, attempting to (re)establish via device [ $dhcpdevice ]"
+			write_to_syslog
+
+			dhcp4_renew
+		fi
 	else
 		detected_state="portal"
 	fi
@@ -895,9 +911,13 @@ restore_ipv4() {
 dhcp4_renew() {
 	hostname=$(uci get system.@system[0].hostname 2>/dev/null)
 	udhcpc -p /var/run/udhcpc-renew-$dhcpdevice.pid -f -q -n -t0 -A 0 -i $dhcpdevice -x hostname:$hostname &
-	sleep 3
+	sleep 6
 
 	if [ -f "/var/run/udhcpc-renew-$dhcpdevice.pid" ]; then
+		debugtype="debug"
+		syslogmessage="Killing dhcp client-renew as it failed on [ $dhcpdevice ] server not found"
+		write_to_syslog
+
 		kill $(cat /var/run/udhcpc-renew-$dhcpdevice.pid)
 	fi
 }
@@ -2028,6 +2048,7 @@ elif [ "$1" = "status" ]; then
 	echo "    \"auto_mesh_id\":\"$auto_mesh_id\","
 	echo "    \"mesh_gate_enable\":\"$mesh_gate_enable\","
 	echo "    \"mesh_gate_only\":\"$mesh_gate_only\","
+	echo "    \"mesh_gate_encryption\":\"$mesh_gate_encryption\","
 
 	# get list of interfaces
 	get_mesh_iflist
@@ -2617,10 +2638,6 @@ elif [ "$1" = "daemon" ]; then
 	sleep 5
 
 	probe_interface_mac
-
-	tmpdir="/tmp/mesh11sd"
-	mkdir -p "$tmpdir"
-	
 
 	if [ -e "/tmp/mesh11sd/brmac_la" ]; then
 		rm "/tmp/mesh11sd/brmac_la"
