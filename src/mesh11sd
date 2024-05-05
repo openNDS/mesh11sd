@@ -14,6 +14,9 @@
 #
 version="4.0.0beta"
 fixup1=0
+tmpdir="/tmp/mesh11sd"
+mkdir -p "$tmpdir"
+
 
 get_mesh_iflist () {
 	iflist=""
@@ -376,6 +379,22 @@ get_current_setup () {
 
 	#####
 
+	#####
+	mesh_gate_only=$(uci get mesh11sd.setup.mesh_gate_only 2> /dev/null)
+
+	if [ -z "$mesh_gate_only" ]; then
+		mesh_gate_only="0"
+	fi
+
+	if [ "$mesh_gate_only" -eq 1 ] && [ "$mesh_gate_enable" -eq 0 ]; then
+		mesh_gate_only="0"
+	fi
+
+	syslogmessage="option mesh_gate_only [ $mesh_gate_only ]"
+	debugtype="info"
+	write_to_syslog
+
+	#####
 
 	txpower=$(uci get mesh11sd.setup.txpower 2> /dev/null)
 
@@ -406,8 +425,13 @@ check_config_params() {
 
 	if [ -z "$mesh_fwding" ]; then
 		mesh_fwding="1"
-		echo "set mesh11sd.mesh_params.mesh_fwding='$mesh_fwding'" | uci batch
 	fi
+
+	if [ "$mesh_fwding" -eq 1 ] && [ "$mesh_gate_only" -eq 1 ]; then
+		mesh_fwding="0"
+	fi
+
+	echo "set mesh11sd.mesh_params.mesh_fwding='$mesh_fwding'" | uci batch
 
 	syslogmessage="option mesh_fwding [ $mesh_fwding ]"
 	debugtype="info"
@@ -430,8 +454,13 @@ check_config_params() {
 
 	if [ -z "$mesh_gate_announcements" ]; then
 		mesh_gate_announcements="1"
-		echo "set mesh11sd.mesh_params.mesh_gate_announcements='$mesh_gate_announcements'" | uci batch
 	fi
+
+	if [ "$mesh_gate_announcements" -eq 1 ] && [ "$mesh_gate_enable" -eq 0 ]; then
+		mesh_gate_announcements="0"
+	fi
+
+	echo "set mesh11sd.mesh_params.mesh_gate_announcements='$mesh_gate_announcements'" | uci batch
 
 	syslogmessage="option mesh_gate_announcements [ $mesh_gate_announcements ]"
 	debugtype="info"
@@ -792,13 +821,12 @@ get_portal_state() {
 
 	config_ipaddr=$(uci get network.$auto_mesh_network.ipaddr)
 	brg_check=$(echo "$default_gw" | grep -q -w "$device"; echo -n "$?" ) # 0 if contains $device, 1 if does not
+	gw_ip=$(echo "$default_gw" | awk -F" " '{printf "%s", $3}')
 
 	if [ -z "$default_gw" ] || [ "$brg_check" -eq 0 ]; then
 		is_portal=""
-		gw_ip=""
 		gwstatus=""
 	else
-		gw_ip=$(echo "$default_gw" | awk -F" " '{printf "%s", $3}')
 
 		if [ -z "$gw_ip" ] && [ "$config_ipaddr" = "$gw_ip" ]; then
 			is_portal=""
@@ -829,6 +857,20 @@ get_portal_state() {
 	# Set detected state
 	if [ -z "$is_portal" ]; then
 		detected_state="peer"
+
+		#Check ipv4 connectivity to portal
+		pingresult=$(ping -q -W 1 -c 2 "$gw_ip" &>/dev/null; echo $?)
+
+		if [ "$pingresult" -eq 1 ]; then
+
+			dhcpdevice=$(echo "get network.$auto_mesh_network.device" | uci batch | awk '{printf "%s", $1}')
+
+			debugtype="debug"
+			syslogmessage="ipV4 link to portal fail, attempting to (re)establish via device [ $dhcpdevice ]"
+			write_to_syslog
+
+			dhcp4_renew
+		fi
 	else
 		detected_state="portal"
 	fi
@@ -869,9 +911,13 @@ restore_ipv4() {
 dhcp4_renew() {
 	hostname=$(uci get system.@system[0].hostname 2>/dev/null)
 	udhcpc -p /var/run/udhcpc-renew-$dhcpdevice.pid -f -q -n -t0 -A 0 -i $dhcpdevice -x hostname:$hostname &
-	sleep 3
+	sleep 6
 
 	if [ -f "/var/run/udhcpc-renew-$dhcpdevice.pid" ]; then
+		debugtype="debug"
+		syslogmessage="Killing dhcp client-renew as it failed on [ $dhcpdevice ] server not found"
+		write_to_syslog
+
 		kill $(cat /var/run/udhcpc-renew-$dhcpdevice.pid)
 	fi
 }
@@ -945,7 +991,12 @@ check_portal() {
 				uci set dhcp.@dnsmasq[0].logfacility='-'
 				uci set dhcp.@dnsmasq[0].quietdhcp='1'
 
-				non_portal_mesh_hwmp_rootmode="2"
+				if [ "$mesh_gate_only" -eq 0 ]; then
+					non_portal_mesh_hwmp_rootmode="2"
+				else
+					non_portal_mesh_hwmp_rootmode="0"
+				fi
+
 				echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='$non_portal_mesh_hwmp_rootmode'" | uci batch
 
 				/sbin/service dnsmasq restart
@@ -1007,6 +1058,13 @@ check_portal() {
 				uci set dhcp.@dnsmasq[0].logfacility='-'
 				uci set dhcp.@dnsmasq[0].quietdhcp='1'
 				echo "del_list dhcp.@dnsmasq[0].server='$config_ipaddr'" | uci batch
+
+				if [ "$mesh_gate_only" -eq 0 ]; then
+					mesh_hwmp_rootmode="4"
+				else
+					mesh_hwmp_rootmode="0"
+				fi
+
 				echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='$mesh_hwmp_rootmode'" | uci batch
 
 				restore_ipv4
@@ -1739,7 +1797,8 @@ block_bridge_loops() {
 
 	check_rule_status
 	refresh_bridgemac
-	# we do not and should not restart the mesh here
+
+	# we do not and need not restart the mesh here
 }
 
 check_rule_status() {
@@ -1791,6 +1850,52 @@ get_kernel_version() {
 		debugtype="warn"
 		syslogmessage="WARNING: Unable to determine kernel version"
 		write_to_syslog
+	fi
+}
+
+probe_interface_mac() {
+	# Create a wireless probe interface
+	wifi down
+	get_wiphys
+	dsa_mesh_maclist=""
+
+	for wiphy in $wiphys; do
+		iw phy "$wiphy" interface add probe type mesh mesh_id "probe"
+		# Get the probe mac address
+		meshmac=$(iw dev | grep -A 5 "Interface probe" | grep -w "addr" | awk '{printf "%s", $2}')
+		dsa_mesh_maclist="$dsa_mesh_maclist $meshmac"
+		# Delete the probe interface
+		iw dev "probe" del
+	done
+
+	debugtype="debug"
+	syslogmessage="dsa_mesh_maclist [ $dsa_mesh_maclist ]"
+	write_to_syslog
+}
+
+check_mesh_gate_only() {
+	current_mgo_option=$(uci get mesh11sd.setup.mesh_gate_only 2> /dev/null | awk '{printf "%s", $1}')
+
+	if [ "$current_mgo_option" -ne "$mesh_gate_only" ]; then
+		#option has changed
+
+		if [ "$current_mgo_option" -eq 1 ]; then
+			echo "set mesh11sd.mesh_params.mesh_fwding='0'" | uci batch
+			echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='0'" | uci batch
+		elif [ "$current_mgo_option" -eq 0 ]; then
+
+			if [ -z "$is_portal" ]; then
+				# This IS NOT a layer 3 mesh portal
+				rootmode=2
+			else
+				rootmode=4
+			fi
+
+			echo "set mesh11sd.mesh_params.mesh_fwding='1'" | uci batch
+			echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='$rootmode'" | uci batch
+		fi
+
+		mesh_gate_only=$current_mgo_option
 	fi
 }
 
@@ -1857,9 +1962,13 @@ if [ -z "$1" ] || [ "$1" = "-h" ] || [ $1 = "--help" ] || [ $1 = "help" ]; then
     The keyword \"force\" forces the new threshold on all connected peers
     Warning - \"force\" will briefly remove this node from the mesh network, taking a few seconds to rejoin
 
+  Option: mesh_gate_only
+  Usage: mesh11sd mesh_gate_only [enable/disable]
+  If enabled, the mesh node connects to the mesh backhaul but does not forward packets or contribute to the mesh.
+
   Option: commit_changes
   Usage: mesh11sd commit_changes
-    Commits changes to txpower and rssi_threshold to non volatile configuration (make permanent)
+    Commits changes to mesh_gate_only, txpower and rssi_threshold to non volatile configuration (make permanent)
 
   Option: opkg_force_ipv4
   Usage: mesh11sd opkg_force_ipv4
@@ -1938,6 +2047,8 @@ elif [ "$1" = "status" ]; then
 	echo "    \"auto_mesh_band\":\"$auto_mesh_band\","
 	echo "    \"auto_mesh_id\":\"$auto_mesh_id\","
 	echo "    \"mesh_gate_enable\":\"$mesh_gate_enable\","
+	echo "    \"mesh_gate_only\":\"$mesh_gate_only\","
+	echo "    \"mesh_gate_encryption\":\"$mesh_gate_encryption\","
 
 	# get list of interfaces
 	get_mesh_iflist
@@ -2313,16 +2424,44 @@ elif [ "$1" = "stations" ]; then
 	echo
 	exit 0
 
+elif [ "$1" = "mesh_gate_only" ]; then
+
+	if [ -z "$2" ]; then
+		echo "Usage: mesh11sd mesh_gate_only [enable/disable]"
+		outputstring="Option mesh_gate_only current value [ $mesh_gate_only ]"
+	elif [ "$2" = "enable" ]; then
+		mesh_gate_only=1
+		echo "set mesh11sd.setup.mesh_gate_only='$mesh_gate_only'" | uci batch
+		outputstring="Option mesh_gate_only set to [ $mesh_gate_only ]"
+	elif [ "$2" = "disable" ]; then
+		mesh_gate_only=0
+		echo "set mesh11sd.setup.mesh_gate_only='$mesh_gate_only'" | uci batch
+		outputstring="Option mesh_gate_only set to [ $mesh_gate_only ]"
+	else
+		outputstring="Invalid option [ $2 ]"
+	fi
+
+	echo "==========================================================================="
+
+	echo "$outputstring"
+
+	echo "==========================================================================="
+	echo
+	exit 0
+
+
 elif [ "$1" = "commit_changes" ]; then
 
 	rssi_change_flag=0
 	txpower_change_flag=0
+	mesh_gate_only_change_flag=0
 
 	changes=$(uci changes mesh11sd)
 	changelist=$(echo "$changes" | awk '{printf "%s ", $1}')
 
 	mesh_rssi_threshold_change=$(echo "$changes" | grep "mesh_rssi_threshold" | tail -n 1)
 	txpower_change=$(echo "$changes" | grep "txpower" | tail -n 1)
+	mesh_gate_only_change=$(echo "$changes" | grep "mesh_gate_only" | tail -n 1)
 
 	echo "==========================================================================="
 
@@ -2343,13 +2482,20 @@ elif [ "$1" = "commit_changes" ]; then
 			echo "set $txpower_change" | uci batch
 			txpower_change_flag=1
 		fi
+
+		if [ ! -z "$mesh_gate_only_change" ]; then
+			echo "set $mesh_gate_only_change" | uci batch
+			mesh_gate_only_change_flag=1
+		fi
+
 		uci commit mesh11sd
 
 		for change in $changelist; do
 			is_txpower=$(echo "$change" | grep -q "txpower"; echo -n $?)
 			is_mesh_rssi_threshold=$(echo "$change" | grep -q "mesh_rssi_threshold"; echo -n $?)
+			is_mesh_gate_only=$(echo "$change" | grep -q "mesh_gate_only"; echo -n $?)
 
-			if [ "$is_txpower" -eq 0 ] || [ "$is_mesh_rssi_threshold" -eq 0 ]; then
+			if [ "$is_txpower" -eq 0 ] || [ "$is_mesh_rssi_threshold" -eq 0 ] || [ "$is_mesh_gate_only" -eq 0 ]; then
 				continue
 			fi
 
@@ -2365,7 +2511,11 @@ elif [ "$1" = "commit_changes" ]; then
 			echo "Mesh RSSI change committed"
 		fi
 
-		if [ "$rssi_change_flag" -eq 0 ] && [ "$txpower_change_flag" -eq 0 ]; then
+		if [ "$mesh_gate_only_change_flag" -eq 1 ]; then
+			echo "Mesh gate only change committed"
+		fi
+
+		if [ "$rssi_change_flag" -eq 0 ] && [ "$txpower_change_flag" -eq 0 ] && [ "$mesh_gate_only_change_flag" -eq 0 ]; then
 			echo "No changes found"
 		fi
 
@@ -2479,15 +2629,15 @@ elif [ "$1" = "daemon" ]; then
 
 	get_kernel_version
 
+	# We do not know the state everything is in so reinitialise everything
 	uci revert mesh11sd
 	uci revert wireless
 	uci revert dhcp
+	/sbin/service network restart
 	/sbin/service dnsmasq restart
-	wifi
+	sleep 5
 
-	tmpdir="/tmp/mesh11sd"
-	mkdir -p "$tmpdir"
-	
+	probe_interface_mac
 
 	if [ -e "/tmp/mesh11sd/brmac_la" ]; then
 		rm "/tmp/mesh11sd/brmac_la"
@@ -2794,7 +2944,11 @@ elif [ "$1" = "daemon" ]; then
 					uci set dhcp.@dnsmasq[0].logfacility='-'
 					uci set dhcp.@dnsmasq[0].quietdhcp='1'
 
-					mesh_hwmp_rootmode="4"
+					if [ "$mesh_gate_only" -eq 0 ]; then
+						mesh_hwmp_rootmode="4"
+					else
+						mesh_hwmp_rootmode="0"
+					fi
 					echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='$mesh_hwmp_rootmode'" | uci batch
 
 					/sbin/service dnsmasq restart
@@ -2804,12 +2958,13 @@ elif [ "$1" = "daemon" ]; then
 			fi
 
 			check_gate
+			check_mesh_gate_only
 			check_hwmp
 			wait_for_mesh
+			block_bridge_loops
+			check_path_changes
 		fi
 
-		block_bridge_loops
-		check_path_changes
 		debugtype="debug"
 		syslogmessage="checkinterval $checkinterval seconds"
 		write_to_syslog
