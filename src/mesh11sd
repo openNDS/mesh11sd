@@ -14,6 +14,8 @@
 #
 version="4.0.0beta"
 fixup1=0
+ip4pingfailcount=0
+network_restart=0
 tmpdir="/tmp/mesh11sd"
 mkdir -p "$tmpdir"
 
@@ -195,6 +197,17 @@ get_current_setup () {
 	fi
 
 	syslogmessage="option portal_channel [ $portal_channel ]"
+	debugtype="info"
+	write_to_syslog
+
+	#####
+	portal_detect_threshold=$(uci get mesh11sd.setup.portal_detect_threshold 2> /dev/null)
+
+	if [ -z "$portal_detect_threshold" ]; then
+		portal_detect_threshold=0
+	fi
+
+	syslogmessage="option portal_detect_threshold [ $portal_detect_threshold ]"
 	debugtype="info"
 	write_to_syslog
 
@@ -862,14 +875,42 @@ get_portal_state() {
 		pingresult=$(ping -q -W 1 -c 2 "$gw_ip" &>/dev/null; echo $?)
 
 		if [ "$pingresult" -eq 1 ]; then
+			ip4pingfailcount=$(($ip4pingfailcount + 1))
 
-			dhcpdevice=$(echo "get network.$auto_mesh_network.device" | uci batch | awk '{printf "%s", $1}')
+			if [ "$portal_detect_threshold" -eq 0 ] || [ "$portal_detect_threshold" -gt "$ip4pingfailcount" ]; then
+				dhcpdevice=$(echo "get network.$auto_mesh_network.device" | uci batch | awk '{printf "%s", $1}')
 
-			debugtype="debug"
-			syslogmessage="ipV4 link to portal fail, attempting to (re)establish via device [ $dhcpdevice ]"
-			write_to_syslog
+				debugtype="debug"
+				syslogmessage="ipV4 link to portal fail, attempting to (re)establish via device [ $dhcpdevice ], iteration [ $ip4pingfailcount ]"
+				write_to_syslog
 
-			dhcp4_renew
+				dhcp4_renew
+
+			elif [ "$portal_detect_threshold" -le "$ip4pingfailcount" ]; then
+				# we have reached the portal detect threshold. This either means there is no portal, or something has stopped working
+
+				if [ "$network_restart" -eq 0 ]; then
+					debugtype="notice"
+					syslogmessage="portal detect threshold reached, restarting network..."
+					write_to_syslog
+					network_restart=1
+					/sbin/service network restart
+					sleep 5
+					wait_for_mesh
+
+				elif [ "$network_restart" -eq 1 ]; then
+					# restarting the network did not work so:
+					debugtype="err"
+					syslogmessage="portal detect threshold exceeded, restarting network did not work... rebooting node"
+					write_to_syslog
+					sleep 5
+					reboot
+				fi
+
+			fi
+		else
+			ip4pingfailcount=0
+			network_restart=0
 		fi
 	else
 		detected_state="portal"
@@ -1341,7 +1382,7 @@ ndp_scan_peer() {
 	# NDP - Send linklocal multicast ip6-allrouters
 	if [ -f "$tmpdir/devicemac" ]; then
 		. $tmpdir/devicemac
-		response=$(ping -q -c 8 "ff02::2%$device" &>/dev/null)
+		response=$(ping -q -c 8 "ff02::2%$device" &>/dev/null &)
 	fi
 }
 
@@ -2040,6 +2081,7 @@ elif [ "$1" = "status" ]; then
 	echo "    \"enabled\":\"$enabled\","
 	echo "    \"procd_status\":\"$procd_status\","
 	echo "    \"portal_detect\":\"$portal_detect\","
+	echo "    \"portal_detect_threshold\":\"$portal_detect_threshold\","
 	echo "    \"portal_channel\":\"$portal_channel\","
 	echo "    \"mesh_basename\":\"$mesh_basename\","
 	echo "    \"auto_config\":\"$auto_config\","
@@ -2629,7 +2671,7 @@ elif [ "$1" = "daemon" ]; then
 
 	get_kernel_version
 
-	# We do not know the state everything is in so reinitialise everything
+	# We do not know the current state so reinitialise everything
 	uci revert mesh11sd
 	uci revert wireless
 	uci revert dhcp
