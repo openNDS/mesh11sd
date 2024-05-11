@@ -296,6 +296,12 @@ get_current_setup () {
 
 	if [ -z "$auto_mesh_network" ]; then
 		auto_mesh_network="lan"
+
+		if [ "$auto_config" -eq 0 ]; then
+			syslogmessage="option auto_mesh_network is not configured, defaulting to [ $auto_mesh_network ]. Is this what you intended?"
+			debugtype="warn"
+			write_to_syslog
+		fi
 	fi
 
 	# Block wan and wan6 as valid network zones for mesh
@@ -427,6 +433,28 @@ get_current_setup () {
 	syslogmessage="option ssid_suffix_enable [ $ssid_suffix_enable ]"
 	debugtype="info"
 	write_to_syslog
+
+	#####
+	watchdog_nonvolatile_log=$(uci get mesh11sd.setup.watchdog_nonvolatile_log 2> /dev/null)
+
+	if [ -z "$watchdog_nonvolatile_log" ]; then
+		watchdog_nonvolatile_log="0"
+	fi
+
+	syslogmessage="option watchdog_nonvolatile_log [ $watchdog_nonvolatile_log ]"
+	debugtype="info"
+	write_to_syslog
+
+	if [ "$watchdog_nonvolatile_log" -gt 0 ]; then
+		syslogmessage="******WARNING******: Irrepairable flash wear will occur and storage space will be used up. Please disable watchdog nonvolatile logging as soon as possible."
+		debugtype="warn"
+		write_to_syslog
+		syslogmessage="******WARNING******: Irrepairable flash wear will occur and storage space will be used up by watchdog debug log at /mesh11sd_log/watchdog.log"
+		debugtype="warn"
+		write_to_syslog
+		mkdir -p /mesh11sd_log
+	fi
+
 }
 
 check_config_params() {
@@ -618,6 +646,15 @@ write_to_syslog() {
 		mute=0
 	fi
 }
+
+write_to_watchdog_nonvolatile_log() {
+
+	if [ "$watchdog_nonvolatile_log" -gt 0 ]; then
+		mkdir -p /mesh11sd_log
+		echo "$(date) $syslogmessage" >> /mesh11sd_log/mesh11sd.log
+	fi
+}
+
 
 mesh_gate_state() {
 	aplist=$(uci show wireless | grep "mode='ap'" | awk -F "." '{printf "%s ", $2}')
@@ -890,20 +927,33 @@ get_portal_state() {
 				# we have reached the portal detect threshold. This either means there is no portal, or something has stopped working
 
 				if [ "$network_restart" -eq 0 ]; then
-					debugtype="notice"
-					syslogmessage="portal detect threshold reached, restarting network..."
+					# Try clearing the routing table:
+					dhcpdevice=$(echo "get network.$auto_mesh_network.device" | uci batch | awk '{printf "%s", $1}')
+					debugtype="err"
+					syslogmessage="portal detect threshold reached, flushing routing tables"
 					write_to_syslog
+					write_to_watchdog_nonvolatile_log
 					network_restart=1
-					/sbin/service network restart
-					sleep 5
-					wait_for_mesh
+					ip neigh flush dev "$device"
+					dhcp4_renew
 
 				elif [ "$network_restart" -eq 1 ]; then
+					dhcpdevice=$(echo "get network.$auto_mesh_network.device" | uci batch | awk '{printf "%s", $1}')
+					debugtype="notice"
+					syslogmessage="portal detect threshold exceeded, restarting network..."
+					write_to_syslog
+					write_to_watchdog_nonvolatile_log
+					network_restart=2
+					/sbin/service network restart
+					wait_for_mesh
+					dhcp4_renew
+
+				elif [ "$network_restart" -eq 2 ]; then
 					# restarting the network did not work so:
 					debugtype="err"
 					syslogmessage="portal detect threshold exceeded, restarting network did not work... rebooting node"
 					write_to_syslog
-					sleep 5
+					write_to_watchdog_nonvolatile_log
 					reboot
 				fi
 
