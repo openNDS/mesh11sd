@@ -1362,34 +1362,37 @@ wait_for_mesh() {
 
 all_nodes_rssi_update() {
 
-	if [ -f "/tmp/meshinterface" ]; then
+	if [ "$auto_config" -gt 0 ]; then
 
-		if [ ! -f "/tmp/mesh_rssi_threshold" ]; then
-			debugtype="debug"
-			syslogmessage="Disconnecting nodes"
-			write_to_syslog
+		if [ -f "/tmp/meshinterface" ]; then
 
-			rm /tmp/meshinterface
+			if [ ! -f "/tmp/mesh_rssi_threshold" ]; then
+				debugtype="debug"
+				syslogmessage="Disconnecting nodes"
+				write_to_syslog
 
-			get_wiphys
+				rm /tmp/meshinterface
 
-			if [ ! -z "$wiphys" ]; then
+				get_wiphys
 
-				for wiphy in $wiphys; do
-					mesh_capable=$(iw phy $wiphy info | grep -A 15 "Supported interface modes:" | grep -w "mesh point")
+				if [ ! -z "$wiphys" ]; then
 
-					if [ -z "$mesh_capable" ]; then
-						continue
-					fi
+					for wiphy in $wiphys; do
+						mesh_capable=$(iw phy $wiphy info | grep -A 15 "Supported interface modes:" | grep -w "mesh point")
 
-					phyindex=$(echo "$wiphy" | awk -F "phy" '{printf "%s", $2}')
-					phyindex=$(printf "%x" $phyindex)
+						if [ -z "$mesh_capable" ]; then
+							continue
+						fi
 
-					echo "set wireless.m11s$phyindex.mesh_rssi_threshold='$mesh_rssi_threshold'" | uci batch
-				done
+						phyindex=$(echo "$wiphy" | awk -F "phy" '{printf "%s", $2}')
+						phyindex=$(printf "%x" $phyindex)
+
+						echo "set wireless.m11s$phyindex.mesh_rssi_threshold='$mesh_rssi_threshold'" | uci batch
+					done
+				fi
+
+				restart_mesh
 			fi
-
-			restart_mesh
 		fi
 	fi
 }
