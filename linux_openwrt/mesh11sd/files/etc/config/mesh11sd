@@ -129,17 +129,31 @@ config mesh11sd 'setup'
 	###########################################################################################
 	# portal_detect_threshold (optional)
 	#
-	# The number of checkintervals before the portal detect watchdog attempts a restart.
+	# This is the portal detect watchdog.
+	#
+	# The number of checkintervals before the portal detect watchdog begins actions to (re)establish a reconnection to a portal.
 	#
 	# Default 0 (watchdog does nothing)
 	# Ignored if auto_config is disabled.
 	#
 	# Each time the peer node fails to detect the portal, a counter is incremented.
-	# If the threshold is reached, the node will restart its network in an attempt to find the portal.
-	# If the portal is still not detected after one more checkinterval, the watchdog will reboot the peer node.
+	# If the threshold is reached, the node will take various actions in an attempt to find the portal.
+	# If the portal is still not detected, the watchdog will reboot the peer node.
 	#
 	# Example - Set threshold to 10 chekintervals:
 	#option portal_detect_threshold '10'
+
+	###########################################################################################
+	# mesh11sd.setup.watchdog_nonvolatile_log (optional - FOR DEBUGGING PURPOSES ONLY)
+	#
+	# This enables logging of the portal detect watchdog actions in non-volatile storage.
+	# The log file /mesh11sd_log/mesh11sd.log is created
+	#
+	# ##########WARNING##########
+	# THIS OPTION IS FOR PORTAL DETECT WATCHDOG DEBUGGING PURPOSES ONLY
+	# IF LEFT ENABLED FOR A LENGTH OF TIME IT MAY CAUSE NONE REPAIRABLE FLASH MEMORY WEAR AND USE UP FREE STORAGE SPACE
+	# DISABLE IMMEDIATELY AFTER DEBUGGING OPERATIONS ARE COMPLETE
+	# ##########WARNING##########
 
 	###########################################################################################
 	# auto_config (optional)
@@ -148,6 +162,47 @@ config mesh11sd 'setup'
 	# Default 0 (disabled). Set to 1 to enable.
 	#
 	#option auto_config '1'
+
+        # The following options are recommended when auto_config is set to 0 (disabled)
+	# (When auto_config is enabled, these options are dynamically set if and when required)
+	#
+        # A Portal Node: having an ip routed connectivity to an upstream feed [eg an Internet feed]
+        #    option mesh_fwding '1'
+        #
+        #    option mesh_connected_to_as '1' [if link is up]
+        # or
+        #    option mesh_connected_to_as '0' [if link is down]
+        #
+        #    option mesh_hwmp_rootmode '4'
+        #
+        #    option mesh_connected_to_gate '1' [if it also supports an AP]
+        # or
+        #    option mesh_connected_to_gate '0' [if it does not support an AP]
+        #
+        #    option mesh_gate_announcements '1'  [if it also supports an AP]
+        # or
+        #    option mesh_gate_announcements '0'  [if it does not support an AP]
+
+        # A Gateway Node: offering both backhaul and downstream infrastructure connectivity
+        #    option mesh_fwding '1'
+        #    option mesh_connected_to_as '0'
+        #    option mesh_hwmp_rootmode '2'
+        #    option mesh_connected_to_gate '1'
+        #    option mesh_gate_announcements '1'
+
+        # A Gateway Leech Node: a Gateway that doesn't contribute to the mesh backhaul, it just leeches off of it
+        #    option mesh_fwding '0'
+        #    option mesh_connected_to_as '0'
+        #    option mesh_hwmp_rootmode '0'
+        #    option mesh_connected_to_gate '1'
+        #    option mesh_gate_announcements '0'
+
+        # A Peer Node: connected to mesh backhaul but no downstream infrastructure
+        #    option mesh_fwding '1'
+        #    option mesh_connected_to_as '0'
+        #    option mesh_hwmp_rootmode '2'
+        #    option mesh_connected_to_gate '0'
+        #    option mesh_gate_announcements '0'
 
 	###########################################################################################
 	# auto_mesh_id (optional)
