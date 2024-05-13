@@ -47,9 +47,45 @@ config mesh11sd 'setup'
 	# Determines whether this node will be a gate
 	#
 	# Default: 1 (enabled)
-	# Set to 0 to disable
+	# Set to 0 to disable (turns off the node's gate interface ie its access point and SSID)
 	#
 	#option mesh_gate_enable '0'
+
+	###########################################################################################
+	# mesh_gate_only (optional)
+	# Determines whether this node will be a gate only
+	# A gate only node acts as an access point with a mesh backhaul connection, but does not contribute to the mesh
+	#
+	# Also known as a leach node
+	#
+	# This is useful when a node is well within the coverage of 2 or more peer nodes,
+	# as otherwise it could create unstable multi hop paths within the backhaul.
+	#
+	# Default: 0 (disabled)
+	# Set to 1 to enable (turns off the node's mesh forwarding and HWMP mac-routing)
+	#
+	# Example - enable leach mode
+	#option mesh_gate_only '1'
+
+	###########################################################################################
+	# mesh_gate_encryption (optional)
+	# Determines whether this node's gate will be a encrypted
+	#
+	# Default: 0 (disabled)
+	# Set to 0 (none), 1 (sae, aka wpa3), 2 (sae-mixed, aka wpa2/wpa3) or 3 (psk2, aka wpa2
+	#
+	# Example - enable psk2 encryption
+	#option mesh_gate_encryption '3'
+
+	###########################################################################################
+	# mesh_gate_key (optional)
+	# Determines the encryption key for this node's gate.
+	#
+	# Default: not set (encryption disabled)
+	# Set to a secret string value to use for encrypting the node's gate
+	#
+	# Example - set a key string
+	#option mesh_gate_key 'mysecretencryptionkey'
 
 	###########################################################################################
 	# mesh_path_cost (optional)
@@ -63,6 +99,7 @@ config mesh11sd 'setup'
 
 	###########################################################################################
 	# portal_detect (optional)
+	# Ignored if auto_config is disabled.
 	# Detect if the meshnode is a portal, meaning it has an upstream wan link.
 	# If the upstream link is active, the router hosting the meshnode will serve ipv4 dhcp into the mesh network.
 	# If the upstream link is not connected, dhcp will be disabled and the meshnode will function as a level 2 bridge on the mesh network.
@@ -90,18 +127,89 @@ config mesh11sd 'setup'
 	#option portal_channel '4'
 
 	###########################################################################################
+	# portal_detect_threshold (optional)
+	#
+	# This is the portal detect watchdog.
+	#
+	# The number of checkintervals before the portal detect watchdog begins actions to (re)establish a reconnection to a portal.
+	#
+	# Default 0 (watchdog does nothing)
+	# Ignored if auto_config is disabled.
+	#
+	# Each time the peer node fails to detect the portal, a counter is incremented.
+	# If the threshold is reached, the node will take various actions in an attempt to find the portal.
+	# If the portal is still not detected, the watchdog will reboot the peer node.
+	#
+	# Example - Set threshold to 10 chekintervals:
+	#option portal_detect_threshold '10'
+
+	###########################################################################################
+	# mesh11sd.setup.watchdog_nonvolatile_log (optional - FOR DEBUGGING PURPOSES ONLY)
+	#
+	# This enables logging of the portal detect watchdog actions in non-volatile storage.
+	# The log file /mesh11sd_log/mesh11sd.log is created
+	#
+	# ##########WARNING##########
+	# THIS OPTION IS FOR PORTAL DETECT WATCHDOG DEBUGGING PURPOSES ONLY
+	# IF LEFT ENABLED FOR A LENGTH OF TIME IT MAY CAUSE NONE REPAIRABLE FLASH MEMORY WEAR AND USE UP FREE STORAGE SPACE
+	# DISABLE IMMEDIATELY AFTER DEBUGGING OPERATIONS ARE COMPLETE
+	# ##########WARNING##########
+
+	###########################################################################################
 	# auto_config (optional)
 	# Enables autonomous dynamic mesh configuration.
 	# Auto configure mesh interfaces in the wireless configuration.
-	# Default 1 (enabled). Set to 0 to disable.
+	# Default 0 (disabled). Set to 1 to enable.
 	#
-	#option auto_config '0'
+	#option auto_config '1'
+
+        # The following options are recommended when auto_config is set to 0 (disabled)
+	# (When auto_config is enabled, these options are dynamically set if and when required)
+	#
+        # A Portal Node: having an ip routed connectivity to an upstream feed [eg an Internet feed]
+        #    option mesh_fwding '1'
+        #
+        #    option mesh_connected_to_as '1' [if link is up]
+        # or
+        #    option mesh_connected_to_as '0' [if link is down]
+        #
+        #    option mesh_hwmp_rootmode '4'
+        #
+        #    option mesh_connected_to_gate '1' [if it also supports an AP]
+        # or
+        #    option mesh_connected_to_gate '0' [if it does not support an AP]
+        #
+        #    option mesh_gate_announcements '1'  [if it also supports an AP]
+        # or
+        #    option mesh_gate_announcements '0'  [if it does not support an AP]
+
+        # A Gateway Node: offering both backhaul and downstream infrastructure connectivity
+        #    option mesh_fwding '1'
+        #    option mesh_connected_to_as '0'
+        #    option mesh_hwmp_rootmode '2'
+        #    option mesh_connected_to_gate '1'
+        #    option mesh_gate_announcements '1'
+
+        # A Gateway Leech Node: a Gateway that doesn't contribute to the mesh backhaul, it just leeches off of it
+        #    option mesh_fwding '0'
+        #    option mesh_connected_to_as '0'
+        #    option mesh_hwmp_rootmode '0'
+        #    option mesh_connected_to_gate '1'
+        #    option mesh_gate_announcements '0'
+
+        # A Peer Node: connected to mesh backhaul but no downstream infrastructure
+        #    option mesh_fwding '1'
+        #    option mesh_connected_to_as '0'
+        #    option mesh_hwmp_rootmode '2'
+        #    option mesh_connected_to_gate '0'
+        #    option mesh_gate_announcements '0'
 
 	###########################################################################################
 	# auto_mesh_id (optional)
 	# Configure the mesh_id of the wireless interface(s) when auto_config is enabled
 	# Default --__
 	#
+	# This string will be hashed to produce a secure mesh id
 	# If set, it must also be set to the same value on every mesh node
 	#
 	#option auto_mesh_id 'MyMeshID'
@@ -109,8 +217,8 @@ config mesh11sd 'setup'
 	###########################################################################################
 	# auto_mesh_band (optional)
 	# Configure the band to use for the mesh network
-	# Valid values: 2g, 5g, 6g, 60g
-	# Default 2g
+	# Valid values: 2g, 2g40, 5g, 6g, 60g
+	# Default 2g40
 	#
 	# If set, it must also be set to the same value on every mesh node
 	#
@@ -122,7 +230,7 @@ config mesh11sd 'setup'
 	###########################################################################################
 	# auto_mesh_key (optional)
 	# Defaults to a sha256 key to be automatically used on all members of this mesh when auto_config is enabled
-	# Generates a sha256 key from the value set in this option.
+	# Generates a secure sha256 key from the value set in this option.
 	#
 	# If set, it must also be set to the same value on every mesh node
 	#
@@ -130,7 +238,8 @@ config mesh11sd 'setup'
 
 	###########################################################################################
 	# auto_mesh_network (optional)
-	# Set the network the mesh interface will bind to (eg lan, guestlan etc) when auto_config is enabled
+	# Set the network the mesh interface will bind to (eg lan, guestlan etc) when auto_config is enabled.
+	# Network wan is not accepted
 	# Default lan
 	#
 	#option auto_mesh_network 'guest'
@@ -142,6 +251,7 @@ config mesh11sd 'setup'
 	# Default - use driver default or value set in wireless config
 	# Values outside the limits defined by the regulatory domain will be ignored
 	#
+	# Example - Set tx power to 15 dBm:
 	#option txpower '15'
 
 	###########################################################################################

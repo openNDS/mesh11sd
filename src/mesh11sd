@@ -14,6 +14,8 @@
 #
 version="4.0.0beta"
 fixup1=0
+ip4pingfailcount=0
+network_restart=0
 tmpdir="/tmp/mesh11sd"
 mkdir -p "$tmpdir"
 
@@ -199,6 +201,17 @@ get_current_setup () {
 	write_to_syslog
 
 	#####
+	portal_detect_threshold=$(uci get mesh11sd.setup.portal_detect_threshold 2> /dev/null)
+
+	if [ -z "$portal_detect_threshold" ]; then
+		portal_detect_threshold=0
+	fi
+
+	syslogmessage="option portal_detect_threshold [ $portal_detect_threshold ]"
+	debugtype="info"
+	write_to_syslog
+
+	#####
 	get_mesh_path_cost
 
 	#####
@@ -283,6 +296,12 @@ get_current_setup () {
 
 	if [ -z "$auto_mesh_network" ]; then
 		auto_mesh_network="lan"
+
+		if [ "$auto_config" -eq 0 ]; then
+			syslogmessage="option auto_mesh_network is not configured, defaulting to [ $auto_mesh_network ]. Is this what you intended?"
+			debugtype="warn"
+			write_to_syslog
+		fi
 	fi
 
 	# Block wan and wan6 as valid network zones for mesh
@@ -414,6 +433,28 @@ get_current_setup () {
 	syslogmessage="option ssid_suffix_enable [ $ssid_suffix_enable ]"
 	debugtype="info"
 	write_to_syslog
+
+	#####
+	watchdog_nonvolatile_log=$(uci get mesh11sd.setup.watchdog_nonvolatile_log 2> /dev/null)
+
+	if [ -z "$watchdog_nonvolatile_log" ]; then
+		watchdog_nonvolatile_log="0"
+	fi
+
+	syslogmessage="option watchdog_nonvolatile_log [ $watchdog_nonvolatile_log ]"
+	debugtype="info"
+	write_to_syslog
+
+	if [ "$watchdog_nonvolatile_log" -gt 0 ]; then
+		syslogmessage="******WARNING******: Irrepairable flash wear will occur and storage space will be used up. Please disable watchdog nonvolatile logging as soon as possible."
+		debugtype="warn"
+		write_to_syslog
+		syslogmessage="******WARNING******: Irrepairable flash wear will occur and storage space will be used up by watchdog debug log at /mesh11sd_log/watchdog.log"
+		debugtype="warn"
+		write_to_syslog
+		mkdir -p /mesh11sd_log
+	fi
+
 }
 
 check_config_params() {
@@ -457,6 +498,10 @@ check_config_params() {
 	fi
 
 	if [ "$mesh_gate_announcements" -eq 1 ] && [ "$mesh_gate_enable" -eq 0 ]; then
+		mesh_gate_announcements="0"
+	fi
+
+	if [ "$mesh_gate_only" -gt 0 ]; then
 		mesh_gate_announcements="0"
 	fi
 
@@ -605,6 +650,15 @@ write_to_syslog() {
 		mute=0
 	fi
 }
+
+write_to_watchdog_nonvolatile_log() {
+
+	if [ "$watchdog_nonvolatile_log" -gt 0 ]; then
+		mkdir -p /mesh11sd_log
+		echo "$(date) $syslogmessage" >> /mesh11sd_log/mesh11sd.log
+	fi
+}
+
 
 mesh_gate_state() {
 	aplist=$(uci show wireless | grep "mode='ap'" | awk -F "." '{printf "%s ", $2}')
@@ -838,7 +892,7 @@ get_portal_state() {
 			if [ "$gwproto" -eq 1 ] || [ "$gwsrc" -eq 1 ]; then
 				# must test if upstream gateway is actually up
 				# On an ethernet link to eg an isp router, trigger arp with a ping:
-				gwstatus=$(ping -q -c 2 -W 1 "$gw_ip" &>/dev/null; ip neigh | grep "$gw_ip" | awk 'NR==1 {printf "%s", $NF}')
+				gwstatus=$(ping -q -c 2 -W 1 "$gw_ip" &>/dev/null; ip neigh | grep -w "$gw_ip" | awk 'NR==1 {printf "%s", $NF}')
 
 			else
 				gwstatus="REACHABLE"
@@ -862,14 +916,66 @@ get_portal_state() {
 		pingresult=$(ping -q -W 1 -c 2 "$gw_ip" &>/dev/null; echo $?)
 
 		if [ "$pingresult" -eq 1 ]; then
+			ip4pingfailcount=$(($ip4pingfailcount + 1))
 
-			dhcpdevice=$(echo "get network.$auto_mesh_network.device" | uci batch | awk '{printf "%s", $1}')
+			if [ "$portal_detect_threshold" -eq 0 ] || [ "$portal_detect_threshold" -gt "$ip4pingfailcount" ]; then
+				dhcpdevice=$(echo "get network.$auto_mesh_network.device" | uci batch | awk '{printf "%s", $1}')
 
-			debugtype="debug"
-			syslogmessage="ipV4 link to portal fail, attempting to (re)establish via device [ $dhcpdevice ]"
-			write_to_syslog
+				debugtype="debug"
+				syslogmessage="ipV4 link to portal fail, attempting to (re)establish via device [ $dhcpdevice ], iteration [ $ip4pingfailcount ]"
+				write_to_syslog
 
-			dhcp4_renew
+				dhcp4_renew
+
+			elif [ "$portal_detect_threshold" -le "$ip4pingfailcount" ]; then
+				# we have reached the portal detect threshold. This either means there is no portal, or something has stopped working
+
+				if [ "$network_restart" -eq 0 ]; then
+					# Try clearing the routing table:
+					dhcpdevice=$(echo "get network.$auto_mesh_network.device" | uci batch | awk '{printf "%s", $1}')
+					debugtype="err"
+					syslogmessage="portal detect threshold reached, flushing routing tables"
+					write_to_syslog
+					write_to_watchdog_nonvolatile_log
+					network_restart=1
+					ip neigh flush dev "$device"
+					dhcp4_renew
+
+				elif [ "$network_restart" -eq 1 ]; then
+					dhcpdevice=$(echo "get network.$auto_mesh_network.device" | uci batch | awk '{printf "%s", $1}')
+					debugtype="notice"
+					syslogmessage="portal detect threshold exceeded, restarting wpad..."
+					write_to_syslog
+					write_to_watchdog_nonvolatile_log
+					network_restart=2
+					/sbin/service wpad restart
+					wait_for_mesh
+					dhcp4_renew
+
+				elif [ "$network_restart" -eq 2 ]; then
+					dhcpdevice=$(echo "get network.$auto_mesh_network.device" | uci batch | awk '{printf "%s", $1}')
+					debugtype="notice"
+					syslogmessage="portal detect threshold exceeded, restarting network..."
+					write_to_syslog
+					write_to_watchdog_nonvolatile_log
+					network_restart=3
+					/sbin/service network restart
+					wait_for_mesh
+					dhcp4_renew
+
+				elif [ "$network_restart" -eq 3 ]; then
+					# restarting the network did not work so:
+					debugtype="err"
+					syslogmessage="portal detect threshold exceeded, restarting network did not work... rebooting node"
+					write_to_syslog
+					write_to_watchdog_nonvolatile_log
+					reboot
+				fi
+
+			fi
+		else
+			ip4pingfailcount=0
+			network_restart=0
 		fi
 	else
 		detected_state="portal"
@@ -1256,34 +1362,37 @@ wait_for_mesh() {
 
 all_nodes_rssi_update() {
 
-	if [ -f "/tmp/meshinterface" ]; then
+	if [ "$auto_config" -gt 0 ]; then
 
-		if [ ! -f "/tmp/mesh_rssi_threshold" ]; then
-			debugtype="debug"
-			syslogmessage="Disconnecting nodes"
-			write_to_syslog
+		if [ -f "/tmp/meshinterface" ]; then
 
-			rm /tmp/meshinterface
+			if [ ! -f "/tmp/mesh_rssi_threshold" ]; then
+				debugtype="debug"
+				syslogmessage="Disconnecting nodes"
+				write_to_syslog
 
-			get_wiphys
+				rm /tmp/meshinterface
 
-			if [ ! -z "$wiphys" ]; then
+				get_wiphys
 
-				for wiphy in $wiphys; do
-					mesh_capable=$(iw phy $wiphy info | grep -A 15 "Supported interface modes:" | grep -w "mesh point")
+				if [ ! -z "$wiphys" ]; then
 
-					if [ -z "$mesh_capable" ]; then
-						continue
-					fi
+					for wiphy in $wiphys; do
+						mesh_capable=$(iw phy $wiphy info | grep -A 15 "Supported interface modes:" | grep -w "mesh point")
 
-					phyindex=$(echo "$wiphy" | awk -F "phy" '{printf "%s", $2}')
-					phyindex=$(printf "%x" $phyindex)
+						if [ -z "$mesh_capable" ]; then
+							continue
+						fi
 
-					echo "set wireless.m11s$phyindex.mesh_rssi_threshold='$mesh_rssi_threshold'" | uci batch
-				done
+						phyindex=$(echo "$wiphy" | awk -F "phy" '{printf "%s", $2}')
+						phyindex=$(printf "%x" $phyindex)
+
+						echo "set wireless.m11s$phyindex.mesh_rssi_threshold='$mesh_rssi_threshold'" | uci batch
+					done
+				fi
+
+				restart_mesh
 			fi
-
-			restart_mesh
 		fi
 	fi
 }
@@ -1341,7 +1450,7 @@ ndp_scan_peer() {
 	# NDP - Send linklocal multicast ip6-allrouters
 	if [ -f "$tmpdir/devicemac" ]; then
 		. $tmpdir/devicemac
-		response=$(ping -q -c 8 "ff02::2%$device" &>/dev/null)
+		response=$(ping -q -c 8 "ff02::2%$device" &>/dev/null &)
 	fi
 }
 
@@ -1762,8 +1871,8 @@ block_bridge_loops() {
 		rulecount=$(nft -a list table bridge mesh11s 2> /dev/null | grep -w -c "$br_iface" | awk '{printf "%s", $1}')
 
 		if [ "$rulecount" -lt 2 ]; then
-			rule_status=$(nft add rule bridge mesh11s mesh_PRE meta iifname { $br_iface } ether saddr "\"$devicemac\"" counter drop 2> /dev/null; echo -n $?)
-			rule_status=$(nft add rule bridge mesh11s mesh_PRE meta iifname { $br_iface } counter accept 2> /dev/null; echo -n $?)
+			rule_status=$(nft add rule bridge mesh11s mesh_PRE meta iifname { "\"$br_iface\"" } ether saddr "\"$devicemac\"" counter drop 2> /dev/null; echo -n $?)
+			rule_status=$(nft add rule bridge mesh11s mesh_PRE meta iifname { "\"$br_iface\"" } counter accept 2> /dev/null; echo -n $?)
 		fi
 
 		convert_to_la "$devicemac"
@@ -2040,6 +2149,7 @@ elif [ "$1" = "status" ]; then
 	echo "    \"enabled\":\"$enabled\","
 	echo "    \"procd_status\":\"$procd_status\","
 	echo "    \"portal_detect\":\"$portal_detect\","
+	echo "    \"portal_detect_threshold\":\"$portal_detect_threshold\","
 	echo "    \"portal_channel\":\"$portal_channel\","
 	echo "    \"mesh_basename\":\"$mesh_basename\","
 	echo "    \"auto_config\":\"$auto_config\","
@@ -2629,15 +2739,22 @@ elif [ "$1" = "daemon" ]; then
 
 	get_kernel_version
 
-	# We do not know the state everything is in so reinitialise everything
-	uci revert mesh11sd
-	uci revert wireless
-	uci revert dhcp
-	/sbin/service network restart
-	/sbin/service dnsmasq restart
-	sleep 5
+	if [ "$auto_config" -gt 0 ]; then
+		# We do not know the current state so reinitialise everything
 
-	probe_interface_mac
+		debugtype="info"
+		syslogmessage="Initialising state for auto_config"
+		write_to_syslog
+
+		uci revert mesh11sd
+		uci revert wireless
+		uci revert dhcp
+		/sbin/service network restart
+		/sbin/service dnsmasq restart
+		sleep 5
+
+		probe_interface_mac
+	fi
 
 	if [ -e "/tmp/mesh11sd/brmac_la" ]; then
 		rm "/tmp/mesh11sd/brmac_la"
@@ -2792,8 +2909,10 @@ elif [ "$1" = "daemon" ]; then
 
 				#### The mesh interface MUST have a unique mac address ie not duplicated from another interface.
 				# We will set it ip as a locally administered version of the bridge mac for facilitating connect/copy functionality
+				# If manually configured, let the user figure it out
 
-				if [ "$macfixup" -eq 0 ]; then
+				if [ "$macfixup" -eq 0 ] && [ "$auto_config" -gt 0 ]; then
+
 					for wiphy in $wiphys; do
 						ucimeshconfig=$(uci get $meshconfig.macaddr 2> /dev/null)
 
