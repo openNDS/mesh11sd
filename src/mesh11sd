@@ -2275,7 +2275,6 @@ elif [ "$1" = "status" ]; then
 				done
 
 				stanum=0
-				realstanum=0
 				stations=0
 				starouting="$starouting"$(iw dev $iface mpp dump | awk -F" " 'NR>1 {printf "%s/%s ",$1,$2}')
 				stas=$(iw dev $iface mpp dump | awk -F" " 'NR>1 {printf "%s ",$1}')
@@ -2303,7 +2302,6 @@ elif [ "$1" = "status" ]; then
 						continue
 					fi
 
-					stanum=$((stanum+1))
 					stamac=$(echo "$sta" | awk -F"/" '{printf "%s", $1}')
 					proxy_node=$(echo "$sta" | awk -F"/" '{printf "%s", $2}')
 					proxy_node="${staroute##*/}"
@@ -2315,7 +2313,7 @@ elif [ "$1" = "status" ]; then
 						continue
 					fi
 
-					realstanum=$((realstanum+1))
+					stanum=$((stanum+1))
 					echo "        \"$stamac\":{"
 					echo "          \"proxy_node\":\"$proxy_node\""
 
