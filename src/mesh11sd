@@ -2181,7 +2181,7 @@ elif [ "$1" = "status" ]; then
 	echo "    \"interface_timeout\":\"$interface_timeout\","
 	echo "    \"ssid_suffix_enable\":\"$ssid_suffix_enable\","
 	echo "    \"debuglevel\":\"$debuglevel\""
-	echo "  }"
+	echo "  },"
 	echo "  \"interfaces\":{"
 
 	for iface in $iflist; do
@@ -2244,13 +2244,13 @@ elif [ "$1" = "status" ]; then
 					echo "        \"$peermac\":{"
 
 					next_hop=$(echo "$peer" | awk -F"/" '{printf "%s", $2}')
-					echo "          \"next_hop\":\"$next_hop\""
+					echo "          \"next_hop\":\"$next_hop\","
 
 					hop_count=$(echo "$peer" | awk -F"/" '{printf "%s", $4}')
-					echo "          \"hop_count\":\"$hop_count\""
+					echo "          \"hop_count\":\"$hop_count\","
 
 					path_change_count=$(echo "$peer" | awk -F"/" '{printf "%s", $5}')
-					echo "          \"path_change_count\":\"$path_change_count\""
+					echo "          \"path_change_count\":\"$path_change_count\","
 
 					metric=$(echo "$peer" | awk -F"/" '{printf "%s", $3}')
 					echo "          \"metric\":\"$metric\""
@@ -2261,7 +2261,7 @@ elif [ "$1" = "status" ]; then
 						echo "        },"
 					fi
 				done
-				echo "      }"
+				echo "      },"
 
 				ap_ifaces=$(iw dev | grep -B 7 "type AP"| grep "Interface" | awk '{printf "%s ", $2}')
 
