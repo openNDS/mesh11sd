@@ -10,30 +10,57 @@
 
 ## 2. Overview
 
-**Auto_configuration:**
+**What is a Mesh?**
 
-  From version 3.0.0 onwards, by default, Mesh11sd checks the wireless configuration for mesh options including a mesh capable version of the wpad package.
 
-  If a suitable version of wpad is installed (eg wpad-mesh-mbedtls), mesh11sd adds options to the wireless configuration to bring up 802.11s mesh interfaces, if they are not already present.
+A mesh network is a multi point to multi point layer 2 mac-routing backhaul used to interconnect mesh peers. Mesh peers are generally non-user devices, such as routers, access points, CPEs etc..
 
-  From version 3.1.0 onwards, non-mesh peer links are supported. Bridge loops are blocked and mesh links are given higher priority in the spanning tree. This is intended only to be used to connect remote segments of the backhaul that are out of useable radio range.
+A normal user device, such as a phone, tablet, laptop etc., cannot connect to a mesh network. Instead, connection is achieved via a mesh gateway, a special type of mesh peer.
 
-**Mesh Parameters:**
+**WARNING Are you sure you want a mesh?**
 
-  Mesh11sd allows all mesh parameters that are supported by the wireless driver to be set in the mesh11sd uci config file.
+If you are looking for a solution to enable your user devices to seamlessly roam from one access point to another in your home, YOU ARE NOT LOOKING FOR A MESH.
 
-  Changes to parameter settings take effect immediately without having to restart the wireless network and the default settings give rapid and reliable layer 2 mesh convergence.
+It is unfortunate that some manufacturers have used the word “Mesh” for marketing purposes to describe their non-standard, closed source, proprietary “roaming” functionality and this causes great confusion to many people when they enter the world of international standards and open source firmware for their network infrastructure.
 
-  The settings in the uci wireless config are acted upon at boot time or when the wireless network is restarted and are implemented *before* the mesh interface has reached an active state
+    The accepted standard for mesh networks is ieee802.11s.
+    The accepted standard for fast roaming of user devices is ieee802.11r.
 
-  However, many mesh configuration parameters can only be set *after* the mesh interface becomes active.
+These are two completely unrelated standards.
 
-  Without mesh11sd, many mesh parameters cannot be set in the uci wireless config file as the mesh interface must be up before the parameters can be set. Some of those that are supported, would fail to be implemented when the network is (re)started resulting in errors or dropped nodes.
+##2. Manual or Auto Configuration:
 
-  The mesh11sd daemon dynamically checks and sets parameters set in its config file, overriding any that are set in the wireless config. Parameters must be be set in the mesh11sd config.
+From version 4.0.0 onwards, the default mode after install is for manual configuration.
 
-Depending on the wireless drivers/hardware, mesh parameters set in the wireless config may not only fail on startup, but may also generate errors and in the worst case may cause the wireless driver to crash.
-For this reason it is recommended that all parameter settings are moved from the wireless config and placed into the mesh11sd config.
+***Manual (default) - If you have not done any manual mesh configuration, mesh11sd will do nothing and wait in the background for you to do so.***
+
+***Auto - You can quickly and simply enable auto config mode:***
+
+Switching on Auto Configuration is a simple task and is recommended if you are starting from a basic OpenWrt reflash.
+
+First, make sure your freshly flashed router is connected to your upstream Internet feed using its wan port and that you get Internet access when connected to (one of) its lan ports.
+
+Now, execute the following commands:
+
+```
+  service mesh11sd stop
+  uci set mesh11sd.setup.auto_config='1'
+  uci commit mesh11sd
+  service mesh11sd start; logread -f
+```
+You will now see the syslog as mesh11sd starts up (you can press ctrl/c to stop the syslog output).
+
+It checks for a mesh capable wireless driver, a mesh capable wpad package and the presence of nftables bridge support.
+
+If a suitable version of wpad is installed (eg wpad-mesh-mbedtls), mesh11sd adds options to the wireless configuration to bring up 802.11s mesh interfaces, if they are not already present.
+
+Note: Mesh11sd uses the uci utility to manage dynamic configuration changes, both autoconfig and run time. The autoconfiguration is done on every startup and is not a one off process.
+In normal operation, config changes are not written to the config files in /etc/config but are kept in volatile storage by way of the uci utility.
+
+Directly editing a config file might possibly break something, all changes should be done with the uci utility.
+
+Luci does not support mesh11sd configuration and will probably not even show its effects. This is normal.
+
 
 **Meshnode Types:**
 
