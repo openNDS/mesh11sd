@@ -72,7 +72,7 @@ config mesh11sd 'setup'
 	# Determines whether this node's gate will be a encrypted
 	#
 	# Default: 0 (disabled)
-	# Set to 0 (none), 1 (sae, aka wpa3), 2 (sae-mixed, aka wpa2/wpa3) or 3 (psk2, aka wpa2
+	# Set to 0 (none), 1 (sae, aka wpa3), 2 (sae-mixed, aka wpa2/wpa3) or 3 (psk2, aka wpa2)
 	#
 	# Example - enable psk2 encryption
 	#option mesh_gate_encryption '3'
@@ -121,7 +121,7 @@ config mesh11sd 'setup'
 	#
 	# All mesh peer and mesh gate nodes will autonomously track the mesh portal channel
 	# regardless of the configured auto_mesh_band
-	# 
+	#
 	#option portal_channel 'auto'
 	# or
 	#option portal_channel '4'
@@ -267,7 +267,7 @@ config mesh11sd 'mesh_params'
 	#
 	# Any mesh parameter supported by the wireless driver can be specified here
 	# and will be dynamically set and continuously checked every "checkinterval"
-	# 
+	#
 	# Examples:
 	#option mesh_rssi_threshold '-70'
 	#option mesh_max_peer_links '20'
