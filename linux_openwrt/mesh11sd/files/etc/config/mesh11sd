@@ -234,7 +234,7 @@ config mesh11sd 'setup'
 	#
 	# If set, it must also be set to the same value on every mesh node
 	#
-	#option auto_mesh_key "MySecretKey"
+	#option auto_mesh_key 'MySecretKey'
 
 	###########################################################################################
 	# auto_mesh_network (optional)
