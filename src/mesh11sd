@@ -1473,6 +1473,7 @@ auto_config() {
 	write_to_syslog
 	autoconfig=0
 	dfs_etsi="GB"
+	meshifenabled=0
 
 	# Are we using ath10k drivers?
 	ath10k_ct=$(opkg list-installed | grep "ath10k"| grep -c "\-ct")
@@ -1543,8 +1544,9 @@ auto_config() {
 						mesh_band=$auto_mesh_band
 					fi
 
-					if [ "$band" = "$mesh_band" ]; then
+					if [ "$band" = "$mesh_band" ] && [ "$meshifenabled" -eq 0 ]; then
 						echo "set wireless.m11s$phyindex.disabled='0'" | uci batch
+						meshifenabled=1
 					else
 						echo "set wireless.m11s$phyindex.disabled='1'" | uci batch
 					fi
