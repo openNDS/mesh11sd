@@ -201,6 +201,17 @@ get_current_setup () {
 	write_to_syslog
 
 	#####
+	channel_tracking_checkinterval=$(uci get mesh11sd.setup.channel_tracking_checkinterval 2> /dev/null)
+
+	if [ -z "$channel_tracking_checkinterval" ]; then
+		channel_tracking_checkinterval="30"
+	fi
+
+	syslogmessage="option channel_tracking_checkinterval [ $channel_tracking_checkinterval ]"
+	debugtype="info"
+	write_to_syslog
+
+	#####
 	portal_detect_threshold=$(uci get mesh11sd.setup.portal_detect_threshold 2> /dev/null)
 
 	if [ -z "$portal_detect_threshold" ]; then
@@ -455,6 +466,16 @@ get_current_setup () {
 		mkdir -p /mesh11sd_log
 	fi
 
+	#####
+	mesh_path_stabilisation=$(uci get mesh11sd.setup.mesh_path_stabilisation 2> /dev/null)
+
+	if [ -z "$mesh_path_stabilisation" ]; then
+		mesh_path_stabilisation="1"
+	fi
+
+	syslogmessage="option mesh_path_stabilisation [ $mesh_path_stabilisation ]"
+	debugtype="info"
+	write_to_syslog
 }
 
 check_config_params() {
@@ -708,8 +729,7 @@ check_channel() {
 	link_to_portal=0
 
 	# We need to scan for working channel if we cannot see a portal
-	# Check for portal every checkinterval_multiplier checkintervals
-	checkinterval_multiplier=2
+	# Check for portal every channel_tracking_checkinterval seconds
 
 	timenow=$(date +%s)
 
@@ -722,7 +742,7 @@ check_channel() {
 	fi
 
 	elapsed_time=$(($timenow - $cctimestamp))
-	mininterval=$(($checkinterval * $checkinterval_multiplier))
+	mininterval=$channel_tracking_checkinterval
 
 	if [ "$mininterval" -le "$elapsed_time" ]; then
 		ifaces=$(uci export wireless | grep "config wifi-iface" | awk -F"'" '$2 != "" {printf "%s ",$2}')
@@ -1811,24 +1831,29 @@ check_path_changes() {
 							is_connected=$(iw dev $iface station dump | grep -q "$peermac"; echo -n $?)
 
 							if [ "$is_connected" -eq 0 ]; then
-								debugtype="warn"
-								syslogmessage="Warning! Station [ $peermac ] is [ $hop_count ] hops away and [ $path_change_count ] path_change(s) for station have been detected"
+								debugtype="notice"
+								syslogmessage="Station [ $peermac ] is [ $hop_count ] hops away and [ $path_change_count ] path_change(s) for station have been detected"
 								write_to_syslog
-								syslogmessage="Warning! Station [ $peermac ], consider its location or adjust txpower and/or rssi_threshold"
+								debugtype="debug"
+								syslogmessage="Station [ $peermac ] has an incrementing path change count, consider its location or adjust txpower and/or rssi_threshold"
 								write_to_syslog
-								# If we want to make reactive fixups, do them here, for example:
-								#iw dev $iface station del $peermac
-								#iw dev $iface mpath del $peermac
+
+								if [ "$mesh_path_stabilisation" -eq 1 ]; then
+									# If we want reactive path stabilisation:
+									debugtype="notice"
+									syslogmessage="Stabilsing path to node [ $peermac ]"
+									write_to_syslog
+									iw dev $iface station del $peermac
+								fi
 							fi
 
 						elif [ "$hop_count" -eq 1 ] && [ "$path_change_count" -gt 1 ]; then
-							debugtype="warn"
-							syslogmessage="Warning! Station [ $peermac ] is an immediate neighbour, but has had [ $path_change_count ] path_change(s) detected"
+							debugtype="notice"
+							syslogmessage="Station [ $peermac ] is an immediate neighbour, but has had [ $path_change_count ] path_change(s) detected"
 							write_to_syslog
-							syslogmessage="Warning! Station [ $peermac ], consider its location or adjust txpower and/or rssi_threshold"
+							debugtype="debug"
+							syslogmessage="Station [ $peermac ], consider its location or adjust txpower and/or rssi_threshold"
 							write_to_syslog
-							# If we want to make reactive fixups, do them here, for example:
-							#iw dev $iface mpath del $peermac
 						fi
 
 						echo "previous_path_change_count=$path_change_count" > $tmpdir/$peermac_id
@@ -2153,6 +2178,7 @@ elif [ "$1" = "status" ]; then
 	echo "    \"portal_detect\":\"$portal_detect\","
 	echo "    \"portal_detect_threshold\":\"$portal_detect_threshold\","
 	echo "    \"portal_channel\":\"$portal_channel\","
+	echo "    \"channel_tracking_checkinterval\":\"$channel_tracking_checkinterval\","
 	echo "    \"mesh_basename\":\"$mesh_basename\","
 	echo "    \"auto_config\":\"$auto_config\","
 	echo "    \"auto_mesh_network\":\"$auto_mesh_network\","
@@ -2179,6 +2205,7 @@ elif [ "$1" = "status" ]; then
 
 	echo "    \"txpower\":\"$txpower\","
 	echo "    \"mesh_path_cost\":\"$mesh_path_cost\","
+	echo "    \"mesh_path_stabilisation\":\"$mesh_path_stabilisation\","
 	echo "    \"checkinterval\":\"$checkinterval\","
 	echo "    \"interface_timeout\":\"$interface_timeout\","
 	echo "    \"ssid_suffix_enable\":\"$ssid_suffix_enable\","
@@ -2283,6 +2310,7 @@ elif [ "$1" = "status" ]; then
 				stas="$ap_stas""$stas"
 
 				for sta in $stas; do
+					# strip off first octet
 					sta=$(printf "%s" "$sta" | awk -F ":" '{printf "%s:%s:%s:%s:%s", $2, $3, $4, $5, $6}')
 					inpeermacs=$(echo "$peer_macs" | grep "$sta")
 
