@@ -1,6 +1,14 @@
 
 config mesh11sd 'setup'
 	###########################################################################################
+	# debuglevel (optional)
+	# Sets the debuglevel
+	# Default: 1 (Notification)
+	# Options are 0, silent, 1 notification, 2 info and 3 debug
+	#
+	#option debuglevel '2'
+
+	###########################################################################################
 	# enabled (optional)
 	# Enables or disables the mesh11sd daemon
 	# Default: 1 (enabled)
@@ -10,92 +18,11 @@ config mesh11sd 'setup'
 	#option enabled '1'
 
 	###########################################################################################
-	# debuglevel (optional)
-	# Sets the debuglevel
-	# Default: 1 (Notification)
-	# Options are 0, silent, 1 notification, 2 info and 3 debug
-	#
-	#option debuglevel '2'
-
-	###########################################################################################
 	# checkinterval (optional)
 	# Sets the dynamic configuration checkinterval in seconds
 	# Default: 10 (seconds)
 	#
 	#option checkinterval '15'
-
-	###########################################################################################
-	# interface_timeout (optional)
-	# Sets the interface timeout interval in seconds
-	# Default: 10 (seconds)
-	#
-	#option interface_timeout '10'
-
-	###########################################################################################
-	# mesh_basename (optional)
-	# The first 4 characters after non alphanumerics are removed are used as the mesh_basename
-	# The mesh_basename is used to construct a unique mesh interface name of the form m-xxxx-n
-	# Default: 11s
-	# Results in ifname=m-11s-0 for the first mesh interface
-	# Example: link
-	# Results in ifname=m-link-0
-	#
-	#option mesh_basename 'link'
-
-	###########################################################################################
-	# mesh_gate_enable (optional)
-	# Determines whether this node will be a gate
-	#
-	# Default: 1 (enabled)
-	# Set to 0 to disable (turns off the node's gate interface ie its access point and SSID)
-	#
-	#option mesh_gate_enable '0'
-
-	###########################################################################################
-	# mesh_gate_only (optional)
-	# Determines whether this node will be a gate only
-	# A gate only node acts as an access point with a mesh backhaul connection, but does not contribute to the mesh
-	#
-	# Also known as a leach node
-	#
-	# This is useful when a node is well within the coverage of 2 or more peer nodes,
-	# as otherwise it could create unstable multi hop paths within the backhaul.
-	#
-	# Default: 0 (disabled)
-	# Set to 1 to enable (turns off the node's mesh forwarding and HWMP mac-routing)
-	#
-	# Example - enable leach mode
-	#option mesh_gate_only '1'
-
-	###########################################################################################
-	# mesh_gate_encryption (optional)
-	# Determines whether this node's gate will be a encrypted
-	#
-	# Default: 0 (disabled)
-	# Set to 0 (none), 1 (sae, aka wpa3), 2 (sae-mixed, aka wpa2/wpa3) or 3 (psk2, aka wpa2
-	#
-	# Example - enable psk2 encryption
-	#option mesh_gate_encryption '3'
-
-	###########################################################################################
-	# mesh_gate_key (optional)
-	# Determines the encryption key for this node's gate.
-	#
-	# Default: not set (encryption disabled)
-	# Set to a secret string value to use for encrypting the node's gate
-	#
-	# Example - set a key string
-	#option mesh_gate_key 'mysecretencryptionkey'
-
-	###########################################################################################
-	# mesh_path_cost (optional)
-	# sets the STP cost of the mesh network
-	# Default: 10
-	# Can be set to any value from 0 to 65534
-	# Setting to 0 disables STP
-	#
-	# Example:
-	#option mesh_path_cost '100'
 
 	###########################################################################################
 	# portal_detect (optional)
@@ -127,6 +54,16 @@ config mesh11sd 'setup'
 	#option portal_channel '4'
 
 	###########################################################################################
+	# channel_tracking_checkinterval (optional)
+	# The minimum interval in seconds after which channel tracking begins on peer nodes
+	# Values less than checkinterval are ignored
+	#
+	# Default: 30 seconds
+	#
+	# Example:
+	#option channel_tracking_checkinterval '60'
+
+	###########################################################################################
 	# portal_detect_threshold (optional)
 	#
 	# This is the portal detect watchdog.
@@ -144,16 +81,21 @@ config mesh11sd 'setup'
 	#option portal_detect_threshold '10'
 
 	###########################################################################################
-	# mesh11sd.setup.watchdog_nonvolatile_log (optional - FOR DEBUGGING PURPOSES ONLY)
+	# mesh_path_cost (optional)
+	# sets the STP cost of the mesh network
+	# Default: 10
+	# Can be set to any value from 0 to 65534
+	# Setting to 0 disables STP
 	#
-	# This enables logging of the portal detect watchdog actions in non-volatile storage.
-	# The log file /mesh11sd_log/mesh11sd.log is created
+	# Example:
+	#option mesh_path_cost '100'
+
+	###########################################################################################
+	# interface_timeout (optional)
+	# Sets the interface timeout interval in seconds
+	# Default: 10 (seconds)
 	#
-	# ##########WARNING##########
-	# THIS OPTION IS FOR PORTAL DETECT WATCHDOG DEBUGGING PURPOSES ONLY
-	# IF LEFT ENABLED FOR A LENGTH OF TIME IT MAY CAUSE NONE REPAIRABLE FLASH MEMORY WEAR AND USE UP FREE STORAGE SPACE
-	# DISABLE IMMEDIATELY AFTER DEBUGGING OPERATIONS ARE COMPLETE
-	# ##########WARNING##########
+	#option interface_timeout '10'
 
 	###########################################################################################
 	# auto_config (optional)
@@ -234,7 +176,7 @@ config mesh11sd 'setup'
 	#
 	# If set, it must also be set to the same value on every mesh node
 	#
-	#option auto_mesh_key "MySecretKey"
+	#option auto_mesh_key 'MySecretKey'
 
 	###########################################################################################
 	# auto_mesh_network (optional)
@@ -243,6 +185,60 @@ config mesh11sd 'setup'
 	# Default lan
 	#
 	#option auto_mesh_network 'guest'
+
+	###########################################################################################
+	# mesh_basename (optional)
+	# The first 4 characters after non alphanumerics are removed are used as the mesh_basename
+	# The mesh_basename is used to construct a unique mesh interface name of the form m-xxxx-n
+	# Default: 11s
+	# Results in ifname=m-11s-0 for the first mesh interface
+	# Example: link
+	# Results in ifname=m-link-0
+	#
+	#option mesh_basename 'link'
+
+	###########################################################################################
+	# mesh_gate_encryption (optional)
+	# Determines whether this node's gate will be a encrypted
+	#
+	# Default: 0 (disabled)
+	# Set to 0 (none), 1 (sae, aka wpa3), 2 (sae-mixed, aka wpa2/wpa3) or 3 (psk2, aka wpa2)
+	#
+	# Example - enable psk2 encryption
+	#option mesh_gate_encryption '3'
+
+	###########################################################################################
+	# mesh_gate_key (optional)
+	# Determines the encryption key for this node's gate.
+	#
+	# Default: not set (encryption disabled)
+	# Set to a secret string value to use for encrypting the node's gate
+	#
+	# Example - set a key string
+	#option mesh_gate_key 'mysecretencryptionkey'
+
+	###########################################################################################
+	# mesh_gate_enable (optional)
+	# Determines whether this node will be a gate
+	#
+	# Default: 1 (enabled)
+	# Set to 0 to disable (turns off the node's gate interface ie its access point and SSID)
+	#
+	#option mesh_gate_enable '0'
+
+	###########################################################################################
+	# mesh_leechmode_enable (optional)
+	# Determines whether this node will be a gate only leech node
+	# A gate only leech node acts as an access point with a mesh backhaul connection, but does not contribute to the mesh
+	#
+	# This is useful when a node is well within the coverage of 2 or more peer nodes,
+	# as otherwise it could create unstable multi hop paths within the backhaul.
+	#
+	# Default: 0 (disabled)
+	# Set to 1 to enable (turns off the node's mesh forwarding and HWMP mac-routing)
+	#
+	# Example - enable leach mode
+	#option mesh_leechmode_enable '1'
 
 	###########################################################################################
 	# txpower (optional)
@@ -261,6 +257,28 @@ config mesh11sd 'setup'
 	# Default 1 (enabled)
 	#
 	#option ssid_suffix_enable '0'
+
+	###########################################################################################
+	# mesh11sd.setup.watchdog_nonvolatile_log (optional - FOR DEBUGGING PURPOSES ONLY)
+	#
+	# This enables logging of the portal detect watchdog actions in non-volatile storage.
+	# The log file /mesh11sd_log/mesh11sd.log is created
+	#
+	# ##########WARNING##########
+	# THIS OPTION IS FOR PORTAL DETECT WATCHDOG DEBUGGING PURPOSES ONLY
+	# IF LEFT ENABLED FOR A LENGTH OF TIME IT MAY CAUSE NONE REPAIRABLE FLASH MEMORY WEAR AND USE UP FREE STORAGE SPACE
+	# DISABLE IMMEDIATELY AFTER DEBUGGING OPERATIONS ARE COMPLETE
+	# ##########WARNING##########
+
+	###########################################################################################
+	# mesh_path_stabilisation (optional)
+	#
+	# This enables mesh path stabilisation, preventing multi hop path changes due to multipath signal strength jitter
+	#
+	# Default: 1 (enabled)
+	#
+	# To disable, set to zero:
+	#option mesh_path_stabilisation '0'
 
 config mesh11sd 'mesh_params'
 	# A minimum set of parameters is automatically set for initial startup and do not have to be configured here
