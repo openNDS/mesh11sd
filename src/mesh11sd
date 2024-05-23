@@ -201,6 +201,17 @@ get_current_setup () {
 	write_to_syslog
 
 	#####
+	channel_tracking_checkinterval=$(uci get mesh11sd.setup.channel_tracking_checkinterval 2> /dev/null)
+
+	if [ -z "$channel_tracking_checkinterval" ]; then
+		channel_tracking_checkinterval="30"
+	fi
+
+	syslogmessage="option channel_tracking_checkinterval [ $channel_tracking_checkinterval ]"
+	debugtype="info"
+	write_to_syslog
+
+	#####
 	portal_detect_threshold=$(uci get mesh11sd.setup.portal_detect_threshold 2> /dev/null)
 
 	if [ -z "$portal_detect_threshold" ]; then
@@ -399,7 +410,12 @@ get_current_setup () {
 	#####
 
 	#####
-	mesh_gate_only=$(uci get mesh11sd.setup.mesh_gate_only 2> /dev/null)
+	# mesh_gate_only deprecated as a config option - use mesh_leechmode_enable instead as the config option
+	mesh_gate_only=$(uci get mesh11sd.setup.mesh_leechmode_enable 2> /dev/null)
+
+	if [ -z "$mesh_gate_only" ]; then
+		mesh_gate_only=$(uci get mesh11sd.setup.mesh_gate_only 2> /dev/null)
+	fi
 
 	if [ -z "$mesh_gate_only" ]; then
 		mesh_gate_only="0"
@@ -455,6 +471,16 @@ get_current_setup () {
 		mkdir -p /mesh11sd_log
 	fi
 
+	#####
+	mesh_path_stabilisation=$(uci get mesh11sd.setup.mesh_path_stabilisation 2> /dev/null)
+
+	if [ -z "$mesh_path_stabilisation" ]; then
+		mesh_path_stabilisation="1"
+	fi
+
+	syslogmessage="option mesh_path_stabilisation [ $mesh_path_stabilisation ]"
+	debugtype="info"
+	write_to_syslog
 }
 
 check_config_params() {
@@ -708,8 +734,7 @@ check_channel() {
 	link_to_portal=0
 
 	# We need to scan for working channel if we cannot see a portal
-	# Check for portal every checkinterval_multiplier checkintervals
-	checkinterval_multiplier=2
+	# Check for portal every channel_tracking_checkinterval seconds
 
 	timenow=$(date +%s)
 
@@ -722,7 +747,7 @@ check_channel() {
 	fi
 
 	elapsed_time=$(($timenow - $cctimestamp))
-	mininterval=$(($checkinterval * $checkinterval_multiplier))
+	mininterval=$channel_tracking_checkinterval
 
 	if [ "$mininterval" -le "$elapsed_time" ]; then
 		ifaces=$(uci export wireless | grep "config wifi-iface" | awk -F"'" '$2 != "" {printf "%s ",$2}')
@@ -1473,6 +1498,7 @@ auto_config() {
 	write_to_syslog
 	autoconfig=0
 	dfs_etsi="GB"
+	meshifenabled=0
 
 	# Are we using ath10k drivers?
 	ath10k_ct=$(opkg list-installed | grep "ath10k"| grep -c "\-ct")
@@ -1520,6 +1546,7 @@ auto_config() {
 					echo "set wireless.m11s$phyindex.ifname='$mesh_ifname'" | uci batch
 					echo "set wireless.m11s$phyindex.mesh_rssi_threshold='$mesh_rssi_threshold'" | uci batch
 					echo "set wireless.radio$phyindex.disabled='0'" | uci batch
+					echo "set wireless.radio$phyindex.log_level='0'" | uci batch
 
 
 					country=$(uci get wireless.radio$phyindex.country 2> /dev/null | awk '{printf "%s", $1}')
@@ -1535,6 +1562,7 @@ auto_config() {
 						country="$dfs_etsi"
 					fi
 
+
 					band=$(uci get wireless.radio$phyindex.band 2> /dev/null | awk '{printf "%s", $1}')
 
 					if [ "$auto_mesh_band" = "2g40" ]; then
@@ -1543,8 +1571,9 @@ auto_config() {
 						mesh_band=$auto_mesh_band
 					fi
 
-					if [ "$band" = "$mesh_band" ]; then
+					if [ "$band" = "$mesh_band" ] && [ "$meshifenabled" -eq 0 ]; then
 						echo "set wireless.m11s$phyindex.disabled='0'" | uci batch
+						meshifenabled=1
 					else
 						echo "set wireless.m11s$phyindex.disabled='1'" | uci batch
 					fi
@@ -1809,24 +1838,29 @@ check_path_changes() {
 							is_connected=$(iw dev $iface station dump | grep -q "$peermac"; echo -n $?)
 
 							if [ "$is_connected" -eq 0 ]; then
-								debugtype="warn"
-								syslogmessage="Warning! Station [ $peermac ] is [ $hop_count ] hops away and [ $path_change_count ] path_change(s) for station have been detected"
+								debugtype="notice"
+								syslogmessage="Station [ $peermac ] is [ $hop_count ] hops away and [ $path_change_count ] path_change(s) for station have been detected"
 								write_to_syslog
-								syslogmessage="Warning! Station [ $peermac ], consider its location or adjust txpower and/or rssi_threshold"
+								debugtype="debug"
+								syslogmessage="Station [ $peermac ] has an incrementing path change count, consider its location or adjust txpower and/or rssi_threshold"
 								write_to_syslog
-								# If we want to make reactive fixups, do them here, for example:
-								#iw dev $iface station del $peermac
-								#iw dev $iface mpath del $peermac
+
+								if [ "$mesh_path_stabilisation" -eq 1 ]; then
+									# If we want reactive path stabilisation:
+									debugtype="notice"
+									syslogmessage="Stabilsing path to node [ $peermac ]"
+									write_to_syslog
+									iw dev $iface station del $peermac
+								fi
 							fi
 
 						elif [ "$hop_count" -eq 1 ] && [ "$path_change_count" -gt 1 ]; then
-							debugtype="warn"
-							syslogmessage="Warning! Station [ $peermac ] is an immediate neighbour, but has had [ $path_change_count ] path_change(s) detected"
+							debugtype="notice"
+							syslogmessage="Station [ $peermac ] is an immediate neighbour, but has had [ $path_change_count ] path_change(s) detected"
 							write_to_syslog
-							syslogmessage="Warning! Station [ $peermac ], consider its location or adjust txpower and/or rssi_threshold"
+							debugtype="debug"
+							syslogmessage="Station [ $peermac ], consider its location or adjust txpower and/or rssi_threshold"
 							write_to_syslog
-							# If we want to make reactive fixups, do them here, for example:
-							#iw dev $iface mpath del $peermac
 						fi
 
 						echo "previous_path_change_count=$path_change_count" > $tmpdir/$peermac_id
@@ -1983,7 +2017,7 @@ probe_interface_mac() {
 }
 
 check_mesh_gate_only() {
-	current_mgo_option=$(uci get mesh11sd.setup.mesh_gate_only 2> /dev/null | awk '{printf "%s", $1}')
+	current_mgo_option=$(uci get mesh11sd.setup.mesh_leechmode_enable 2> /dev/null | awk '{printf "%s", $1}')
 
 	if [ "$current_mgo_option" -ne "$mesh_gate_only" ]; then
 		#option has changed
@@ -1991,6 +2025,7 @@ check_mesh_gate_only() {
 		if [ "$current_mgo_option" -eq 1 ]; then
 			echo "set mesh11sd.mesh_params.mesh_fwding='0'" | uci batch
 			echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='0'" | uci batch
+			echo "set mesh11sd.mesh_params.mesh_gate_announcments='0'" | uci batch
 		elif [ "$current_mgo_option" -eq 0 ]; then
 
 			if [ -z "$is_portal" ]; then
@@ -2002,6 +2037,12 @@ check_mesh_gate_only() {
 
 			echo "set mesh11sd.mesh_params.mesh_fwding='1'" | uci batch
 			echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='$rootmode'" | uci batch
+
+			current_ctg_option=$(uci get mesh11sd.mesh_params.mesh_connected_to_gate 2> /dev/null | awk '{printf "%s", $1}')
+
+			if [ "$current_ctg_option" -eq 1 ]
+				echo "set mesh11sd.mesh_params.mesh_gate_announcments='1'" | uci batch
+			fi
 		fi
 
 		mesh_gate_only=$current_mgo_option
@@ -2151,13 +2192,14 @@ elif [ "$1" = "status" ]; then
 	echo "    \"portal_detect\":\"$portal_detect\","
 	echo "    \"portal_detect_threshold\":\"$portal_detect_threshold\","
 	echo "    \"portal_channel\":\"$portal_channel\","
+	echo "    \"channel_tracking_checkinterval\":\"$channel_tracking_checkinterval\","
 	echo "    \"mesh_basename\":\"$mesh_basename\","
 	echo "    \"auto_config\":\"$auto_config\","
 	echo "    \"auto_mesh_network\":\"$auto_mesh_network\","
 	echo "    \"auto_mesh_band\":\"$auto_mesh_band\","
 	echo "    \"auto_mesh_id\":\"$auto_mesh_id\","
 	echo "    \"mesh_gate_enable\":\"$mesh_gate_enable\","
-	echo "    \"mesh_gate_only\":\"$mesh_gate_only\","
+	echo "    \"mesh_leechmode_enable\":\"$mesh_gate_only\","
 	echo "    \"mesh_gate_encryption\":\"$mesh_gate_encryption\","
 
 	# get list of interfaces
@@ -2177,6 +2219,7 @@ elif [ "$1" = "status" ]; then
 
 	echo "    \"txpower\":\"$txpower\","
 	echo "    \"mesh_path_cost\":\"$mesh_path_cost\","
+	echo "    \"mesh_path_stabilisation\":\"$mesh_path_stabilisation\","
 	echo "    \"checkinterval\":\"$checkinterval\","
 	echo "    \"interface_timeout\":\"$interface_timeout\","
 	echo "    \"ssid_suffix_enable\":\"$ssid_suffix_enable\","
@@ -2281,6 +2324,7 @@ elif [ "$1" = "status" ]; then
 				stas="$ap_stas""$stas"
 
 				for sta in $stas; do
+					# strip off first octet
 					sta=$(printf "%s" "$sta" | awk -F ":" '{printf "%s:%s:%s:%s:%s", $2, $3, $4, $5, $6}')
 					inpeermacs=$(echo "$peer_macs" | grep "$sta")
 
@@ -2532,19 +2576,19 @@ elif [ "$1" = "stations" ]; then
 	echo
 	exit 0
 
-elif [ "$1" = "mesh_gate_only" ]; then
+elif [ "$1" = "mesh_leechmode" ]; then
 
 	if [ -z "$2" ]; then
-		echo "Usage: mesh11sd mesh_gate_only [enable/disable]"
-		outputstring="Option mesh_gate_only current value [ $mesh_gate_only ]"
+		echo "Usage: mesh11sd mesh_leechmode [enable/disable]"
+		outputstring="Option mesh_leechmode_enable current value [ $mesh_gate_only ]"
 	elif [ "$2" = "enable" ]; then
 		mesh_gate_only=1
-		echo "set mesh11sd.setup.mesh_gate_only='$mesh_gate_only'" | uci batch
-		outputstring="Option mesh_gate_only set to [ $mesh_gate_only ]"
+		echo "set mesh11sd.setup.mesh_leechmode_enable='$mesh_gate_only'" | uci batch
+		outputstring="Option mesh_leechmode_enable set to [ $mesh_gate_only ]"
 	elif [ "$2" = "disable" ]; then
 		mesh_gate_only=0
-		echo "set mesh11sd.setup.mesh_gate_only='$mesh_gate_only'" | uci batch
-		outputstring="Option mesh_gate_only set to [ $mesh_gate_only ]"
+		echo "set mesh11sd.setup.mesh_leechmode_enable='$mesh_gate_only'" | uci batch
+		outputstring="Option mesh_leechmode_enable set to [ $mesh_gate_only ]"
 	else
 		outputstring="Invalid option [ $2 ]"
 	fi
@@ -2569,7 +2613,7 @@ elif [ "$1" = "commit_changes" ]; then
 
 	mesh_rssi_threshold_change=$(echo "$changes" | grep "mesh_rssi_threshold" | tail -n 1)
 	txpower_change=$(echo "$changes" | grep "txpower" | tail -n 1)
-	mesh_gate_only_change=$(echo "$changes" | grep "mesh_gate_only" | tail -n 1)
+	mesh_gate_only_change=$(echo "$changes" | grep "mesh_leechmode_enable" | tail -n 1)
 
 	echo "==========================================================================="
 
@@ -2620,7 +2664,7 @@ elif [ "$1" = "commit_changes" ]; then
 		fi
 
 		if [ "$mesh_gate_only_change_flag" -eq 1 ]; then
-			echo "Mesh gate only change committed"
+			echo "Mesh Leechmode change committed"
 		fi
 
 		if [ "$rssi_change_flag" -eq 0 ] && [ "$txpower_change_flag" -eq 0 ] && [ "$mesh_gate_only_change_flag" -eq 0 ]; then
