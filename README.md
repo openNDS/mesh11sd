@@ -28,7 +28,7 @@ It is unfortunate that some manufacturers have used the word “Mesh” for mark
 
 These are two completely unrelated standards.
 
-##2. Manual or Auto Configuration:
+## 3. Manual or Auto Configuration:
 
 From version 4.0.0 onwards, the default mode after install is for manual configuration.
 
@@ -80,7 +80,7 @@ It is possible for a Portal node to also be a Gateway node (ie it hosts an AP as
 
 All Peer and Gateway nodes will track the wireless channel that the Portal node is using. If the Portal node changes its working channel, this will be detected and tracked autonomously by downstream meshnodes.
 
-## 3. Installation
+## 4. Installation
 
 It is assumed that the additional dependencies for encrypted mesh are pre-installed, ie:
 
@@ -109,7 +109,7 @@ Example:
     opkg install mesh11sd
 ```
 
-## 4. Configuration
+## 5. Configuration
 Mesh11sd supports two types of configuration, automatic and manual.
 
 **Manual Configuration (default)**
@@ -212,7 +212,7 @@ Finally, save the changes:
 
 The node can now be moved to the desired location and the next one configured.
 
-Power up all nodes in any order, aving one only connected to your isp router as the portal node.
+Power up all nodes in any order, having one only connected to your isp router as the portal node.
 
 ### Default configuration file (/etc/config/mesh11sd):
 
@@ -528,7 +528,7 @@ This means that all meshnodes can be the same basic router configuration and onc
 Access to the remote meshnode peers will not be possible using the default ipv4 address as this will be disabled. Remote management can be achieved by using the `mesh11sd connect` and `mesh11sd copy` commands, or alternatively by reconnecting the wan port to an upstream feed.
 
 
-## 5. Setup Options
+## 6. Setup Options
 * enabled - 0=disabled, 1=enabled. Default 1
 
 * debuglevel - 0=silent, 1=notice, 2=info, 3=debug. Default 1
@@ -583,7 +583,7 @@ Changes can be made permanent with the following command:
 
         uci commit mesh11sd
 
-## 6. Mesh Parameter Options
+## 7. Mesh Parameter Options
 
 
 Mesh parameters can be changed only while the mesh is active.
@@ -663,7 +663,7 @@ RANN - Root ANNouncement
 RSSI - Received Signal Strength Indication
 
 
-## 7. Command Line Interface
+## 8. Command Line Interface
 Mesh11sd is an OpenWrt service daemon and runs continuously in the background. It does however also have a CLI interface:
 
       Usage: mesh11sd [option] [argument...]]
@@ -939,7 +939,7 @@ drwxr-xr-x    2 root     root            80 Feb 10 10:07 state/
 drwxr-xr-x    2 root     root            80 Jan  1  1970 sysinfo/
 drwxr-xr-x    2 root     root            40 Jan 19 18:54 tmp/
 drwxr-xr-x    3 root     root            60 Jan 19 18:54 usr/
-root@meshnode-1483:~# ^C
+root@meshnode-1483:~#
 
 root@meshnode-1483:~#
 
