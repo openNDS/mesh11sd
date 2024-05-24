@@ -259,7 +259,7 @@ config mesh11sd 'setup'
 	#option ssid_suffix_enable '0'
 
 	###########################################################################################
-	# mesh11sd.setup.watchdog_nonvolatile_log (optional - FOR DEBUGGING PURPOSES ONLY)
+	# watchdog_nonvolatile_log (optional - FOR DEBUGGING PURPOSES ONLY)
 	#
 	# This enables logging of the portal detect watchdog actions in non-volatile storage.
 	# The log file /mesh11sd_log/mesh11sd.log is created
