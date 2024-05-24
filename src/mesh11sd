@@ -2040,7 +2040,7 @@ check_mesh_gate_only() {
 
 			current_ctg_option=$(uci get mesh11sd.mesh_params.mesh_connected_to_gate 2> /dev/null | awk '{printf "%s", $1}')
 
-			if [ "$current_ctg_option" -eq 1 ]
+			if [ "$current_ctg_option" -eq 1 ]; then
 				echo "set mesh11sd.mesh_params.mesh_gate_announcments='1'" | uci batch
 			fi
 		fi
