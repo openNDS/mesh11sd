@@ -54,31 +54,35 @@ It checks for a mesh capable wireless driver, a mesh capable wpad package and th
 
 If a suitable version of wpad is installed (eg wpad-mesh-mbedtls), mesh11sd adds options to the wireless configuration to bring up 802.11s mesh interfaces, if they are not already present.
 
-Note: Mesh11sd uses the uci utility to manage dynamic configuration changes, both autoconfig and run time. The autoconfiguration is done on every startup and is not a one off process.
+**Note**: Mesh11sd uses the uci utility to manage dynamic configuration changes, both autoconfig and run time.
+
+**Note**: Autoconfiguration is done on every startup and is not a one off process.
+
 In normal operation, config changes are not written to the config files in /etc/config but are kept in volatile storage by way of the uci utility.
 
-Directly editing a config file might possibly break something, all changes should be done with the uci utility.
+**Note**: Directly editing a config file might possibly break something, all changes should be done with the uci utility.
 
-Luci does not support mesh11sd configuration and will probably not even show its effects. This is normal.
+**Note**: The OpenWrt Luci web interface does not support mesh11sd configuration and will probably not even show its effects. This is normal.
 
 
 **Meshnode Types:**
 
-The mesh contains three types of meshnodes.
+The mesh can have four types of meshnodes.
 
   1. **Peer Node** - the basic mesh peer - capable of mac-routing layer 2 packets in the mesh network.
   2. **Gateway Node** - a peer node that also hosts an access point (AP) radio for normal client devices to connect to.
-  3. **Portal Node** - a peer node that also hosts a layer 3 routed upstream connection (eg an Internet feed)
+  3. **Gateway Leech Node** - a special type of Gateway Node that connects to the mesh backhaul but neither contributes to it nor advertises itself on it.
+  4. **Portal Node** - a peer node that also hosts a layer 3 routed upstream connection (eg an Internet feed)
 
 It is possible for a Portal node to also be a Gateway node (ie it hosts an AP as well as an upstream connection.
 
 **Auto Channel Tracking:**
 
-From version 3 onwards, all Peer and Gateway nodes will track the wireless channel that the Portal node is using. If the Portal node changes its working channel, this will be detected and tracked autonomously by downstream meshnodes.
+All Peer and Gateway nodes will track the wireless channel that the Portal node is using. If the Portal node changes its working channel, this will be detected and tracked autonomously by downstream meshnodes.
 
 ## 3. Installation
 
-It is assumed that the additional dependencies for encrypted mesh are also installed, ie:
+It is assumed that the additional dependencies for encrypted mesh are pre-installed, ie:
 
     Remove - wpad-basic-mbedtls (or wpad-basic or wpad-basic-wolfssl)
 
@@ -89,7 +93,15 @@ It is assumed that the additional dependencies for encrypted mesh are also insta
          or - wpad-mesh-openssl
          or - wpad-openssl
 
+For support of non-mesh segments of backhaul and prevention of bridge loop storms, install the package:
+
+		 kmod-nft-bridge
+
+If this package is not installed, mesh11sd will issue warnings but still function. Omitting this package is not recommended unless node resources are severely restricted.
+
 Installation is achieved in the usual way for OpenWrt, either using the Luci UI, or the opkg command line utility.
+
+**Note**: The OpenWrt Luci web interface does not support mesh11sd configuration and will probably not even show its effects. This is normal.
 
 Example:
 ```
@@ -98,36 +110,123 @@ Example:
 ```
 
 ## 4. Configuration
-No configuration is necessary for a basic mesh network.
-The mesh11sd package is designed to work immediately the package is installed on a fresh reflash of OpenWrt firmware.
+Mesh11sd supports two types of configuration, automatic and manual.
 
-Mesh11sd will add required wireless mesh configuration autonomously. It is recommended that this is not done manually.
+**Manual Configuration (default)**
 
-However if the mesh network interface is defined in the wireless configuration, this will be used. If it is not defined, Mesh11sd will add the required options dynamically.
+The default after installation is manual configuration mode. If left in manual mode, all the mesh interface configurations must be done manually in the traditional way using the normal OpenWrt tools. In manual mode, mesh11sd will pick up existing mesh interface configuration from the wireless configuration file and then manage mesh parameter values as required.
+If no mesh configuration is found, mesh11sd will do nothing and wait for a configuration to appear.
 
-By default, auto-configuration is enabled.
+**Automatic Configuration**
+
+Once auto_config is enabled, the mesh11sd package will autoconfigure mesh interfaces for all radios, leaving only one enabled at ant time.
+
+The default radio will be on 2.4 GHz but can be changed by means of a simple config option.
+
+2.4 GHz is chosen as it gives the most reliable mesh backhaul due to the range and penetration of the 2.4 GHz spectrum and the fact that it is not effected by the DFS restrictions of other bands. It can also be used unlicensed almost everywhere in outdoor venues. This comes of course with a likely bandwidth compromise, but in practice is often acceptable, particularly in a normal domestic or public environment.
+
+Mesh11sd will add required wireless mesh configuration autonomously and it can be viewed using the uci utility but will not be present in the /etc/config/wireless file.
+
+If the mesh network interface is defined in the wireless configuration file, mesh11sd will attempt to use it, but be warned, this may have very unpredictable results and is not normally recommended.
 
 **NOTE:** ***Mesh11sd cannot be configured using the OpenWrt Luci UI, and its configuration will not appear in the Luci wireless pages, even when mesh11sd is active.***
 
-A *typical* and ***optional*** manual mesh interface configuration in /etc/config/wireless would look something like:
-
-    config wifi-iface 'mesh0'
-        option device 'radio0'
-	    option mode 'mesh'
-	    option encryption 'sae'
-	    option key 'secretmeshkey'
-	    option disabled '0'
-	    option network 'lan'
-	    option mesh_id 'PublicFreeMesh'
-
 **NOTE:** It is essential that all meshnodes are configured to use the same radio channel, the same key and the same mesh_id. By default, Mesh11sd will do this for you.
 
-**NOTE:** Adding your own mesh interface configuration is optional. Mesh11sd will create one for you automatically generating a randomised mesh ID and sha256 key as mentioned in NOTE1 above.
+###Autoconfig Essentials
+
+***Note: Use the same configuration for all nodes, including the base ipv4 address.***
+
+By simply enabling auto_config, mesh11sd will bring up a working meshnode, but there are several essentials that should be configured as the defaults may not be appropriate.
+
+ 1. The country code default setting is DFS-ETSI as it is the "safest", but of course you are legally obliged to set the country code for your locality.
+ 2. Set the base ipv4 address of the meshnode, defining the subnet to be used on the mesh.
+ 3. Mesh11sd sets a hashed meshID and meshKey to encrypt the mesh backhaul, but you should set your own seed values to be used, to ensure only your meshnodes can join your mesh. This must be the same on every meshnode.
+ 4. You should set a WiFi access code and if desired, your own ssid on each gateway node.
+
+
+Before proceeding to set these essentials, you must first connect each node in turn to an upstream Internet connection, connecting its "wan" port to a "lan" port of your isp router.
+
+Connect your computer by ethernet to a "lan" port of the meshnode you are configuring.
+
+Open a terminal session on the node using SSH to the default ip address of 192.168.1.1
+
+You must now stop the mesh11sd service using the following command:
+
+```
+	service mesh11sd stop
+```
+
+**Country Code**
+
+This should be set in the normal OpenWrt way, using either the uci utility or the Luci Web UI.
+
+**Base IP Addrress and Subnet Mask**
+
+This should be set in the normal OpenWrt way, using either the uci utility or the Luci Web UI.
+
+**Mesh Encryption Seed Values**
+
+A mesh ID seed value should be set. For example, using the string "MyMeshIDSeed", run the following command:
+
+```
+	uci set mesh11sd.status.auto_mesh_id='MyMeshIDSeed'
+```
+
+Optionally add a mesh key seed, eg "MyMeshKeySeed"
+
+```
+	uci set mesh11sd.status.auto_mesh_key='MyMeshKeySeed'
+```
+
+**Gateway SSID**
+
+This should be set in the normal OpenWrt way, using either the uci utility or the Luci Web UI.
+
+**Gateway Encryption**
+
+First, select the desired encryption type from the following:
+
+`0 (none), 1 (sae, aka wpa3), 2 (sae-mixed, aka wpa2/wpa3) or 3 (psk2, aka wpa2)`
+
+Example, set to psk2 encryption:
+
+```
+	uci set mesh11sd.setup.mesh_gate_encryption='3'
+```
+
+Now set the desired access code, eg "mysecretaccesscode":
+
+```
+	uci set mesh11sd.setup.mesh_gate_key='mysecretaccesscode'
+```
+
+**Save the Changes**
+
+Finally, save the changes:
+
+```
+	uci commit mesh11sd
+
+```
+
+The node can now be moved to the desired location and the next one configured.
+
+Power up all nodes in any order, aving one only connected to your isp router as the portal node.
 
 ### Default configuration file (/etc/config/mesh11sd):
 
 ```
+
 config mesh11sd 'setup'
+	###########################################################################################
+	# debuglevel (optional)
+	# Sets the debuglevel
+	# Default: 1 (Notification)
+	# Options are 0, silent, 1 notification, 2 info and 3 debug
+	#
+	#option debuglevel '2'
+
 	###########################################################################################
 	# enabled (optional)
 	# Enables or disables the mesh11sd daemon
@@ -138,14 +237,6 @@ config mesh11sd 'setup'
 	#option enabled '1'
 
 	###########################################################################################
-	# debuglevel (optional)
-	# Sets the debuglevel
-	# Default: 1 (Notification)
-	# Options are 0, silent, 1 notification, 2 info and 3 debug
-	#
-	#option debuglevel '2'
-
-	###########################################################################################
 	# checkinterval (optional)
 	# Sets the dynamic configuration checkinterval in seconds
 	# Default: 10 (seconds)
@@ -153,48 +244,13 @@ config mesh11sd 'setup'
 	#option checkinterval '15'
 
 	###########################################################################################
-	# interface_timeout (optional)
-	# Sets the interface timeout interval in seconds
-	# Default: 10 (seconds)
-	#
-	#option interface_timeout '10'
-
-	###########################################################################################
-	# mesh_basename (optional)
-	# The first 4 characters after non alphanumerics are removed are used as the mesh_basename
-	# The mesh_basename is used to construct a unique mesh interface name of the form m-xxxx-n
-	# Default: 11s
-	# Results in ifname=m-11s-0 for the first mesh interface
-	# Example: link
-	# Results in ifname=m-link-0
-	#
-	#option mesh_basename 'link'
-
-	###########################################################################################
-	# mesh_gate_enable (optional)
-	# Determines whether this node will be a gate
-	#
-	# Default: 1 (enabled)
-	# Set to 0 to disable
-	#
-	#option mesh_gate_enable '0'
-
-	###########################################################################################
-	# mesh_path_cost (optional)
-	# sets the STP cost of the mesh network
-	# Default: 10
-	# Can be set to any value from 0 to 65534
-	# Setting to 0 disables STP
-	#
-	# Example:
-	#option mesh_path_cost '100'
-
-	###########################################################################################
 	# portal_detect (optional)
+	# Ignored if auto_config is disabled.
 	# Detect if the meshnode is a portal, meaning it has an upstream wan link.
 	# If the upstream link is active, the router hosting the meshnode will serve ipv4 dhcp into the mesh network.
 	# If the upstream link is not connected, dhcp will be disabled and the meshnode will function as a level 2 bridge on the mesh network.
 	# If portal_detect is disabled, the meshnode will be forced into portal mode.
+	# Has no effect if auto_config is disabled.
 	# Default 1 (enabled). Set to 0 to disable.
 	#
 	#option portal_detect '0'
@@ -217,17 +273,104 @@ config mesh11sd 'setup'
 	#option portal_channel '4'
 
 	###########################################################################################
-	# auto_config (optional)
-	# Auto configure mesh interfaces in the wireless configuration.
-	# Default 1 (enabled). Set to 0 to disable.
+	# channel_tracking_checkinterval (optional)
+	# The minimum interval in seconds after which channel tracking begins on peer nodes
+	# Values less than checkinterval are ignored
 	#
-	#option auto_config '0'
+	# Default: 30 seconds
+	#
+	# Example:
+	#option channel_tracking_checkinterval '60'
+
+	###########################################################################################
+	# portal_detect_threshold (optional)
+	#
+	# This is the portal detect watchdog.
+	#
+	# The number of checkintervals before the portal detect watchdog begins actions to (re)establish a reconnection to a portal.
+	#
+	# Default 0 (watchdog does nothing)
+	# Ignored if auto_config is disabled.
+	#
+	# Each time the peer node fails to detect the portal, a counter is incremented.
+	# If the threshold is reached, the node will take various actions in an attempt to find the portal.
+	# If the portal is still not detected, the watchdog will reboot the peer node.
+	#
+	# Example - Set threshold to 10 chekintervals:
+	#option portal_detect_threshold '10'
+
+	###########################################################################################
+	# mesh_path_cost (optional)
+	# sets the STP cost of the mesh network
+	# Default: 10
+	# Can be set to any value from 0 to 65534
+	# Setting to 0 disables STP
+	#
+	# Example:
+	#option mesh_path_cost '100'
+
+	###########################################################################################
+	# interface_timeout (optional)
+	# Sets the interface timeout interval in seconds
+	# Default: 10 (seconds)
+	#
+	#option interface_timeout '10'
+
+	###########################################################################################
+	# auto_config (optional)
+	# Enables autonomous dynamic mesh configuration.
+	# Auto configure mesh interfaces in the wireless configuration.
+	# Default 0 (disabled). Set to 1 to enable.
+	#
+	#option auto_config '1'
+	#
+	# The following options are recommended when auto_config is set to 0 (disabled)
+	# (When auto_config is enabled, these options are dynamically set if and when required)
+	#
+	# A Portal Node: having an ip routed connectivity to an upstream feed [eg an Internet feed]
+	#	option mesh_fwding '1'
+	#
+	#	option mesh_connected_to_as '1' [if link is up]
+	# or
+	#	option mesh_connected_to_as '0' [if link is down]
+	#
+	#	option mesh_hwmp_rootmode '4'
+	#
+	#	option mesh_connected_to_gate '1' [if it also supports an AP]
+	# or
+	#	option mesh_connected_to_gate '0' [if it does not support an AP]
+	#
+	#	option mesh_gate_announcements '1'  [if it also supports an AP]
+	# or
+	#	option mesh_gate_announcements '0'  [if it does not support an AP]
+	#
+	# A Gateway Node: offering both backhaul and downstream infrastructure connectivity
+	#	option mesh_fwding '1'
+	#	option mesh_connected_to_as '0'
+	#	option mesh_hwmp_rootmode '2'
+	#	option mesh_connected_to_gate '1'
+	#	option mesh_gate_announcements '1'
+	#
+	# A Gateway Leech Node: a Gateway that doesn't contribute to the mesh backhaul, it just leeches off of it
+	#	option mesh_fwding '0'
+	#	option mesh_connected_to_as '0'
+	#	option mesh_hwmp_rootmode '0'
+	#	option mesh_connected_to_gate '1'
+	#	option mesh_gate_announcements '0'
+	#
+	# A Peer Node: connected to mesh backhaul but no downstream infrastructure
+	#	option mesh_fwding '1'
+	#	option mesh_connected_to_as '0'
+	#	option mesh_hwmp_rootmode '2'
+	#	option mesh_connected_to_gate '0'
+	#	option mesh_gate_announcements '0'
 
 	###########################################################################################
 	# auto_mesh_id (optional)
 	# Configure the mesh_id of the wireless interface(s) when auto_config is enabled
 	# Default --__
 	#
+	# This string will be hashed to produce a secure mesh id
 	# If set, it must also be set to the same value on every mesh node
 	#
 	#option auto_mesh_id 'MyMeshID'
@@ -235,8 +378,8 @@ config mesh11sd 'setup'
 	###########################################################################################
 	# auto_mesh_band (optional)
 	# Configure the band to use for the mesh network
-	# Valid values: 2g, 5g, 6g, 60g
-	# Default 2g
+	# Valid values: 2g, 2g40, 5g, 6g, 60g
+	# Default 2g40
 	#
 	# If set, it must also be set to the same value on every mesh node
 	#
@@ -248,18 +391,73 @@ config mesh11sd 'setup'
 	###########################################################################################
 	# auto_mesh_key (optional)
 	# Defaults to a sha256 key to be automatically used on all members of this mesh when auto_config is enabled
-	# Generates a sha256 key from the value set in this option.
+	# Generates a secure sha256 key from the value set in this option.
 	#
 	# If set, it must also be set to the same value on every mesh node
 	#
-	#option auto_mesh_key "MySecretKey"
+	#option auto_mesh_key 'MySecretKey'
 
 	###########################################################################################
 	# auto_mesh_network (optional)
-	# Set the network the mesh interface will bind to (eg lan, guestlan etc) when auto_config is enabled
+	# Set the network the mesh interface will bind to (eg lan, guestlan etc) when auto_config is enabled.
+	# Network wan is not accepted
 	# Default lan
 	#
 	#option auto_mesh_network 'guest'
+
+	###########################################################################################
+	# mesh_basename (optional)
+	# The first 4 characters after non alphanumerics are removed are used as the mesh_basename
+	# The mesh_basename is used to construct a unique mesh interface name of the form m-xxxx-n
+	# Default: 11s
+	# Results in ifname=m-11s-0 for the first mesh interface
+	# Example: link
+	# Results in ifname=m-link-0
+	#
+	#option mesh_basename 'link'
+
+	###########################################################################################
+	# mesh_gate_encryption (optional)
+	# Determines whether this node's gate will be a encrypted
+	#
+	# Default: 0 (disabled)
+	# Set to 0 (none), 1 (sae, aka wpa3), 2 (sae-mixed, aka wpa2/wpa3) or 3 (psk2, aka wpa2)
+	#
+	# Example - enable psk2 encryption
+	#option mesh_gate_encryption '3'
+
+	###########################################################################################
+	# mesh_gate_key (optional)
+	# Determines the encryption key for this node's gate.
+	#
+	# Default: not set (encryption disabled)
+	# Set to a secret string value to use for encrypting the node's gate
+	#
+	# Example - set a key string
+	#option mesh_gate_key 'mysecretencryptionkey'
+
+	###########################################################################################
+	# mesh_gate_enable (optional)
+	# Determines whether this node will be a gate
+	#
+	# Default: 1 (enabled)
+	# Set to 0 to disable (turns off the node's gate interface ie its access point and SSID)
+	#
+	#option mesh_gate_enable '0'
+
+	###########################################################################################
+	# mesh_leechmode_enable (optional)
+	# Determines whether this node will be a gate only leech node
+	# A gate only leech node acts as an access point with a mesh backhaul connection, but does not contribute to the mesh
+	#
+	# This is useful when a node is well within the coverage of 2 or more peer nodes,
+	# as otherwise it could create unstable multi hop paths within the backhaul.
+	#
+	# Default: 0 (disabled)
+	# Set to 1 to enable (turns off the node's mesh forwarding and HWMP mac-routing)
+	#
+	# Example - enable leach mode
+	#option mesh_leechmode_enable '1'
 
 	###########################################################################################
 	# txpower (optional)
@@ -268,6 +466,7 @@ config mesh11sd 'setup'
 	# Default - use driver default or value set in wireless config
 	# Values outside the limits defined by the regulatory domain will be ignored
 	#
+	# Example - Set tx power to 15 dBm:
 	#option txpower '15'
 
 	###########################################################################################
@@ -277,6 +476,28 @@ config mesh11sd 'setup'
 	# Default 1 (enabled)
 	#
 	#option ssid_suffix_enable '0'
+
+	###########################################################################################
+	# mesh11sd.setup.watchdog_nonvolatile_log (optional - FOR DEBUGGING PURPOSES ONLY)
+	#
+	# This enables logging of the portal detect watchdog actions in non-volatile storage.
+	# The log file /mesh11sd_log/mesh11sd.log is created
+	#
+	# ##########WARNING##########
+	# THIS OPTION IS FOR PORTAL DETECT WATCHDOG DEBUGGING PURPOSES ONLY
+	# IF LEFT ENABLED FOR A LENGTH OF TIME IT MAY CAUSE NONE REPAIRABLE FLASH MEMORY WEAR AND USE UP FREE STORAGE SPACE
+	# DISABLE IMMEDIATELY AFTER DEBUGGING OPERATIONS ARE COMPLETE
+	# ##########WARNING##########
+
+	###########################################################################################
+	# mesh_path_stabilisation (optional)
+	#
+	# This enables mesh path stabilisation, preventing multi hop path changes due to multipath signal strength jitter
+	#
+	# Default: 1 (enabled)
+	#
+	# To disable, set to zero:
+	#option mesh_path_stabilisation '0'
 
 config mesh11sd 'mesh_params'
 	# A minimum set of parameters is automatically set for initial startup and do not have to be configured here
@@ -290,10 +511,11 @@ config mesh11sd 'mesh_params'
 
 	#
 	# The command: "mesh11sd status" gives a full list of supported parameters.
+
 ```
 All mesh parameter settings in the config file are dynamic and will take effect immediately.
 
-**NOTE:** From version 3 onwards, the setup option `portal_detect` is enabled by default.
+**NOTE:** The setup option `portal_detect` is enabled by default.
 
 **NOTE:** If the setup option `portal_detect` is disabled, the meshnode will be forced into Portal mode. ie it will act as a layer 3 router between its wan and lan ports regardless of the availability of an upstream feed.
 
@@ -303,7 +525,7 @@ When the upstream wan connection is disconnected, the meshnode will automaticall
 
 This means that all meshnodes can be the same basic router configuration and once moved to the required location, will autonomously reconfigure.
 
-Access to the remote meshnode peers will not be possible using the ipv4 address as this will be disabled. Remote management can be achieved by using the `mesh11sd connect` and `mesh11sd copy` commands, or alternatively by reconnecting the wan port to an upstream feed.
+Access to the remote meshnode peers will not be possible using the default ipv4 address as this will be disabled. Remote management can be achieved by using the `mesh11sd connect` and `mesh11sd copy` commands, or alternatively by reconnecting the wan port to an upstream feed.
 
 
 ## 5. Setup Options
@@ -335,9 +557,20 @@ Access to the remote meshnode peers will not be possible using the ipv4 address 
 
 * mesh_gate_enable - enables any access points configured on the meshnode. Default 1 (enabled). Set to 0 to disable. **Note:** If there is an interface level "disable option" (in wireless config), mesh11sd will use that setting.
 
+* mesh_gate_encryption - Determines whether this node's gate will be a encrypted. Default: 0 (disabled). Set to 0 (none), 1 (sae, aka wpa3), 2 (sae-mixed, aka wpa2/wpa3) or 3 (psk2, aka wpa2)
+
+* mesh_gate_key - Determines the encryption key for this node's gate. Default: not set (encryption disabled). Set to a secret string value to use for encrypting the node's gate
+
+* mesh_leechmode_enable - Determines whether this node will be a gate only leech node. A gate only leech node acts as an access point with a mesh backhaul connection, but does not contribute to the mesh. This is useful when a node is well within the coverage of 2 or more peer nodes, as otherwise it could create unstable multi hop paths within the backhaul. Default: 0 (disabled). Set to 1 to enable (turns off the node's mesh forwarding and HWMP mac-routing).
+
+* mesh_path_stabilisation - This enables mesh path stabilisation, preventing multi hop path changes due to multipath signal strength jitter. Default: 1 (enabled). To disable, set to zero.
+
 * txpower - set the mesh radio transmit power in dBm. Takes effect immediately.
 
 * ssid_suffix_enable - Add a 4 digit suffix to the ssid. The 4 digits are the last 4 digits of the mac address of the mesh interface.
+
+* watchdog_nonvolatile_log - (optional - FOR DEBUGGING PURPOSES ONLY). This enables logging of the portal detect watchdog actions in non-volatile storage. The log file /mesh11sd_log/mesh11sd.log is created. THIS OPTION IS FOR PORTAL DETECT WATCHDOG DEBUGGING PURPOSES ONLY. IF LEFT ENABLED FOR A LENGTH OF TIME IT MAY CAUSE NONE REPAIRABLE FLASH MEMORY WEAR AND USE UP FREE STORAGE SPACE. DISABLE IMMEDIATELY AFTER DEBUGGING OPERATIONS ARE COMPLETE.
+
 
 **Example**:
 Set the debuglevel to 2
@@ -430,22 +663,6 @@ RANN - Root ANNouncement
 RSSI - Received Signal Strength Indication
 
 
-**The Config File**
-
-Basic mesh parameters are already included in the default config file. These basic parameters ensure the mesh interface will be able to either seed a new mesh or join an existing one of the same mesh id.
-
-**Example of Setting a Config Option**: Set mesh_rssi_threshold to -75 dBm (decibels relative to one milliwatt)
-
-        uci set mesh11sd.mesh_params.mesh_rssi_threshold='-75'
-
-The mesh_rssi_threshold will be set immediately to this new value and will remain set until changed again or a reboot occurs.
-
-Changes can be made permanent with the following command:
-
-        uci commit mesh11sd
-
-See "Command Line Interface" for obtaining a list of possible mesh parameters for a mesh interface.
-
 ## 7. Command Line Interface
 Mesh11sd is an OpenWrt service daemon and runs continuously in the background. It does however also have a CLI interface:
 
@@ -486,9 +703,14 @@ Mesh11sd is an OpenWrt service daemon and runs continuously in the background. I
           where \"+\" increments by 3dBm and \"-\" decrements by 3dBm
           Takes effect immediately
 
+		Option: mesh_leechmode
+		  Change leechmode status
+		  Usage: mesh11sd mesh_leechmode [enable/disable]
+		  Takes effect immediately
+
         Option: stations
-        List all mesh peer stations directly connected to this mesh peer station (one hop)
-        Usage: mesh11sd stations
+          List all mesh peer stations directly connected to this mesh peer station (one hop)
+          Usage: mesh11sd stations
 
 
         Option: mesh_rssi_threshold
@@ -501,7 +723,7 @@ Mesh11sd is an OpenWrt service daemon and runs continuously in the background. I
 
         Option: commit_changes
           Usage: mesh11sd commit_changes
-          Commits changes to txpower and rssi_threshold to non volatile configuration (make permanent)
+          Commits changes to mesh_leechmode, txpower and rssi_threshold to non volatile configuration (make permanent)
 
         Option: opkg_force_ipv4
         Usage: mesh11sd opkg_force_ipv4
@@ -516,19 +738,24 @@ Mesh11sd is an OpenWrt service daemon and runs continuously in the background. I
 ```
 {
   "setup":{
-    "version":"3.0.1beta",
+    "version":"4.0.0",
     "enabled":"1",
     "procd_status":"running",
     "portal_detect":"1",
-    "portal_channel":"1",
+    "portal_detect_threshold":"0",
+    "portal_channel":"default",
+    "channel_tracking_checkinterval":"30",
     "mesh_basename":"m-11s-",
     "auto_config":"1",
     "auto_mesh_network":"lan",
     "auto_mesh_band":"2g40",
     "auto_mesh_id":"92d490daf46cfe534c56ddd669297e",
     "mesh_gate_enable":"1",
-    "txpower":"17",
-    "mesh_path_cost":"0",
+    "mesh_leechmode_enable":"0",
+    "mesh_gate_encryption":"3",
+    "txpower":"20",
+    "mesh_path_cost":"10",
+    "mesh_path_stabilisation":"1",
     "checkinterval":"10",
     "interface_timeout":"10",
     "ssid_suffix_enable":"1",

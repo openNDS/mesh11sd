@@ -104,47 +104,47 @@ config mesh11sd 'setup'
 	# Default 0 (disabled). Set to 1 to enable.
 	#
 	#option auto_config '1'
-
-        # The following options are recommended when auto_config is set to 0 (disabled)
+	#
+	# The following options are recommended when auto_config is set to 0 (disabled)
 	# (When auto_config is enabled, these options are dynamically set if and when required)
 	#
-        # A Portal Node: having an ip routed connectivity to an upstream feed [eg an Internet feed]
-        #    option mesh_fwding '1'
-        #
-        #    option mesh_connected_to_as '1' [if link is up]
-        # or
-        #    option mesh_connected_to_as '0' [if link is down]
-        #
-        #    option mesh_hwmp_rootmode '4'
-        #
-        #    option mesh_connected_to_gate '1' [if it also supports an AP]
-        # or
-        #    option mesh_connected_to_gate '0' [if it does not support an AP]
-        #
-        #    option mesh_gate_announcements '1'  [if it also supports an AP]
-        # or
-        #    option mesh_gate_announcements '0'  [if it does not support an AP]
-
-        # A Gateway Node: offering both backhaul and downstream infrastructure connectivity
-        #    option mesh_fwding '1'
-        #    option mesh_connected_to_as '0'
-        #    option mesh_hwmp_rootmode '2'
-        #    option mesh_connected_to_gate '1'
-        #    option mesh_gate_announcements '1'
-
-        # A Gateway Leech Node: a Gateway that doesn't contribute to the mesh backhaul, it just leeches off of it
-        #    option mesh_fwding '0'
-        #    option mesh_connected_to_as '0'
-        #    option mesh_hwmp_rootmode '0'
-        #    option mesh_connected_to_gate '1'
-        #    option mesh_gate_announcements '0'
-
-        # A Peer Node: connected to mesh backhaul but no downstream infrastructure
-        #    option mesh_fwding '1'
-        #    option mesh_connected_to_as '0'
-        #    option mesh_hwmp_rootmode '2'
-        #    option mesh_connected_to_gate '0'
-        #    option mesh_gate_announcements '0'
+	# A Portal Node: having an ip routed connectivity to an upstream feed [eg an Internet feed]
+	#	option mesh_fwding '1'
+	#
+	#	option mesh_connected_to_as '1' [if link is up]
+	# or
+	#	option mesh_connected_to_as '0' [if link is down]
+	#
+	#	option mesh_hwmp_rootmode '4'
+	#
+	#	option mesh_connected_to_gate '1' [if it also supports an AP]
+	# or
+	#	option mesh_connected_to_gate '0' [if it does not support an AP]
+	#
+	#	option mesh_gate_announcements '1'  [if it also supports an AP]
+	# or
+	#	option mesh_gate_announcements '0'  [if it does not support an AP]
+	#
+	# A Gateway Node: offering both backhaul and downstream infrastructure connectivity
+	#	option mesh_fwding '1'
+	#	option mesh_connected_to_as '0'
+	#	option mesh_hwmp_rootmode '2'
+	#	option mesh_connected_to_gate '1'
+	#	option mesh_gate_announcements '1'
+	#
+	# A Gateway Leech Node: a Gateway that doesn't contribute to the mesh backhaul, it just leeches off of it
+	#	option mesh_fwding '0'
+	#	option mesh_connected_to_as '0'
+	#	option mesh_hwmp_rootmode '0'
+	#	option mesh_connected_to_gate '1'
+	#	option mesh_gate_announcements '0'
+	#
+	# A Peer Node: connected to mesh backhaul but no downstream infrastructure
+	#	option mesh_fwding '1'
+	#	option mesh_connected_to_as '0'
+	#	option mesh_hwmp_rootmode '2'
+	#	option mesh_connected_to_gate '0'
+	#	option mesh_gate_announcements '0'
 
 	###########################################################################################
 	# auto_mesh_id (optional)
@@ -259,7 +259,7 @@ config mesh11sd 'setup'
 	#option ssid_suffix_enable '0'
 
 	###########################################################################################
-	# mesh11sd.setup.watchdog_nonvolatile_log (optional - FOR DEBUGGING PURPOSES ONLY)
+	# watchdog_nonvolatile_log (optional - FOR DEBUGGING PURPOSES ONLY)
 	#
 	# This enables logging of the portal detect watchdog actions in non-volatile storage.
 	# The log file /mesh11sd_log/mesh11sd.log is created
