@@ -703,15 +703,14 @@ Mesh11sd is an OpenWrt service daemon and runs continuously in the background. I
           where \"+\" increments by 3dBm and \"-\" decrements by 3dBm
           Takes effect immediately
 
-		Option: mesh_leechmode
-		  Change leechmode status
-		  Usage: mesh11sd mesh_leechmode [enable/disable]
-		  Takes effect immediately
+        Option: mesh_leechmode
+          Change leechmode status
+          Usage: mesh11sd mesh_leechmode [enable/disable]
+          Takes effect immediately
 
         Option: stations
           List all mesh peer stations directly connected to this mesh peer station (one hop)
           Usage: mesh11sd stations
-
 
         Option: mesh_rssi_threshold
           Change the mesh rssi threshold
@@ -726,11 +725,11 @@ Mesh11sd is an OpenWrt service daemon and runs continuously in the background. I
           Commits changes to mesh_leechmode, txpower and rssi_threshold to non volatile configuration (make permanent)
 
         Option: opkg_force_ipv4
-        Usage: mesh11sd opkg_force_ipv4
+          Usage: mesh11sd opkg_force_ipv4
           Forces opkg to use ipv4 for its downloads
 
         Option: opkg_revert_to_default
-        Usage: mesh11sd opkg_revert_to_default
+          Usage: mesh11sd opkg_revert_to_default
           Reverts opkg to default for its downloads
 
 **Example status output:**
