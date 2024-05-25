@@ -1,4 +1,5 @@
 mesh11sd (4.0.1)
+  * Fix - indentation in README.md [bluewavenet]
   * Fix - typos preventing leechmode from being correctly enabled [bluewavenet]
 
  -- Rob White <dot@blue-wave.net>  Sat, 25 May 2024 10:49:08 +0000
