@@ -12,7 +12,7 @@
 #
 # mesh11sd daemon
 #
-version="4.0.0"
+version="4.0.1"
 fixup1=0
 ip4pingfailcount=0
 network_restart=0
@@ -2025,7 +2025,7 @@ check_mesh_gate_only() {
 		if [ "$current_mgo_option" -eq 1 ]; then
 			echo "set mesh11sd.mesh_params.mesh_fwding='0'" | uci batch
 			echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='0'" | uci batch
-			echo "set mesh11sd.mesh_params.mesh_gate_announcments='0'" | uci batch
+			echo "set mesh11sd.mesh_params.mesh_gate_announcements='0'" | uci batch
 		elif [ "$current_mgo_option" -eq 0 ]; then
 
 			if [ -z "$is_portal" ]; then
@@ -2041,7 +2041,7 @@ check_mesh_gate_only() {
 			current_ctg_option=$(uci get mesh11sd.mesh_params.mesh_connected_to_gate 2> /dev/null | awk '{printf "%s", $1}')
 
 			if [ "$current_ctg_option" -eq 1 ]; then
-				echo "set mesh11sd.mesh_params.mesh_gate_announcments='1'" | uci batch
+				echo "set mesh11sd.mesh_params.mesh_gate_announcements='1'" | uci batch
 			fi
 		fi
 
@@ -2112,13 +2112,13 @@ if [ -z "$1" ] || [ "$1" = "-h" ] || [ $1 = "--help" ] || [ $1 = "help" ]; then
     The keyword \"force\" forces the new threshold on all connected peers
     Warning - \"force\" will briefly remove this node from the mesh network, taking a few seconds to rejoin
 
-  Option: mesh_gate_only
-  Usage: mesh11sd mesh_gate_only [enable/disable]
+  Option: mesh_leechmode
+  Usage: mesh11sd mesh_leechmode [enable/disable]
   If enabled, the mesh node connects to the mesh backhaul but does not forward packets or contribute to the mesh.
 
   Option: commit_changes
-  Usage: mesh11sd commit_changes
-    Commits changes to mesh_gate_only, txpower and rssi_threshold to non volatile configuration (make permanent)
+  Usage: mesh11sd commit_changes commit
+    Commits changes to mesh_leechmode, txpower and rssi_threshold to non volatile configuration (make permanent)
 
   Option: opkg_force_ipv4
   Usage: mesh11sd opkg_force_ipv4
