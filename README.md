@@ -170,13 +170,13 @@ This should be set in the normal OpenWrt way, using either the uci utility or th
 A mesh ID seed value should be set. For example, using the string "MyMeshIDSeed", run the following command:
 
 ```
-	uci set mesh11sd.status.auto_mesh_id='MyMeshIDSeed'
+	uci set mesh11sd.setup.auto_mesh_id='MyMeshIDSeed'
 ```
 
 Optionally add a mesh key seed, eg "MyMeshKeySeed"
 
 ```
-	uci set mesh11sd.status.auto_mesh_key='MyMeshKeySeed'
+	uci set mesh11sd.setup.auto_mesh_key='MyMeshKeySeed'
 ```
 
 **Gateway SSID**
