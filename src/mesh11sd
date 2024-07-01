@@ -2275,7 +2275,7 @@ elif [ "$1" = "status" ]; then
 				peernum=0
 				peers=$(iw dev $iface mpath dump 2>/dev/null | grep -c -w $iface)
 				macrouting=$(iw dev $iface mpath dump 2>/dev/null | awk -F" " 'NR>1 {printf "%s/%s/%s/%s/%s ",$1,$2,$5,$11,$12}')
-				peer_macs="$devicemac ""$(iw dev m-11s-0 mpath dump 2>/dev/null | awk -F" " 'NR>1 {printf "%s ",$1}')"
+				peer_macs="$devicemac ""$(iw dev $iface mpath dump 2>/dev/null | awk -F" " 'NR>1 {printf "%s ",$1}')"
 
 				echo "      \"this_node\":\"$devicemac\","
 				echo "      \"active_peers\":\"$peers\","
