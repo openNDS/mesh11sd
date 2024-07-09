@@ -1069,6 +1069,8 @@ dhcp4_renew() {
 		write_to_syslog
 
 		kill $(cat /var/run/udhcpc-renew-$dhcpdevice.pid)
+	else
+		/sbin/service dnsmasq reload
 	fi
 }
 
