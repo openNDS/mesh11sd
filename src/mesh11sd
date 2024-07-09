@@ -315,10 +315,16 @@ get_current_setup () {
 		fi
 	fi
 
-	# Block wan and wan6 as valid network zones for mesh
+	# Block wan and wan6 as valid network zones for mesh unless portal_detect - 3 (CPE mode)
 
-	if [ "$auto_mesh_network" = "wan" ] || [ "$auto_mesh_network" = "wan6" ]; then
-		auto_mesh_network="lan"
+	if [ "$portal_detect"  -ne 3 ]; then
+
+		if [ "$auto_mesh_network" = "wan" ] || [ "$auto_mesh_network" = "wan6" ]; then
+			auto_mesh_network="lan"
+		fi
+
+	elif [ "$portal_detect"  -eq 3 ] && [ "$auto_mesh_network" = "lan" ]; then
+		auto_mesh_network="wan"
 	fi
 
 	zone_status=$(uci show firewall | grep -w "name='$auto_mesh_network'" &>/dev/null ; echo -n "$?")
@@ -866,6 +872,7 @@ get_portal_state() {
 	. $tmpdir/devicemac
 
 	if [ "$firstloop" -eq 1 ] && [ "$portal_detect" -eq 1 ]; then
+		# 1 - check if portal
 		local retries=10
 
 		for retry in $(seq $retries); do
@@ -880,10 +887,13 @@ get_portal_state() {
 			fi
 		done
 
-	elif [ "$portal_detect" -eq 2 ]; then
+	elif [ "$portal_detect" -eq 2 ] || [ "$portal_detect" -eq 3 ]; then
+		# 2 - force peer mode , 3 - force CPE peer mode
 		uci set dhcp.@dnsmasq[0].authoritative='0'
 		default_gw=""
-	else
+
+	elif [ "$portal_detect" -eq 0 ]; then
+		# 0 - force portal mode
 		default_gw=$(ip route | grep "default via")
 
 		if [ -z "$default_gw" ]; then
@@ -934,7 +944,8 @@ get_portal_state() {
 	fi
 
 	# Set detected state
-	if [ -z "$is_portal" ]; then
+	if [ -z "$is_portal" ] && [ "$portal_detect" -eq 1 ]; then
+		# do portal detect with watchdog:
 		detected_state="peer"
 
 		#Check ipv4 connectivity to portal
@@ -1002,6 +1013,14 @@ get_portal_state() {
 			ip4pingfailcount=0
 			network_restart=0
 		fi
+
+	elif [ -z "$is_portal" ] && [ "$portal_detect" -eq 2 ]; then
+		# CPE mode required
+		detected_state="cpe_peer"
+		debugtype="debug"
+		syslogmessage="CPE mode..."
+		write_to_syslog
+
 	else
 		detected_state="portal"
 	fi
@@ -3116,7 +3135,28 @@ elif [ "$1" = "daemon" ]; then
 					/sbin/service odhcpd restart
 					restart_mesh
 				fi
+
+			elif [ "$portal_detect" -eq 3 ] && [ "$auto_config" -eq 1 ]; then
+				# portal_detect is set to CPE mode - this is a router where the wan interface is the mesh backhaul:
+				authoritative=$(uci get dhcp.@dnsmasq[0].authoritative 2>/dev/null | awk '{printf "%d", $1}')
+
+				if [ -z "$authoritative" ]; then
+					authoritative=0
+				fi
+
+				# To other meshnodes, this looks like a peer
+				uci set mesh11sd.mesh_params.mesh_connected_to_as='0'
+
+				if [ -z "$authoritative" ] || [ "$authoritative" -eq 0 ]; then
+					debugtype="notice"
+					syslogmessage="CPE mode"
+					write_to_syslog
+
+					# Todo: Add mesh to wan here
+
+				fi
 			fi
+
 
 			check_gate
 			check_mesh_gate_only
