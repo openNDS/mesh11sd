@@ -12,7 +12,7 @@
 #
 # mesh11sd daemon
 #
-version="4.0.1"
+version="4.1.0beta"
 fixup1=0
 ip4pingfailcount=0
 network_restart=0
@@ -315,10 +315,16 @@ get_current_setup () {
 		fi
 	fi
 
-	# Block wan and wan6 as valid network zones for mesh
+	# Block wan and wan6 as valid network zones for mesh unless portal_detect - 3 (CPE mode)
 
-	if [ "$auto_mesh_network" = "wan" ] || [ "$auto_mesh_network" = "wan6" ]; then
-		auto_mesh_network="lan"
+	if [ "$portal_detect"  -ne 3 ]; then
+
+		if [ "$auto_mesh_network" = "wan" ] || [ "$auto_mesh_network" = "wan6" ]; then
+			auto_mesh_network="lan"
+		fi
+
+	elif [ "$portal_detect"  -eq 3 ] && [ "$auto_mesh_network" = "lan" ]; then
+		auto_mesh_network="wan"
 	fi
 
 	zone_status=$(uci show firewall | grep -w "name='$auto_mesh_network'" &>/dev/null ; echo -n "$?")
@@ -611,6 +617,19 @@ check_config_params() {
 	debugtype="info"
 	write_to_syslog
 
+	#####
+
+	mesh_plink_timeout=$(uci get mesh11sd.mesh_params.mesh_plink_timeout 2> /dev/null)
+
+	if [ -z "$mesh_plink_timeout" ]; then
+		mesh_plink_timeout="$checkinterval"
+		echo "set mesh11sd.mesh_params.mesh_plink_timeout='$mesh_plink_timeout'" | uci batch
+	fi
+
+	syslogmessage="option mesh_plink_timeout [ $mesh_plink_timeout ]"
+	debugtype="info"
+	write_to_syslog
+
 }
 
 get_mesh_path_cost () {
@@ -866,6 +885,7 @@ get_portal_state() {
 	. $tmpdir/devicemac
 
 	if [ "$firstloop" -eq 1 ] && [ "$portal_detect" -eq 1 ]; then
+		# 1 - check if portal
 		local retries=10
 
 		for retry in $(seq $retries); do
@@ -880,10 +900,13 @@ get_portal_state() {
 			fi
 		done
 
-	elif [ "$portal_detect" -eq 2 ]; then
+	elif [ "$portal_detect" -eq 2 ] || [ "$portal_detect" -eq 3 ]; then
+		# 2 - force peer mode , 3 - force CPE peer mode
 		uci set dhcp.@dnsmasq[0].authoritative='0'
 		default_gw=""
-	else
+
+	elif [ "$portal_detect" -eq 0 ]; then
+		# 0 - force portal mode
 		default_gw=$(ip route | grep "default via")
 
 		if [ -z "$default_gw" ]; then
@@ -934,7 +957,8 @@ get_portal_state() {
 	fi
 
 	# Set detected state
-	if [ -z "$is_portal" ]; then
+	if [ -z "$is_portal" ] && [ "$portal_detect" -eq 1 ]; then
+		# do portal detect with watchdog:
 		detected_state="peer"
 
 		#Check ipv4 connectivity to portal
@@ -1002,6 +1026,14 @@ get_portal_state() {
 			ip4pingfailcount=0
 			network_restart=0
 		fi
+
+	elif [ -z "$is_portal" ] && [ "$portal_detect" -eq 3 ]; then
+		# CPE mode required
+		detected_state="cpe_peer"
+		debugtype="debug"
+		syslogmessage="CPE mode..."
+		write_to_syslog
+
 	else
 		detected_state="portal"
 	fi
@@ -1050,6 +1082,8 @@ dhcp4_renew() {
 		write_to_syslog
 
 		kill $(cat /var/run/udhcpc-renew-$dhcpdevice.pid)
+	else
+		/sbin/service dnsmasq reload
 	fi
 }
 
@@ -2764,7 +2798,8 @@ elif [ "$1" = "opkg_force_ipv4" ]; then
 		mv /usr/bin/wget /usr/bin/wget.bak
 		echo -e "#!/bin/sh\n/usr/bin/wget.bak -4 \"\$@\"" > /usr/bin/wget && chmod +x /usr/bin/wget
 	fi
-exit 0
+
+	exit 0
 
 elif [ "$1" = "opkg_revert_to_default" ]; then
 
@@ -2772,7 +2807,8 @@ elif [ "$1" = "opkg_revert_to_default" ]; then
 		rm /usr/bin/wget
 		mv /usr/bin/wget.bak /usr/bin/wget
 	fi
-exit 0
+
+	exit 0
 
 elif [ "$1" = "daemon" ]; then
 	debugtype="notice"
@@ -2780,6 +2816,7 @@ elif [ "$1" = "daemon" ]; then
 	write_to_syslog
 
 	get_kernel_version
+	cpe_conf=0
 
 	if [ "$auto_config" -gt 0 ]; then
 		# We do not know the current state so reinitialise everything
@@ -2791,8 +2828,90 @@ elif [ "$1" = "daemon" ]; then
 		uci revert mesh11sd
 		uci revert wireless
 		uci revert dhcp
+		uci revert network
+		uci revert firewall
+
+		# Before restarting the network, check if CPE mode is requested
+		if [ "$portal_detect" -eq 3 ]; then
+			#CPE mode, so setup network config accordingly
+			wanif=$(uci get network.wan.device)
+			wan6if=$(uci get network.wan6.device)
+
+			uci set network.cpewan=device
+			uci set network.cpewan.name='br-wan'
+			uci set network.cpewan.type='bridge'
+			echo "add_list network.cpewan.ports='$wanif'" | uci batch
+
+			if [ "$wanif" != "$wan6if" ]; then
+				echo "add_list network.cpewan.ports='$wan6if'" | uci batch
+			fi
+
+			uci set network.wan.device='br-wan'
+			uci set network.wan6.device='br-wan'
+
+			setipaddr=$(uci get network.lan.ipaddr)
+
+			if [ "$setipaddr"  = "192.168.1.1" ]; then
+				refresh_bridgemac
+				. $tmpdir/devicemac
+
+				for i in $(seq 9 1 64); do
+					#choose start point of sequence away from end eg "9"
+					cpipsubnet=$((0x$(printf "$devicemac" | sha256sum | awk '{printf $1}' | tail -c$i | head -c2)))
+
+					#Check for max
+					if [ $cpipsubnet -ge 255 ];then
+						continue
+					fi
+
+					#Skip 168, 167, 0
+					if [ $cpipsubnet -eq 168 ] || [ $cpipsubnet -eq 167 ] || [ $cpipsubnet -eq 0 ];then
+						continue
+					fi
+
+					break
+				done
+
+				newipaddr="192.168.$cpipsubnet.1"
+				echo "set network.lan.ipaddr='$newipaddr'" | uci batch
+			fi
+
+			# Refresh the ipaddr
+			setipaddr=$(uci get network.lan.ipaddr)
+
+			debugtype="notice"
+			syslogmessage="lan ip address set to [ $setipaddr ]"
+			write_to_syslog
+
+			zones=7
+
+			for zoneindex in $(seq 0 1 $zones); do
+				zone=$(echo "get firewall.@zone[$zoneindex].name" | uci batch)
+
+				if [ "$zone" = "wan" ]; then
+					wanzoneindex=$zoneindex
+					break
+				else
+					wanzoneindex=$((zones + 1))
+				fi
+			done
+
+			if [ "$wanzoneindex" -le "$zones" ]; then
+				echo "set firewall.@zone[$wanzoneindex].input='ACCEPT'" | uci batch
+			else
+				debugtype="err"
+				syslogmessage="Unable to find wan zone"
+				write_to_syslog
+			fi
+
+			suffix=$(echo $devicemac | awk -F":" '{printf "%s%s", $5, $6}')
+			echo "set network.wan.hostname='meshnode-$suffix'" | uci batch
+
+		fi
+
 		/sbin/service network restart
 		/sbin/service dnsmasq restart
+		/sbin/service firewall restart
 		sleep 5
 
 		probe_interface_mac
@@ -3073,48 +3192,94 @@ elif [ "$1" = "daemon" ]; then
 				check_mesh_phantom
 			done
 
-			if [ "$portal_detect" -gt 0 ] && [ "$auto_config" -eq 1 ]; then
-				check_portal
+			if [ "$auto_config" -eq 1 ]; then
 
-			elif [ "$portal_detect" -eq 0 ] && [ "$auto_config" -eq 1 ]; then
-				# portal_detect is not enabled - force portal mode:
-				authoritative=$(uci get dhcp.@dnsmasq[0].authoritative 2>/dev/null | awk '{printf "%d", $1}')
+				if [ "$portal_detect" -eq 1 ]; then
+					check_portal
 
-				if [ -z "$authoritative" ]; then
-					authoritative=0
-				fi
+				elif [ "$portal_detect" -eq 0 ]; then
+					# portal_detect is not enabled - force portal mode:
+					authoritative=$(uci get dhcp.@dnsmasq[0].authoritative 2>/dev/null | awk '{printf "%d", $1}')
 
-				uci set mesh11sd.mesh_params.mesh_connected_to_as='1'
-
-				if [ -z "$authoritative" ] || [ "$authoritative" -eq 0 ]; then
-					debugtype="notice"
-					syslogmessage="Portal detection is disabled, forcing portal mode"
-					write_to_syslog
-
-					if [ -f "/var/run/udhcpc-$device.pid" ]; then
-						kill $(cat /var/run/udhcpc-$device.pid)
+					if [ -z "$authoritative" ]; then
+						authoritative=0
 					fi
 
-					restore_ipv4
+					uci set mesh11sd.mesh_params.mesh_connected_to_as='1'
 
-					uci set dhcp.@dnsmasq[0].authoritative='1'
-					echo "set dhcp.$auto_mesh_network.ignore='0'" | uci batch
-					echo "set dhcp.$auto_mesh_network.ra_default='2'" | uci batch
-					echo "set dhcp.$auto_mesh_network.dhcpv6='server'" | uci batch
-					echo "set dhcp.$auto_mesh_network.ra='server'" | uci batch
-					uci set dhcp.@dnsmasq[0].logfacility='-'
-					uci set dhcp.@dnsmasq[0].quietdhcp='1'
+					if [ -z "$authoritative" ] || [ "$authoritative" -eq 0 ]; then
+						debugtype="notice"
+						syslogmessage="Portal detection is disabled, forcing portal mode"
+						write_to_syslog
 
-					if [ "$mesh_gate_only" -eq 0 ]; then
-						mesh_hwmp_rootmode="4"
-					else
-						mesh_hwmp_rootmode="0"
+						if [ -f "/var/run/udhcpc-$device.pid" ]; then
+							kill $(cat /var/run/udhcpc-$device.pid)
+						fi
+
+						restore_ipv4
+
+						uci set dhcp.@dnsmasq[0].authoritative='1'
+						echo "set dhcp.$auto_mesh_network.ignore='0'" | uci batch
+						echo "set dhcp.$auto_mesh_network.ra_default='2'" | uci batch
+						echo "set dhcp.$auto_mesh_network.dhcpv6='server'" | uci batch
+						echo "set dhcp.$auto_mesh_network.ra='server'" | uci batch
+						uci set dhcp.@dnsmasq[0].logfacility='-'
+						uci set dhcp.@dnsmasq[0].quietdhcp='1'
+
+						if [ "$mesh_gate_only" -eq 0 ]; then
+							mesh_hwmp_rootmode="4"
+						else
+							mesh_hwmp_rootmode="0"
+						fi
+
+						echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='$mesh_hwmp_rootmode'" | uci batch
+
+						/sbin/service dnsmasq restart
+						/sbin/service odhcpd restart
+						restart_mesh
 					fi
-					echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='$mesh_hwmp_rootmode'" | uci batch
 
-					/sbin/service dnsmasq restart
-					/sbin/service odhcpd restart
-					restart_mesh
+				elif [ "$portal_detect" -eq 3 ]; then
+
+					if [ "$cpe_conf" -eq 0 ]; then
+
+						# portal_detect is set to CPE mode - this is a router where the wan interface is the mesh backhaul:
+						authoritative=$(uci get dhcp.@dnsmasq[0].authoritative 2>/dev/null | awk '{printf "%d", $1}')
+
+						if [ -z "$authoritative" ]; then
+							authoritative=0
+						fi
+
+						# To other meshnodes, this looks like a peer
+						uci set mesh11sd.mesh_params.mesh_connected_to_as='0'
+
+						if [ -z "$authoritative" ] || [ "$authoritative" -eq 0 ]; then
+							debugtype="notice"
+							syslogmessage="CPE mode"
+							write_to_syslog
+						fi
+
+						if [ "$mesh_gate_only" -eq 0 ]; then
+							non_portal_mesh_hwmp_rootmode="2"
+						else
+							non_portal_mesh_hwmp_rootmode="0"
+						fi
+
+						echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='$non_portal_mesh_hwmp_rootmode'" | uci batch
+
+						echo "set dhcp.lan.ignore='0'" | uci batch
+						echo "set dhcp.lan.ra_default='2'" | uci batch
+						echo "set dhcp.lan.dhcpv6='server'" | uci batch
+						echo "set dhcp.lan.ra='server'" | uci batch
+						uci set dhcp.@dnsmasq[0].logfacility='-'
+						uci set dhcp.@dnsmasq[0].quietdhcp='1'
+
+						/sbin/service dnsmasq restart
+						/sbin/service odhcpd restart
+						restart_mesh
+
+						cpe_conf=1
+					fi
 				fi
 			fi
 
@@ -3124,6 +3289,13 @@ elif [ "$1" = "daemon" ]; then
 			wait_for_mesh
 			block_bridge_loops
 			check_path_changes
+
+			if [ "$portal_detect" -eq 3 ]; then
+				check_dns_server
+				check_channel
+			fi
+
+
 		fi
 
 		debugtype="debug"
