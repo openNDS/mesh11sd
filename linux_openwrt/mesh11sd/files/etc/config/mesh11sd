@@ -27,12 +27,20 @@ config mesh11sd 'setup'
 	###########################################################################################
 	# portal_detect (optional)
 	# Ignored if auto_config is disabled.
-	# Detect if the meshnode is a portal, meaning it has an upstream wan link.
-	# If the upstream link is active, the router hosting the meshnode will serve ipv4 dhcp into the mesh network.
-	# If the upstream link is not connected, dhcp will be disabled and the meshnode will function as a level 2 bridge on the mesh network.
-	# If portal_detect is disabled, the meshnode will be forced into portal mode.
+	#
+	# Default 1
+	#
+	# Possible values:
+	#  0  - Force Portal mode regardless of an upstream connection.
+	#  1  - Detect if the meshnode is a portal, meaning it has an upstream wan link.
+	# 	If the upstream link is active, the router hosting the meshnode will serve ipv4 dhcp into the mesh network.
+	# 	If the upstream link is not connected, dhcp will be disabled and the meshnode will function as a layer 2 bridge on the mesh network.
+	#  2  - Force peer mode, ignoring any upstream wan connection.
+	#  3  - Force CPE mode (Customer Premises Equipment)
+	#  	This is a peer mode but treats the mesh backhaul as an upstream wan connection.
+	#  	A nat routed lan is created with its own ipv4 subnet.
+	#
 	# Has no effect if auto_config is disabled.
-	# Default 1 (enabled). Set to 0 to disable.
 	#
 	#option portal_detect '0'
 

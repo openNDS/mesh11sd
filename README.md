@@ -218,6 +218,7 @@ Power up all nodes in any order, having one only connected to your isp router as
 
 ```
 
+
 config mesh11sd 'setup'
 	###########################################################################################
 	# debuglevel (optional)
@@ -246,12 +247,20 @@ config mesh11sd 'setup'
 	###########################################################################################
 	# portal_detect (optional)
 	# Ignored if auto_config is disabled.
-	# Detect if the meshnode is a portal, meaning it has an upstream wan link.
-	# If the upstream link is active, the router hosting the meshnode will serve ipv4 dhcp into the mesh network.
-	# If the upstream link is not connected, dhcp will be disabled and the meshnode will function as a level 2 bridge on the mesh network.
-	# If portal_detect is disabled, the meshnode will be forced into portal mode.
+	#
+	# Default 1
+	#
+	# Possible values:
+	#  0  - Force Portal mode regardless of an upstream connection.
+	#  1  - Detect if the meshnode is a portal, meaning it has an upstream wan link.
+	# 	If the upstream link is active, the router hosting the meshnode will serve ipv4 dhcp into the mesh network.
+	# 	If the upstream link is not connected, dhcp will be disabled and the meshnode will function as a layer 2 bridge on the mesh network.
+	#  2  - Force peer mode, ignoring any upstream wan connection.
+	#  3  - Force CPE mode (Customer Premises Equipment)
+	#  	This is a peer mode but treats the mesh backhaul as an upstream wan connection.
+	#  	A nat routed lan is created with its own ipv4 subnet.
+	#
 	# Has no effect if auto_config is disabled.
-	# Default 1 (enabled). Set to 0 to disable.
 	#
 	#option portal_detect '0'
 
@@ -267,7 +276,7 @@ config mesh11sd 'setup'
 	#
 	# All mesh peer and mesh gate nodes will autonomously track the mesh portal channel
 	# regardless of the configured auto_mesh_band
-	#
+	# 
 	#option portal_channel 'auto'
 	# or
 	#option portal_channel '4'
@@ -478,7 +487,7 @@ config mesh11sd 'setup'
 	#option ssid_suffix_enable '0'
 
 	###########################################################################################
-	# mesh11sd.setup.watchdog_nonvolatile_log (optional - FOR DEBUGGING PURPOSES ONLY)
+	# watchdog_nonvolatile_log (optional - FOR DEBUGGING PURPOSES ONLY)
 	#
 	# This enables logging of the portal detect watchdog actions in non-volatile storage.
 	# The log file /mesh11sd_log/mesh11sd.log is created
@@ -515,9 +524,13 @@ config mesh11sd 'mesh_params'
 ```
 All mesh parameter settings in the config file are dynamic and will take effect immediately.
 
-**NOTE:** The setup option `portal_detect` is enabled by default.
+**NOTE:** The setup option `portal_detect` is set to 1 (enabled) by default.
 
-**NOTE:** If the setup option `portal_detect` is disabled, the meshnode will be forced into Portal mode. ie it will act as a layer 3 router between its wan and lan ports regardless of the availability of an upstream feed.
+**NOTE:** If the setup option `portal_detect` is set to 0, the meshnode will be forced into Portal mode. ie it will act as a layer 3 router between its wan and lan ports regardless of the availability of an upstream wan feed.
+
+**NOTE:** If the setup option `portal_detect` is set to 2, the meshnode will be forced into Peer mode, ignoring any any upstream wan feed.
+
+**NOTE:** If the setup option `portal_detect` is set to 3, the meshnode will be forced into CPE (Customer Premises Equipment) mode, The mesh backhaul will be used as a wan connection and the meshnode will function as an ipv4 NAT router with a unique ipv4 subnet on its lan and mesh gate (access point).
 
 The option portal_detect much simplifies the setup of the meshnodes of a network. Each can be configured as a basic router with a mesh interface defined as above. Once mesh11sd is installed, portal detection will be activated and with the upstream wan port connected, the meshnode will continue to function as a router with the additional functionality of a mesh portal.
 
@@ -535,7 +548,7 @@ Access to the remote meshnode peers will not be possible using the default ipv4 
 
 * checkinterval - the interval in seconds after which changes in parameters are detected and activated. Default 10 seconds
 
-* portal_detect - (optional) - Detect if the meshnode is a portal, meaning it has an upstream wan link. If the upstream link is active, the router hosting the meshnode will serve ipv4 dhcp into the mesh network. If the upstream link is not connected, dhcp will be disabled and the meshnode will function as a level 2 bridge on the mesh network. Default 1 (enabled). Set to 0 to disable.
+* portal_detect - (optional, default 1)  Detect if the meshnode is a portal, meaning it has an upstream wan link. If the upstream link is active, the router hosting the meshnode will serve ipv4 dhcp into the mesh network. If the upstream link is not connected, dhcp will be disabled and the meshnode will function as a level 2 bridge on the mesh network. Default 1 (enabled). Set to 0 to force Portal mode, 2 to force Peer mode, or 3 to enable CPE mode.
 
 * portal_channel - valid only when the meshnode is a portal. Specifies the mesh network working channel. All other meshnodes will track this channel.
 
