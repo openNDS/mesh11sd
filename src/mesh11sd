@@ -2641,10 +2641,12 @@ elif [ "$1" = "commit_changes" ]; then
 	rssi_change_flag=0
 	txpower_change_flag=0
 	mesh_gate_only_change_flag=0
+	debuglevel_change_flag=0
 
 	changes=$(uci changes mesh11sd)
 	changelist=$(echo "$changes" | awk '{printf "%s ", $1}')
 
+	debuglevel_change=$(echo "$changes" | grep "debuglevel" | tail -n 1)
 	mesh_rssi_threshold_change=$(echo "$changes" | grep "mesh_rssi_threshold" | tail -n 1)
 	txpower_change=$(echo "$changes" | grep "txpower" | tail -n 1)
 	mesh_gate_only_change=$(echo "$changes" | grep "mesh_leechmode_enable" | tail -n 1)
@@ -2658,6 +2660,11 @@ elif [ "$1" = "commit_changes" ]; then
 		echo "    Writes changes to configuration file "
 	elif [ "$2" = "commit" ]; then
 		uci revert mesh11sd
+
+		if [ ! -z "$debuglevel_change" ]; then
+			echo "set $debuglevel_change" | uci batch
+			debuglevel_change_flag=1
+		fi
 
 		if [ ! -z "$mesh_rssi_threshold_change" ]; then
 			echo "set $mesh_rssi_threshold_change" | uci batch
@@ -2677,6 +2684,7 @@ elif [ "$1" = "commit_changes" ]; then
 		uci commit mesh11sd
 
 		for change in $changelist; do
+			is_debuglevel=$(echo "$change" | grep -q "debuglevel"; echo -n $?)
 			is_txpower=$(echo "$change" | grep -q "txpower"; echo -n $?)
 			is_mesh_rssi_threshold=$(echo "$change" | grep -q "mesh_rssi_threshold"; echo -n $?)
 			is_mesh_gate_only=$(echo "$change" | grep -q "mesh_gate_only"; echo -n $?)
@@ -2688,6 +2696,10 @@ elif [ "$1" = "commit_changes" ]; then
 			echo "set $change" | uci batch
 
 		done
+
+		if [ "$debuglevel_change_flag" -eq 1 ]; then
+			echo "Debuglevel change committed"
+		fi
 
 		if [ "$txpower_change_flag" -eq 1 ]; then
 			echo "TX power change committed"
@@ -2701,7 +2713,7 @@ elif [ "$1" = "commit_changes" ]; then
 			echo "Mesh Leechmode change committed"
 		fi
 
-		if [ "$rssi_change_flag" -eq 0 ] && [ "$txpower_change_flag" -eq 0 ] && [ "$mesh_gate_only_change_flag" -eq 0 ]; then
+		if [ "$debuglevel_change_flag" -eq 0 ] && [ "$rssi_change_flag" -eq 0 ] && [ "$txpower_change_flag" -eq 0 ] && [ "$mesh_gate_only_change_flag" -eq 0 ]; then
 			echo "No changes found"
 		fi
 
