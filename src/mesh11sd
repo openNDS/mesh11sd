@@ -790,7 +790,7 @@ check_channel() {
 					mv "$tmpdir/dhcp6probe" "$tmpdir/dhcp6probe.prev"
 				fi
 
-				odhcp6c -ev "$device" 2>$tmpdir/dhcp6probe &
+				odhcp6c -evk "$device" 2>$tmpdir/dhcp6probe &
 
 				local retries=20
 
@@ -2924,6 +2924,8 @@ elif [ "$1" = "daemon" ]; then
 
 			suffix=$(echo $devicemac | awk -F":" '{printf "%s%s", $5, $6}')
 			echo "set network.wan.hostname='meshnode-$suffix'" | uci batch
+			echo "set network.wan6.hostname='meshnode-$suffix'" | uci batch
+
 
 		fi
 
