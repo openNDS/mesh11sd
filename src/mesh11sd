@@ -303,6 +303,11 @@ get_current_setup () {
 	write_to_syslog
 
 	#####
+	# Get the default lan mac address
+	auto_mesh_network=lan
+	refresh_bridgemac
+	. $tmpdir/devicemac
+
 	auto_mesh_network=$(uci get mesh11sd.setup.auto_mesh_network 2> /dev/null)
 
 	if [ -z "$auto_mesh_network" ]; then
@@ -2830,6 +2835,8 @@ elif [ "$1" = "daemon" ]; then
 	get_kernel_version
 	cpe_conf=0
 
+
+
 	if [ "$auto_config" -gt 0 ]; then
 		# We do not know the current state so reinitialise everything
 
@@ -2864,7 +2871,6 @@ elif [ "$1" = "daemon" ]; then
 			setipaddr=$(uci get network.lan.ipaddr)
 
 			if [ "$setipaddr"  = "192.168.1.1" ]; then
-				refresh_bridgemac
 				. $tmpdir/devicemac
 
 				for i in $(seq 9 1 64); do
