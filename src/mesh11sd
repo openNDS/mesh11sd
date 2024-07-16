@@ -373,12 +373,12 @@ get_current_setup () {
 		mesh_gate_encryption=0
 	fi
 
-	if [ "$mesh_gate_encryption" -eq "$mesh_gate_encryption" ] 2> /dev/null; then
+	if [ "$mesh_gate_encryption" -le 4 ]; then
 		syslogmessage="option mesh_gate_encryption [ $mesh_gate_encryption ]"
 		debugtype="info"
 		write_to_syslog
 	else
-		syslogmessage="option mesh_gate_encryption must be 0 (none), 1 (sae, aka wpa3), 2 (sae-mixed, aka wpa2/wpa3) or 3 (psk2, aka wpa2)"
+		syslogmessage="option mesh_gate_encryption must be 0 (none), 1 (sae, aka wpa3), 2 (sae-mixed, aka wpa2/wpa3), 3 (psk2, aka wpa2) or 4 (owe)"
 		debugtype="err"
 		write_to_syslog
 	fi
@@ -390,6 +390,10 @@ get_current_setup () {
 
 	if [ -z "$mesh_gate_key" ]; then
 		mesh_gate_key=""
+	fi
+
+	if [ "$mesh_gate_encryption" -eq 4 ]; then
+		mesh_gate_key="owe_null_key"
 	fi
 
 	keylen=$((${#mesh_gate_key}))
@@ -1709,8 +1713,25 @@ auto_config() {
 						1) encryption_type="sae";;
 						2) encryption_type="sae-mixed+aes";;
 						3) encryption_type="psk2+aes";;
+						4) encryption_type="owe";;
 						*) encryption_type="none";;
 					esac
+
+					if [ "$encryption_type" = "owe" ]; then
+						wpad_pkg=$(opkg list-installed | grep "wpad" | awk '{printf "%s", $1}')
+
+						if [ $wpad_pkg = "wpad-mbedtls" ] || [ $wpad_pkg = "wpad-wolfssl" ] || [ $wpad_pkg = "wpad-openssl" ]; then
+							# We have a full version so owe is supported
+							debugtype="notice"
+							syslogmessage="$wpad_pkg is installed, owe supported"
+							write_to_syslog
+						else
+							encryption_type="none"
+							debugtype="err"
+							syslogmessage="$wpad_pkg does not support owe, install a full version of wpad"
+							write_to_syslog
+						fi
+					fi
 
 					for ap in $aplist; do
 						radio=$(uci get "$ap.device" 2> /dev/null)
