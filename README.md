@@ -70,7 +70,7 @@ In normal operation, config changes are not written to the config files in /etc/
 The mesh can have four types of meshnodes.
 
   1. **Peer Node** - the basic mesh peer - capable of mac-routing layer 2 packets in the mesh network.
-  2. **Gateway Node** - a peer node that also hosts an access point (AP) radio for normal client devices to connect to.
+  2. **Gateway Node** - a peer node that also hosts an access point (AP) radio for normal client devices to connect to. Also known as a gate. A gate can also function as a CPE (Customer [or Client] Premises Equipment), hosting a downstream layer 3 network with its own unique ipv4 subnet.
   3. **Gateway Leech Node** - a special type of Gateway Node that connects to the mesh backhaul but neither contributes to it nor advertises itself on it.
   4. **Portal Node** - a peer node that also hosts a layer 3 routed upstream connection (eg an Internet feed)
 
@@ -82,16 +82,19 @@ All Peer and Gateway nodes will track the wireless channel that the Portal node 
 
 ## 4. Installation
 
-It is assumed that the additional dependencies for encrypted mesh are pre-installed, ie:
+It is assumed that the additional dependencies for encrypted mesh and opportunistic wireless encryption (owe) are pre-installed, ie:
 
     Remove - wpad-basic-mbedtls (or wpad-basic or wpad-basic-wolfssl)
 
-    Install - wpad-mesh-mbedtls
-         or - wpad-mbedtls
-         or - wpad-mesh-wolfssl
+    Install - wpad-mbedtls
          or - wpad-wolfssl
-         or - wpad-mesh-openssl
          or - wpad-openssl
+
+If the meshnode device is severely resource limited, support for owe can be dropped by instead installing the size reduced wpad versions, ie:
+
+    Install - wpad-mesh-mbedtls
+         or - wpad-mesh-wolfssl
+         or - wpad-mesh-openssl
 
 For support of non-mesh segments of backhaul and prevention of bridge loop storms, install the package:
 
