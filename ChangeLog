@@ -1,3 +1,18 @@
+mesh11sd (4.1.0)
+  * Add - default owe transition mode [bluewavenet]
+  * Add - support for mesh_gate_encryption 4 (opportunistic wireless encryption, owe) [bluewavenet]
+  * Fix - odhcp6c option -p does not work so work around using ps utility [bluewavenet]
+  * Fix - do not release dhcp6 lease on close of odhcp6c and add missing ipv6 hostname [bluewavenet]
+  * Fix - correctly read bridgemac for CPE mode [bluewavenet]
+  * Add - debuglevel to commit_changes cli command [bluewavenet]
+  * Add - CPE mode option for auto_config [bluewavenet]
+  * Add - force restart of dnsmasq after unscheduled dhcp renew [bluewavenet]
+  * Add - initial coding for cpe mode [bluewavenet]
+  * Fix - replace hardcoded iface with variable [qosmio]
+  * Fix - mesh_id and mesh_key config keys [royallthefourth]
+
+ -- Rob White <dot@blue-wave.net>  Fri, 19 July 2024 19:03:16 +0000
+
 mesh11sd (4.0.1)
   * Fix - indentation in README.md [bluewavenet]
   * Fix - typos preventing leechmode from being correctly enabled [bluewavenet]
