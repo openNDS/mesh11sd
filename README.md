@@ -187,7 +187,9 @@ This should be set in the normal OpenWrt way, using either the uci utility or th
 
 First, select the desired encryption type from the following:
 
-`0 (none), 1 (sae, aka wpa3), 2 (sae-mixed, aka wpa2/wpa3) or 3 (psk2, aka wpa2)`
+`0 (none/owe-transition), 1 (sae, aka wpa3), 2 (sae-mixed, aka wpa2/wpa3), 3 (psk2, aka wpa2) or 4 (owe - Opportunistic Wireless Encryption)`
+
+**Note: Opportunistic Wireless Encryption requires a full version of wpad eg wpad-mbedtls.**
 
 Example, set to psk2 encryption:
 
@@ -218,6 +220,7 @@ Power up all nodes in any order, having one only connected to your isp router as
 
 ```
 
+
 config mesh11sd 'setup'
 	###########################################################################################
 	# debuglevel (optional)
@@ -246,12 +249,20 @@ config mesh11sd 'setup'
 	###########################################################################################
 	# portal_detect (optional)
 	# Ignored if auto_config is disabled.
-	# Detect if the meshnode is a portal, meaning it has an upstream wan link.
-	# If the upstream link is active, the router hosting the meshnode will serve ipv4 dhcp into the mesh network.
-	# If the upstream link is not connected, dhcp will be disabled and the meshnode will function as a level 2 bridge on the mesh network.
-	# If portal_detect is disabled, the meshnode will be forced into portal mode.
+	#
+	# Default 1
+	#
+	# Possible values:
+	#  0  - Force Portal mode regardless of an upstream connection.
+	#  1  - Detect if the meshnode is a portal, meaning it has an upstream wan link.
+	# 	If the upstream link is active, the router hosting the meshnode will serve ipv4 dhcp into the mesh network.
+	# 	If the upstream link is not connected, dhcp will be disabled and the meshnode will function as a layer 2 bridge on the mesh network.
+	#  2  - Force peer mode, ignoring any upstream wan connection.
+	#  3  - Force CPE mode (Customer Premises Equipment)
+	#  	This is a peer mode but treats the mesh backhaul as an upstream wan connection.
+	#  	A nat routed lan is created with its own ipv4 subnet.
+	#
 	# Has no effect if auto_config is disabled.
-	# Default 1 (enabled). Set to 0 to disable.
 	#
 	#option portal_detect '0'
 
@@ -267,7 +278,7 @@ config mesh11sd 'setup'
 	#
 	# All mesh peer and mesh gate nodes will autonomously track the mesh portal channel
 	# regardless of the configured auto_mesh_band
-	#
+	# 
 	#option portal_channel 'auto'
 	# or
 	#option portal_channel '4'
@@ -421,7 +432,8 @@ config mesh11sd 'setup'
 	# Determines whether this node's gate will be a encrypted
 	#
 	# Default: 0 (disabled)
-	# Set to 0 (none), 1 (sae, aka wpa3), 2 (sae-mixed, aka wpa2/wpa3) or 3 (psk2, aka wpa2)
+	# Set to 0 (none/owe-transition), 1 (sae, aka wpa3), 2 (sae-mixed, aka wpa2/wpa3), 3 (psk2, aka wpa2)
+	# or 4 (Opportunistic Wireless Encryption - owe)
 	#
 	# Example - enable psk2 encryption
 	#option mesh_gate_encryption '3'
@@ -432,6 +444,7 @@ config mesh11sd 'setup'
 	#
 	# Default: not set (encryption disabled)
 	# Set to a secret string value to use for encrypting the node's gate
+	# Ignored if mesh_gate_encryption is set to 0 or 4
 	#
 	# Example - set a key string
 	#option mesh_gate_key 'mysecretencryptionkey'
@@ -478,7 +491,7 @@ config mesh11sd 'setup'
 	#option ssid_suffix_enable '0'
 
 	###########################################################################################
-	# mesh11sd.setup.watchdog_nonvolatile_log (optional - FOR DEBUGGING PURPOSES ONLY)
+	# watchdog_nonvolatile_log (optional - FOR DEBUGGING PURPOSES ONLY)
 	#
 	# This enables logging of the portal detect watchdog actions in non-volatile storage.
 	# The log file /mesh11sd_log/mesh11sd.log is created
@@ -515,9 +528,13 @@ config mesh11sd 'mesh_params'
 ```
 All mesh parameter settings in the config file are dynamic and will take effect immediately.
 
-**NOTE:** The setup option `portal_detect` is enabled by default.
+**NOTE:** The setup option `portal_detect` is set to 1 (enabled) by default.
 
-**NOTE:** If the setup option `portal_detect` is disabled, the meshnode will be forced into Portal mode. ie it will act as a layer 3 router between its wan and lan ports regardless of the availability of an upstream feed.
+**NOTE:** If the setup option `portal_detect` is set to 0, the meshnode will be forced into Portal mode. ie it will act as a layer 3 router between its wan and lan ports regardless of the availability of an upstream wan feed.
+
+**NOTE:** If the setup option `portal_detect` is set to 2, the meshnode will be forced into Peer mode, ignoring any any upstream wan feed.
+
+**NOTE:** If the setup option `portal_detect` is set to 3, the meshnode will be forced into CPE (Customer Premises Equipment) mode, The mesh backhaul will be used as a wan connection and the meshnode will function as an ipv4 NAT router with a unique ipv4 subnet on its lan and mesh gate (access point).
 
 The option portal_detect much simplifies the setup of the meshnodes of a network. Each can be configured as a basic router with a mesh interface defined as above. Once mesh11sd is installed, portal detection will be activated and with the upstream wan port connected, the meshnode will continue to function as a router with the additional functionality of a mesh portal.
 
@@ -535,7 +552,7 @@ Access to the remote meshnode peers will not be possible using the default ipv4 
 
 * checkinterval - the interval in seconds after which changes in parameters are detected and activated. Default 10 seconds
 
-* portal_detect - (optional) - Detect if the meshnode is a portal, meaning it has an upstream wan link. If the upstream link is active, the router hosting the meshnode will serve ipv4 dhcp into the mesh network. If the upstream link is not connected, dhcp will be disabled and the meshnode will function as a level 2 bridge on the mesh network. Default 1 (enabled). Set to 0 to disable.
+* portal_detect - (optional, default 1)  Detect if the meshnode is a portal, meaning it has an upstream wan link. If the upstream link is active, the router hosting the meshnode will serve ipv4 dhcp into the mesh network. If the upstream link is not connected, dhcp will be disabled and the meshnode will function as a level 2 bridge on the mesh network. Default 1 (enabled). Set to 0 to force Portal mode, 2 to force Peer mode, or 3 to enable CPE mode.
 
 * portal_channel - valid only when the meshnode is a portal. Specifies the mesh network working channel. All other meshnodes will track this channel.
 
@@ -557,9 +574,9 @@ Access to the remote meshnode peers will not be possible using the default ipv4 
 
 * mesh_gate_enable - enables any access points configured on the meshnode. Default 1 (enabled). Set to 0 to disable. **Note:** If there is an interface level "disable option" (in wireless config), mesh11sd will use that setting.
 
-* mesh_gate_encryption - Determines whether this node's gate will be a encrypted. Default: 0 (disabled). Set to 0 (none), 1 (sae, aka wpa3), 2 (sae-mixed, aka wpa2/wpa3) or 3 (psk2, aka wpa2)
+* mesh_gate_encryption - Determines whether this node's gate will be a encrypted. Default: 0 (disabled). Set to 0 (none/owe-transition), 1 (sae, aka wpa3), 2 (sae-mixed, aka wpa2/wpa3), 3 (psk2, aka wpa2) or 4 (Opportunistic Wireless Encryption - owe).
 
-* mesh_gate_key - Determines the encryption key for this node's gate. Default: not set (encryption disabled). Set to a secret string value to use for encrypting the node's gate
+* mesh_gate_key - Determines the encryption key for this node's gate. Default: not set (encryption disabled or owe). Set to a secret string value to use for encrypting the node's gate
 
 * mesh_leechmode_enable - Determines whether this node will be a gate only leech node. A gate only leech node acts as an access point with a mesh backhaul connection, but does not contribute to the mesh. This is useful when a node is well within the coverage of 2 or more peer nodes, as otherwise it could create unstable multi hop paths within the backhaul. Default: 0 (disabled). Set to 1 to enable (turns off the node's mesh forwarding and HWMP mac-routing).
 

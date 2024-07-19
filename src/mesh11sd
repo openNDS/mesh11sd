@@ -303,6 +303,11 @@ get_current_setup () {
 	write_to_syslog
 
 	#####
+	# Get the default lan mac address
+	auto_mesh_network=lan
+	refresh_bridgemac
+	. $tmpdir/devicemac
+
 	auto_mesh_network=$(uci get mesh11sd.setup.auto_mesh_network 2> /dev/null)
 
 	if [ -z "$auto_mesh_network" ]; then
@@ -363,17 +368,33 @@ get_current_setup () {
 
 	#####
 	mesh_gate_encryption=$(uci get mesh11sd.setup.mesh_gate_encryption 2> /dev/null)
+	installed_wpad=$(opkg list-installed | grep "wpad" | awk '{printf "%s", $1}' | awk -F "-" '{print $2}')
+
+	if [ -z "$installed_wpad" ]; then
+		installed_wpad="none"
+	fi
 
 	if [ -z "$mesh_gate_encryption" ]; then
 		mesh_gate_encryption=0
 	fi
 
-	if [ "$mesh_gate_encryption" -eq "$mesh_gate_encryption" ] 2> /dev/null; then
+	if [ "$mesh_gate_encryption" -eq 4 ]; then
+		case $installed_wpad in
+			"mesh") mesh_gate_encryption=0;;
+			"mbedtls") mesh_gate_encryption=4;;
+			"wolfssl") mesh_gate_encryption=4;;
+			"openssl") mesh_gate_encryption=4;;
+			*) mesh_gate_encryption=0;;
+		esac
+	fi
+
+
+	if [ "$mesh_gate_encryption" -le 4 ]; then
 		syslogmessage="option mesh_gate_encryption [ $mesh_gate_encryption ]"
 		debugtype="info"
 		write_to_syslog
 	else
-		syslogmessage="option mesh_gate_encryption must be 0 (none), 1 (sae, aka wpa3), 2 (sae-mixed, aka wpa2/wpa3) or 3 (psk2, aka wpa2)"
+		syslogmessage="option mesh_gate_encryption must be 0 (none), 1 (sae, aka wpa3), 2 (sae-mixed, aka wpa2/wpa3), 3 (psk2, aka wpa2) or 4 (owe)"
 		debugtype="err"
 		write_to_syslog
 	fi
@@ -385,6 +406,10 @@ get_current_setup () {
 
 	if [ -z "$mesh_gate_key" ]; then
 		mesh_gate_key=""
+	fi
+
+	if [ "$mesh_gate_encryption" -eq 4 ]; then
+		mesh_gate_key="owe_null_key"
 	fi
 
 	keylen=$((${#mesh_gate_key}))
@@ -785,7 +810,7 @@ check_channel() {
 					mv "$tmpdir/dhcp6probe" "$tmpdir/dhcp6probe.prev"
 				fi
 
-				odhcp6c -ev "$device" 2>$tmpdir/dhcp6probe &
+				odhcp6c -p /var/run/odhcp6c-renew-$device.pid -e -v -k "$device" 2>$tmpdir/dhcp6probe &
 
 				local retries=20
 
@@ -801,7 +826,9 @@ check_channel() {
 				done
 
 				link_to_portal=$(cat $tmpdir/dhcp6probe | grep -q -w "Got a valid ADVERTISE" ; echo -n "$?")
-				instances=$(pgrep odhcp6c | awk '{printf "%s ", $1}')
+
+				# NOTE: odhcp6c -p option does not work and pid is not recorded, so we have to look up the pid using ps utility
+				instances=$(ps | grep "odhcp6c" | grep "/var/run/odhcp6c-renew-br-wan.pid" | awk '{printf "%s ", $1}')
 
 				for instance in $instances; do
 					kill "$instance"
@@ -1695,20 +1722,44 @@ auto_config() {
 				fi
 
 				#Configure gate encryption
-				if [ "$mesh_gate_encryption" -gt 0 ] && [ ! -z "$mesh_gate_key" ]; then
+				case $mesh_gate_encryption in
+					0) encryption_type="none";;
+					1) encryption_type="sae";;
+					2) encryption_type="sae-mixed+aes";;
+					3) encryption_type="psk2+aes";;
+					4) encryption_type="owe";;
+					*) encryption_type="none";;
+				esac
 
-					case $mesh_gate_encryption in
-						0) encryption_type="none";;
-						1) encryption_type="sae";;
-						2) encryption_type="sae-mixed+aes";;
-						3) encryption_type="psk2+aes";;
-						*) encryption_type="none";;
-					esac
+				if [ "$encryption_type" = "owe" ] || [ "$encryption_type" = "none" ]; then
+					wpad_pkg=$(opkg list-installed | grep "wpad" | awk '{printf "%s", $1}')
+
+					if [ $wpad_pkg = "wpad-mbedtls" ] || [ $wpad_pkg = "wpad-wolfssl" ] || [ $wpad_pkg = "wpad-openssl" ]; then
+						# We have a full version so owe is supported
+						owe_able=1
+						debugtype="notice"
+						syslogmessage="$wpad_pkg is installed, owe supported"
+						write_to_syslog
+					else
+						encryption_type="none"
+						owe_able=0
+						debugtype="err"
+						syslogmessage="$wpad_pkg does not support owe, install a full version of wpad"
+						write_to_syslog
+					fi
 
 					for ap in $aplist; do
 						radio=$(uci get "$ap.device" 2> /dev/null)
 						echo "set $ap.encryption='$encryption_type'" | uci batch
 						echo "set $ap.key='$mesh_gate_key'" | uci batch
+
+						if [ "$encryption_type" = "none" ]; then
+							# setup owe transition if wpad supports it
+
+							if [ "$owe_able" -eq 1 ]; then
+								owe_transition
+							fi
+						fi
 					done
 
 				fi
@@ -1736,6 +1787,27 @@ auto_config() {
 		# TODO If we want to call auto_config from cli then we can stop it happening more than once by uncommenting the following:
 		#autoconfig=1
 	fi
+}
+
+owe_transition() {
+	section_ap=$(uci show "$ap")
+	section_list=$(echo "$section_ap" | awk '{printf "%s ", $1}')
+	radio_index=$(echo "$ap" | awk -F "radio" '{printf "%s", $2}')
+
+	echo "set $ap.ifname='open-$radio_index'" | uci batch
+	echo "set $ap.owe_transition_ifname='owe-$radio_index'" | uci batch
+
+	for section_item in $section_list; do
+		oweap="s/$ap/wireless.owe$radio_index/g"
+		uci_option=$(echo "$section_item" | sed "$oweap")
+		echo "set $uci_option" | uci batch
+	done
+
+	echo "set wireless.owe$radio_index.ifname='owe-$radio_index'" | uci batch
+	echo "set wireless.owe$radio_index.owe_transition_ifname='open-$radio_index'" | uci batch
+	echo "set wireless.owe$radio_index.hidden='1'" | uci batch
+	echo "set wireless.owe$radio_index.encryption='owe'" | uci batch
+
 }
 
 urlencode() {
@@ -2594,7 +2666,7 @@ elif [ "$1" = "stations" ]; then
 
 	echo "==========================================================================="
 
-	echo "Stations connected to this node:"
+	echo "Mesh backhaul stations connected to this node:"
 
 	for iface in $iflist; do
 		wait_for_interface "$iface"
@@ -2641,10 +2713,12 @@ elif [ "$1" = "commit_changes" ]; then
 	rssi_change_flag=0
 	txpower_change_flag=0
 	mesh_gate_only_change_flag=0
+	debuglevel_change_flag=0
 
 	changes=$(uci changes mesh11sd)
 	changelist=$(echo "$changes" | awk '{printf "%s ", $1}')
 
+	debuglevel_change=$(echo "$changes" | grep "debuglevel" | tail -n 1)
 	mesh_rssi_threshold_change=$(echo "$changes" | grep "mesh_rssi_threshold" | tail -n 1)
 	txpower_change=$(echo "$changes" | grep "txpower" | tail -n 1)
 	mesh_gate_only_change=$(echo "$changes" | grep "mesh_leechmode_enable" | tail -n 1)
@@ -2658,6 +2732,11 @@ elif [ "$1" = "commit_changes" ]; then
 		echo "    Writes changes to configuration file "
 	elif [ "$2" = "commit" ]; then
 		uci revert mesh11sd
+
+		if [ ! -z "$debuglevel_change" ]; then
+			echo "set $debuglevel_change" | uci batch
+			debuglevel_change_flag=1
+		fi
 
 		if [ ! -z "$mesh_rssi_threshold_change" ]; then
 			echo "set $mesh_rssi_threshold_change" | uci batch
@@ -2677,6 +2756,7 @@ elif [ "$1" = "commit_changes" ]; then
 		uci commit mesh11sd
 
 		for change in $changelist; do
+			is_debuglevel=$(echo "$change" | grep -q "debuglevel"; echo -n $?)
 			is_txpower=$(echo "$change" | grep -q "txpower"; echo -n $?)
 			is_mesh_rssi_threshold=$(echo "$change" | grep -q "mesh_rssi_threshold"; echo -n $?)
 			is_mesh_gate_only=$(echo "$change" | grep -q "mesh_gate_only"; echo -n $?)
@@ -2688,6 +2768,10 @@ elif [ "$1" = "commit_changes" ]; then
 			echo "set $change" | uci batch
 
 		done
+
+		if [ "$debuglevel_change_flag" -eq 1 ]; then
+			echo "Debuglevel change committed"
+		fi
 
 		if [ "$txpower_change_flag" -eq 1 ]; then
 			echo "TX power change committed"
@@ -2701,7 +2785,7 @@ elif [ "$1" = "commit_changes" ]; then
 			echo "Mesh Leechmode change committed"
 		fi
 
-		if [ "$rssi_change_flag" -eq 0 ] && [ "$txpower_change_flag" -eq 0 ] && [ "$mesh_gate_only_change_flag" -eq 0 ]; then
+		if [ "$debuglevel_change_flag" -eq 0 ] && [ "$rssi_change_flag" -eq 0 ] && [ "$txpower_change_flag" -eq 0 ] && [ "$mesh_gate_only_change_flag" -eq 0 ]; then
 			echo "No changes found"
 		fi
 
@@ -2818,6 +2902,8 @@ elif [ "$1" = "daemon" ]; then
 	get_kernel_version
 	cpe_conf=0
 
+
+
 	if [ "$auto_config" -gt 0 ]; then
 		# We do not know the current state so reinitialise everything
 
@@ -2852,7 +2938,6 @@ elif [ "$1" = "daemon" ]; then
 			setipaddr=$(uci get network.lan.ipaddr)
 
 			if [ "$setipaddr"  = "192.168.1.1" ]; then
-				refresh_bridgemac
 				. $tmpdir/devicemac
 
 				for i in $(seq 9 1 64); do
@@ -2906,6 +2991,8 @@ elif [ "$1" = "daemon" ]; then
 
 			suffix=$(echo $devicemac | awk -F":" '{printf "%s%s", $5, $6}')
 			echo "set network.wan.hostname='meshnode-$suffix'" | uci batch
+			echo "set network.wan6.hostname='meshnode-$suffix'" | uci batch
+
 
 		fi
 
