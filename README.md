@@ -187,7 +187,9 @@ This should be set in the normal OpenWrt way, using either the uci utility or th
 
 First, select the desired encryption type from the following:
 
-`0 (none), 1 (sae, aka wpa3), 2 (sae-mixed, aka wpa2/wpa3) or 3 (psk2, aka wpa2)`
+`0 (none/owe-transition), 1 (sae, aka wpa3), 2 (sae-mixed, aka wpa2/wpa3), 3 (psk2, aka wpa2) or 4 (owe - Opportunistic Wireless Encryption)`
+
+**Note: Opportunistic Wireless Encryption requires a full version of wpad eg wpad-mbedtls.**
 
 Example, set to psk2 encryption:
 
@@ -430,7 +432,8 @@ config mesh11sd 'setup'
 	# Determines whether this node's gate will be a encrypted
 	#
 	# Default: 0 (disabled)
-	# Set to 0 (none), 1 (sae, aka wpa3), 2 (sae-mixed, aka wpa2/wpa3) or 3 (psk2, aka wpa2)
+	# Set to 0 (none/owe-transition), 1 (sae, aka wpa3), 2 (sae-mixed, aka wpa2/wpa3), 3 (psk2, aka wpa2)
+	# or 4 (Opportunistic Wireless Encryption - owe)
 	#
 	# Example - enable psk2 encryption
 	#option mesh_gate_encryption '3'
@@ -441,6 +444,7 @@ config mesh11sd 'setup'
 	#
 	# Default: not set (encryption disabled)
 	# Set to a secret string value to use for encrypting the node's gate
+	# Ignored if mesh_gate_encryption is set to 0 or 4
 	#
 	# Example - set a key string
 	#option mesh_gate_key 'mysecretencryptionkey'
@@ -570,9 +574,9 @@ Access to the remote meshnode peers will not be possible using the default ipv4 
 
 * mesh_gate_enable - enables any access points configured on the meshnode. Default 1 (enabled). Set to 0 to disable. **Note:** If there is an interface level "disable option" (in wireless config), mesh11sd will use that setting.
 
-* mesh_gate_encryption - Determines whether this node's gate will be a encrypted. Default: 0 (disabled). Set to 0 (none), 1 (sae, aka wpa3), 2 (sae-mixed, aka wpa2/wpa3) or 3 (psk2, aka wpa2)
+* mesh_gate_encryption - Determines whether this node's gate will be a encrypted. Default: 0 (disabled). Set to 0 (none/owe-transition), 1 (sae, aka wpa3), 2 (sae-mixed, aka wpa2/wpa3), 3 (psk2, aka wpa2) or 4 (Opportunistic Wireless Encryption - owe).
 
-* mesh_gate_key - Determines the encryption key for this node's gate. Default: not set (encryption disabled). Set to a secret string value to use for encrypting the node's gate
+* mesh_gate_key - Determines the encryption key for this node's gate. Default: not set (encryption disabled or owe). Set to a secret string value to use for encrypting the node's gate
 
 * mesh_leechmode_enable - Determines whether this node will be a gate only leech node. A gate only leech node acts as an access point with a mesh backhaul connection, but does not contribute to the mesh. This is useful when a node is well within the coverage of 2 or more peer nodes, as otherwise it could create unstable multi hop paths within the backhaul. Default: 0 (disabled). Set to 1 to enable (turns off the node's mesh forwarding and HWMP mac-routing).
 
