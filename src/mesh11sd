@@ -368,10 +368,26 @@ get_current_setup () {
 
 	#####
 	mesh_gate_encryption=$(uci get mesh11sd.setup.mesh_gate_encryption 2> /dev/null)
+	installed_wpad=$(opkg list-installed | grep "wpad" | awk '{printf "%s", $1}' | awk -F "-" '{print $2}')
+
+	if [ -z "$installed_wpad" ]; then
+		installed_wpad="none"
+	fi
 
 	if [ -z "$mesh_gate_encryption" ]; then
 		mesh_gate_encryption=0
 	fi
+
+	if [ "$mesh_gate_encryption" -eq 4 ]; then
+		case $installed_wpad in
+			"mesh") mesh_gate_encryption=0;;
+			"mbedtls") mesh_gate_encryption=4;;
+			"wolfssl") mesh_gate_encryption=4;;
+			"openssl") mesh_gate_encryption=4;;
+			*) mesh_gate_encryption=0;;
+		esac
+	fi
+
 
 	if [ "$mesh_gate_encryption" -le 4 ]; then
 		syslogmessage="option mesh_gate_encryption [ $mesh_gate_encryption ]"
@@ -1706,37 +1722,44 @@ auto_config() {
 				fi
 
 				#Configure gate encryption
-				if [ "$mesh_gate_encryption" -gt 0 ] && [ ! -z "$mesh_gate_key" ]; then
+				case $mesh_gate_encryption in
+					0) encryption_type="none";;
+					1) encryption_type="sae";;
+					2) encryption_type="sae-mixed+aes";;
+					3) encryption_type="psk2+aes";;
+					4) encryption_type="owe";;
+					*) encryption_type="none";;
+				esac
 
-					case $mesh_gate_encryption in
-						0) encryption_type="none";;
-						1) encryption_type="sae";;
-						2) encryption_type="sae-mixed+aes";;
-						3) encryption_type="psk2+aes";;
-						4) encryption_type="owe";;
-						*) encryption_type="none";;
-					esac
+				if [ "$encryption_type" = "owe" ] || [ "$encryption_type" = "none" ]; then
+					wpad_pkg=$(opkg list-installed | grep "wpad" | awk '{printf "%s", $1}')
 
-					if [ "$encryption_type" = "owe" ]; then
-						wpad_pkg=$(opkg list-installed | grep "wpad" | awk '{printf "%s", $1}')
-
-						if [ $wpad_pkg = "wpad-mbedtls" ] || [ $wpad_pkg = "wpad-wolfssl" ] || [ $wpad_pkg = "wpad-openssl" ]; then
-							# We have a full version so owe is supported
-							debugtype="notice"
-							syslogmessage="$wpad_pkg is installed, owe supported"
-							write_to_syslog
-						else
-							encryption_type="none"
-							debugtype="err"
-							syslogmessage="$wpad_pkg does not support owe, install a full version of wpad"
-							write_to_syslog
-						fi
+					if [ $wpad_pkg = "wpad-mbedtls" ] || [ $wpad_pkg = "wpad-wolfssl" ] || [ $wpad_pkg = "wpad-openssl" ]; then
+						# We have a full version so owe is supported
+						owe_able=1
+						debugtype="notice"
+						syslogmessage="$wpad_pkg is installed, owe supported"
+						write_to_syslog
+					else
+						encryption_type="none"
+						owe_able=0
+						debugtype="err"
+						syslogmessage="$wpad_pkg does not support owe, install a full version of wpad"
+						write_to_syslog
 					fi
 
 					for ap in $aplist; do
 						radio=$(uci get "$ap.device" 2> /dev/null)
 						echo "set $ap.encryption='$encryption_type'" | uci batch
 						echo "set $ap.key='$mesh_gate_key'" | uci batch
+
+						if [ "$encryption_type" = "none" ]; then
+							# setup owe transition if wpad supports it
+
+							if [ "$owe_able" -eq 1 ]; then
+								owe_transition
+							fi
+						fi
 					done
 
 				fi
@@ -1764,6 +1787,27 @@ auto_config() {
 		# TODO If we want to call auto_config from cli then we can stop it happening more than once by uncommenting the following:
 		#autoconfig=1
 	fi
+}
+
+owe_transition() {
+	section_ap=$(uci show "$ap")
+	section_list=$(echo "$section_ap" | awk '{printf "%s ", $1}')
+	radio_index=$(echo "$ap" | awk -F "radio" '{printf "%s", $2}')
+
+	echo "set $ap.ifname='open-$radio_index'" | uci batch
+	echo "set $ap.owe_transition_ifname='owe-$radio_index'" | uci batch
+
+	for section_item in $section_list; do
+		oweap="s/$ap/wireless.owe$radio_index/g"
+		uci_option=$(echo "$section_item" | sed "$oweap")
+		echo "set $uci_option" | uci batch
+	done
+
+	echo "set wireless.owe$radio_index.ifname='owe-$radio_index'" | uci batch
+	echo "set wireless.owe$radio_index.owe_transition_ifname='open-$radio_index'" | uci batch
+	echo "set wireless.owe$radio_index.hidden='1'" | uci batch
+	echo "set wireless.owe$radio_index.encryption='owe'" | uci batch
+
 }
 
 urlencode() {
@@ -2622,7 +2666,7 @@ elif [ "$1" = "stations" ]; then
 
 	echo "==========================================================================="
 
-	echo "Stations connected to this node:"
+	echo "Mesh backhaul stations connected to this node:"
 
 	for iface in $iflist; do
 		wait_for_interface "$iface"
