@@ -1,4 +1,5 @@
 mesh11sd (4.1.0)
+  * Add - cli option dhcp4_renew [bluewavenet]
   * Add - default owe transition mode [bluewavenet]
   * Add - support for mesh_gate_encryption 4 (opportunistic wireless encryption, owe) [bluewavenet]
   * Fix - odhcp6c option -p does not work so work around using ps utility [bluewavenet]
@@ -11,7 +12,7 @@ mesh11sd (4.1.0)
   * Fix - replace hardcoded iface with variable [qosmio]
   * Fix - mesh_id and mesh_key config keys [royallthefourth]
 
- -- Rob White <dot@blue-wave.net>  Fri, 19 July 2024 19:03:16 +0000
+ -- Rob White <dot@blue-wave.net>  Sat, 20 July 2024 12:25:08 +0000
 
 mesh11sd (4.0.1)
   * Fix - indentation in README.md [bluewavenet]

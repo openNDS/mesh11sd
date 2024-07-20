@@ -752,6 +752,10 @@ Mesh11sd is an OpenWrt service daemon and runs continuously in the background. I
           Usage: mesh11sd opkg_revert_to_default
           Reverts opkg to default for its downloads
 
+        Option: dhcp4_renew
+          Usage: mesh11sd dhcp4_renew
+          Renews the current dhcp4 lease
+
 **Example status output:**
 
 ```
