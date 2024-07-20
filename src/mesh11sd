@@ -1779,7 +1779,7 @@ auto_config() {
 			fi
 		else
 			debugtype="err"
-			syslogmessage="Unable to autoconfigure. Please install package wpad-mesh-mbedtls, wpad-mesh-wolfssl, wpad-mesh-openssl or an equivalent full version"
+			syslogmessage="Unable to autoconfigure. Please install package wpad-mbedtls, wpad-wolfssl, wpad-openssl or an equivalent mesh only version"
 			write_to_syslog
 			exit 1
 		fi
@@ -2233,6 +2233,10 @@ if [ -z "$1" ] || [ "$1" = "-h" ] || [ $1 = "--help" ] || [ $1 = "help" ]; then
   Option: opkg_revert_to_default
   Usage: mesh11sd opkg_revert_to_default
     Reverts opkg to default for its downloads
+
+  Option: dhcp4_renew
+  Usage: mesh11sd dhcp4_renew
+    Renews the current dhcp4 lease
 
   For further documentation, see: https://github.com/openNDS/mesh11sd#readme
 
@@ -2894,6 +2898,11 @@ elif [ "$1" = "opkg_revert_to_default" ]; then
 
 	exit 0
 
+elif [ "$1" = "dhcp4_renew" ]; then
+	dhcpdevice=$(echo "get network.$auto_mesh_network.device" | uci batch | awk '{printf "%s", $1}')
+	dhcp4_renew
+	exit 0
+
 elif [ "$1" = "daemon" ]; then
 	debugtype="notice"
 	syslogmessage="mesh11sd is in startup"
@@ -2917,6 +2926,36 @@ elif [ "$1" = "daemon" ]; then
 		uci revert network
 		uci revert firewall
 
+		# Check the configured ipv4 address and change it if left at default of 192.168.1.1
+		# For now, only chack in CPE mode.
+		# Possibly make this active for portal devices (via config option?)
+		setipaddr=$(uci get network.lan.ipaddr)
+
+		if [ "$setipaddr"  = "192.168.1.1" ] && [ "$portal_detect" -eq 3 ]; then
+			. $tmpdir/devicemac
+
+			for i in $(seq 9 1 64); do
+				#choose start point of sequence away from end eg "9"
+				cpipsubnet=$((0x$(printf "$devicemac" | sha256sum | awk '{printf $1}' | tail -c$i | head -c2)))
+
+				#Check for max
+				if [ $cpipsubnet -ge 255 ];then
+					continue
+				fi
+
+				#Skip 168, 167, 0
+				if [ $cpipsubnet -eq 168 ] || [ $cpipsubnet -eq 167 ] || [ $cpipsubnet -eq 0 ];then
+					continue
+				fi
+
+				break
+			done
+
+			newipaddr="192.168.$cpipsubnet.1"
+			echo "set network.lan.ipaddr='$newipaddr'" | uci batch
+		fi
+
+
 		# Before restarting the network, check if CPE mode is requested
 		if [ "$portal_detect" -eq 3 ]; then
 			#CPE mode, so setup network config accordingly
@@ -2934,32 +2973,6 @@ elif [ "$1" = "daemon" ]; then
 
 			uci set network.wan.device='br-wan'
 			uci set network.wan6.device='br-wan'
-
-			setipaddr=$(uci get network.lan.ipaddr)
-
-			if [ "$setipaddr"  = "192.168.1.1" ]; then
-				. $tmpdir/devicemac
-
-				for i in $(seq 9 1 64); do
-					#choose start point of sequence away from end eg "9"
-					cpipsubnet=$((0x$(printf "$devicemac" | sha256sum | awk '{printf $1}' | tail -c$i | head -c2)))
-
-					#Check for max
-					if [ $cpipsubnet -ge 255 ];then
-						continue
-					fi
-
-					#Skip 168, 167, 0
-					if [ $cpipsubnet -eq 168 ] || [ $cpipsubnet -eq 167 ] || [ $cpipsubnet -eq 0 ];then
-						continue
-					fi
-
-					break
-				done
-
-				newipaddr="192.168.$cpipsubnet.1"
-				echo "set network.lan.ipaddr='$newipaddr'" | uci batch
-			fi
 
 			# Refresh the ipaddr
 			setipaddr=$(uci get network.lan.ipaddr)
