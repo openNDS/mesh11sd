@@ -828,7 +828,7 @@ check_channel() {
 				link_to_portal=$(cat $tmpdir/dhcp6probe | grep -q -w "Got a valid ADVERTISE" ; echo -n "$?")
 
 				# NOTE: odhcp6c -p option does not work and pid is not recorded, so we have to look up the pid using ps utility
-				instances=$(ps | grep "odhcp6c" | grep "/var/run/odhcp6c-renew-br-wan.pid" | awk '{printf "%s ", $1}')
+				instances=$(ps | grep "odhcp6c" | grep "/var/run/odhcp6c-renew-$device.pid" | awk '{printf "%s ", $1}')
 
 				for instance in $instances; do
 					kill "$instance"
