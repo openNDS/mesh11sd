@@ -1,3 +1,8 @@
+mesh11sd (4.1.1)
+  * Fix - hardcoded mesh bridge name causing multiple instances of odhcp6c in non-cpe peer mode [bluewavenet]
+
+ -- Rob White <dot@blue-wave.net>  Wed, 31 July 2024 07:10:52 +0000
+
 mesh11sd (4.1.0)
   * Add - cli option dhcp4_renew [bluewavenet]
   * Add - default owe transition mode [bluewavenet]
