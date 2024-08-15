@@ -215,7 +215,7 @@ get_current_setup () {
 	portal_detect_threshold=$(uci get mesh11sd.setup.portal_detect_threshold 2> /dev/null)
 
 	if [ -z "$portal_detect_threshold" ]; then
-		portal_detect_threshold=0
+		portal_detect_threshold=10
 	fi
 
 	syslogmessage="option portal_detect_threshold [ $portal_detect_threshold ]"
