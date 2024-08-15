@@ -449,14 +449,14 @@ get_current_setup () {
 	fi
 
 	if [ -z "$mesh_gate_only" ]; then
-		mesh_gate_only="0"
+		mesh_gate_only="1"
 	fi
 
 	if [ "$mesh_gate_only" -eq 1 ] && [ "$mesh_gate_enable" -eq 0 ]; then
 		mesh_gate_only="0"
 	fi
 
-	syslogmessage="option mesh_gate_only [ $mesh_gate_only ]"
+	syslogmessage="option mesh_leechmode_enable [ $mesh_gate_only ]"
 	debugtype="info"
 	write_to_syslog
 
