@@ -1804,7 +1804,6 @@ owe_transition() {
 	done
 
 	echo "set wireless.owe$radio_index.ifname='owe-$radio_index'" | uci batch
-	echo "set wireless.owe$radio_index.owe_transition_ifname='open-$radio_index'" | uci batch
 	echo "set wireless.owe$radio_index.hidden='1'" | uci batch
 	echo "set wireless.owe$radio_index.encryption='owe'" | uci batch
 
