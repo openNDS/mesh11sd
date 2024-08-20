@@ -1814,6 +1814,7 @@ urlencode() {
 		s/%/%25/g
 		s/\s/%20/g
 		s/\"/%22/g
+		s/-/%2D/g
 		s/:/%3A/g
 		s/>/%3E/g
 		s/</%3C/g
@@ -1833,6 +1834,7 @@ urlencode() {
 urldecode() {
 	entitylist="
 		s/%22/\"/g
+		s/%2D/-/g
 		s/%3A/:/g
 		s/%3E/>/g
 		s/%3C/</g
@@ -2151,6 +2153,26 @@ check_mesh_gate_only() {
 		fi
 
 		mesh_gate_only=$current_mgo_option
+	fi
+}
+
+is_installed() {
+	# Check if a package is installed
+	package="$1"
+	is_opkg=$(type "opkg" &> /dev/null; echo $?)
+	is_apk=$(type "apk" &> /dev/null; echo $?)
+
+	if [ -z "$package" ]; then
+		exitcode=2
+	elif [ "$is_opkg" -eq 0 ]; then
+		matches=$(opkg list-installed | grep -w "$package"" ")
+		urlencode "$matches"; encmatches="$urlencoded"
+		urlencode "$package"; encpackage="$urlencoded"
+		exitcode=$(echo "$encmatches" | grep -w -q "$encpackage"; echo $?)
+	elif [ "$is_apk" -eq 0 ]; then
+		exitcode=$(apk list -I "$package" 2>/dev/null  | grep -w -q "$package"; echo $?)
+	else
+		exitcode=127
 	fi
 }
 
@@ -2901,6 +2923,19 @@ elif [ "$1" = "dhcp4_renew" ]; then
 	dhcpdevice=$(echo "get network.$auto_mesh_network.device" | uci batch | awk '{printf "%s", $1}')
 	dhcp4_renew
 	exit 0
+
+elif [ "$1" = "is_installed" ]; then
+	is_installed $2
+
+	case $exitcode in
+		0) echo "Package [ $2 ] is installed";;
+		1) echo "Package [ $2 ] is NOT installed";;
+		2) echo "Package NOT specified";;
+		127) echo "Error: Package manager cannot be identified";;
+		*) echo "Unexpected Error.....";;
+	esac
+
+	exit $exitcode
 
 elif [ "$1" = "daemon" ]; then
 	debugtype="notice"
