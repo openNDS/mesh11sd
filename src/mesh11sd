@@ -2902,22 +2902,34 @@ elif [ "$1" = "mesh_rssi_threshold" ]; then
 	exit 0
 
 elif [ "$1" = "opkg_force_ipv4" ]; then
+	is_opkg=$(type "opkg" &> /dev/null; echo $?)
 
-	if ! grep "#!/bin/sh" /usr/bin/wget; then
-		mv /usr/bin/wget /usr/bin/wget.bak
-		echo -e "#!/bin/sh\n/usr/bin/wget.bak -4 \"\$@\"" > /usr/bin/wget && chmod +x /usr/bin/wget
+	if [ "$is_opkg" -eq 0 ]; then
+
+		if ! grep "#!/bin/sh" /usr/bin/wget; then
+			mv /usr/bin/wget /usr/bin/wget.bak
+			echo -e "#!/bin/sh\n/usr/bin/wget.bak -4 \"\$@\"" > /usr/bin/wget && chmod +x /usr/bin/wget
+		fi
+
+		exit 0
 	fi
 
-	exit 0
+	exit 127
 
 elif [ "$1" = "opkg_revert_to_default" ]; then
+	is_opkg=$(type "opkg" &> /dev/null; echo $?)
 
-	if grep "#!/bin/sh" /usr/bin/wget; then
-		rm /usr/bin/wget
-		mv /usr/bin/wget.bak /usr/bin/wget
+	if [ "$is_opkg" -eq 0 ]; then
+
+		if grep "#!/bin/sh" /usr/bin/wget; then
+			rm /usr/bin/wget
+			mv /usr/bin/wget.bak /usr/bin/wget
+		fi
+
+		exit 0
 	fi
 
-	exit 0
+	exit 127
 
 elif [ "$1" = "dhcp4_renew" ]; then
 	dhcpdevice=$(echo "get network.$auto_mesh_network.device" | uci batch | awk '{printf "%s", $1}')
