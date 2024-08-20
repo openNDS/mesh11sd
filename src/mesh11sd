@@ -2259,6 +2259,11 @@ if [ -z "$1" ] || [ "$1" = "-h" ] || [ $1 = "--help" ] || [ $1 = "help" ]; then
   Usage: mesh11sd dhcp4_renew
     Renews the current dhcp4 lease
 
+  Option: is_installed
+  Usage: mesh11sd is_installed [packagename]
+    Checks if \"packagename\" is installed
+    Returns the installation status of the package and exit code 0 if installed
+
   For further documentation, see: https://github.com/openNDS/mesh11sd#readme
 
 "
