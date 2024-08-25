@@ -368,26 +368,27 @@ get_current_setup () {
 
 	#####
 	mesh_gate_encryption=$(uci get mesh11sd.setup.mesh_gate_encryption 2> /dev/null)
-	installed_wpad=$(opkg list-installed | grep "wpad" | awk '{printf "%s", $1}' | awk -F "-" '{print $2}')
+	package_list="wpad-mbedtls wpad-wolfssl wpad-openssl"
+	check_package_list
+	installed_wpad=$?
 
-	if [ -z "$installed_wpad" ]; then
-		installed_wpad="none"
+	if [ "$installed_wpad" -gt 0 ]; then
+		package_list="wpad-mesh-mbedtls wpad-mesh-wolfssl wpad-mesh-openssl"
+		check_package_list
+		installed_mesh_wpad=$?
+
+		if [ "$installed_mesh_wpad" -gt 0 ]; then
+			mesh_gate_encryption=0
+		fi
 	fi
 
 	if [ -z "$mesh_gate_encryption" ]; then
 		mesh_gate_encryption=0
 	fi
 
-	if [ "$mesh_gate_encryption" -eq 4 ]; then
-		case $installed_wpad in
-			"mesh") mesh_gate_encryption=0;;
-			"mbedtls") mesh_gate_encryption=4;;
-			"wolfssl") mesh_gate_encryption=4;;
-			"openssl") mesh_gate_encryption=4;;
-			*) mesh_gate_encryption=0;;
-		esac
+	if [ "$mesh_gate_encryption" -eq 4 ] && [ "$installed_wpad" -gt 0 ]; then
+		mesh_gate_encryption=0
 	fi
-
 
 	if [ "$mesh_gate_encryption" -le 4 ]; then
 		syslogmessage="option mesh_gate_encryption [ $mesh_gate_encryption ]"
@@ -1562,9 +1563,9 @@ auto_config() {
 	meshifenabled=0
 
 	# Are we using ath10k drivers?
-	ath10k_ct=$(opkg list-installed | grep "ath10k"| grep -c "\-ct")
+	is_installed "kmod-ath10k-ct"
 
-	if [ "$ath10k_ct" -gt 0 ]; then
+	if [ "$exitcode" -eq 0 ]; then
 		debugtype="err"
 		syslogmessage="Unable to autoconfigure. Please install ath10k NON ct drivers for mesh support"
 		write_to_syslog
@@ -1574,9 +1575,10 @@ auto_config() {
 	if [ "$autoconfig" -eq 0 ]; then
 
 		# do we have a mesh supporting wpad?
-		installed_wpad=$(opkg list-installed | grep "wpad" | awk '{printf "%s", $1}' | awk -F "-" '{print $2}')
+		package_list="wpad-mbedtls wpad-wolfssl wpad-openssl wpad-mesh-mbedtls wpad-mesh-wolfssl wpad-mesh-openssl"
+		check_package_list
 
-		if [ "$installed_wpad" = "mesh" ] || [ "$installed_wpad" = "mbedtls" ] || [ "$installed_wpad" = "wolfssl" ] || [ "$installed_wpad" = "openssl" ]; then
+		if [ "$?" -eq 0 ]; then
 
 			refresh_bridgemac
 			. $tmpdir/devicemac
@@ -1732,9 +1734,9 @@ auto_config() {
 				esac
 
 				if [ "$encryption_type" = "owe" ] || [ "$encryption_type" = "none" ]; then
-					wpad_pkg=$(opkg list-installed | grep "wpad" | awk '{printf "%s", $1}')
 
-					if [ $wpad_pkg = "wpad-mbedtls" ] || [ $wpad_pkg = "wpad-wolfssl" ] || [ $wpad_pkg = "wpad-openssl" ]; then
+					if [ "$wpad_mbedtls" -eq 0 ] || [ "$wpad_wolfssl" -eq 0 ] || [ "$wpad_openssl" -eq 0 ]; then
+
 						# We have a full version so owe is supported
 						owe_able=1
 						debugtype="notice"
@@ -2174,6 +2176,32 @@ is_installed() {
 	else
 		exitcode=127
 	fi
+}
+
+check_package_list() {
+	# Expects $package_list, a space separated list of package names to check
+	# eg package_list="wpad-mbedtls wpad-wolfssl wpad-openssl"
+	# returns 0 if any of the listed packages is installed
+	# sets a variable-name equal to the package name (with hyphens translated to underscores) with value 0 if installed or 1 if not
+
+	if [ -z "$package_list" ]; then
+		return 127
+	fi
+
+	retval=1
+
+	for package in $package_list; do
+		# translate any hyphens to underscores
+		pkg=$(echo "$package" | sed s/-/_/g)
+		is_installed "$package"
+		eval $pkg=$exitcode
+
+		if [ "$exitcode" -eq 0 ]; then
+			retval=0
+		fi
+	done
+
+	return $retval
 }
 
 ##############
