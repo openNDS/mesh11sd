@@ -401,8 +401,6 @@ get_current_setup () {
 	fi
 
 	#####
-
-	#####
 	mesh_gate_key=$(uci get mesh11sd.setup.mesh_gate_key 2> /dev/null)
 
 	if [ -z "$mesh_gate_key" ]; then
@@ -427,8 +425,6 @@ get_current_setup () {
 	fi
 
 	#####
-
-	#####
 	mesh_gate_enable=$(uci get mesh11sd.setup.mesh_gate_enable 2> /dev/null)
 
 	if [ -z "$mesh_gate_enable" ]; then
@@ -438,8 +434,6 @@ get_current_setup () {
 	syslogmessage="option mesh_gate_enable [ $mesh_gate_enable ]"
 	debugtype="info"
 	write_to_syslog
-
-	#####
 
 	#####
 	# mesh_gate_only deprecated as a config option - use mesh_leechmode_enable instead as the config option
@@ -511,6 +505,36 @@ get_current_setup () {
 	fi
 
 	syslogmessage="option mesh_path_stabilisation [ $mesh_path_stabilisation ]"
+	debugtype="info"
+	write_to_syslog
+
+	#####
+	mesh_mac_forced_forwarding=$(uci get mesh11sd.setup.mesh_mac_forced_forwarding 2> /dev/null)
+
+	if [ -z "$mesh_mac_forced_forwarding" ]; then
+		mesh_mac_forced_forwarding="0"
+	fi
+
+	if [ "$mesh_mac_forced_forwarding" -ne 0 ]; then
+		mesh_mac_forced_forwarding="1"
+	fi
+
+	syslogmessage="option mesh_mac_forced_forwarding [ $mesh_mac_forced_forwarding ]"
+	debugtype="info"
+	write_to_syslog
+
+	#####
+	gateway_proxy_arp=$(uci get mesh11sd.setup.gateway_proxy_arp 2> /dev/null)
+
+	if [ -z "$gateway_proxy_arp" ]; then
+		gateway_proxy_arp="1"
+	fi
+
+	if [ "$gateway_proxy_arp" -ne 0 ]; then
+		gateway_proxy_arp="1"
+	fi
+
+	syslogmessage="option gateway_proxy_arp [ $gateway_proxy_arp ]"
 	debugtype="info"
 	write_to_syslog
 }
@@ -1637,6 +1661,7 @@ auto_config() {
 					if [ "$band" = "$mesh_band" ] && [ "$meshifenabled" -eq 0 ]; then
 						echo "set wireless.m11s$phyindex.disabled='0'" | uci batch
 						meshifenabled=1
+						echo "active_mesh_ifname=\"$mesh_basename$phyindex\"" > $tmpdir/active_mesh_ifname
 					else
 						echo "set wireless.m11s$phyindex.disabled='1'" | uci batch
 					fi
@@ -1857,6 +1882,7 @@ urldecode() {
 
 arp_setup() {
 	refresh_bridgemac
+	# Set arp and ndp defaults
 	echo 1 > /proc/sys/net/ipv4/conf/all/arp_accept
 	echo 1 > /proc/sys/net/ipv4/conf/default/arp_accept
 	echo 1 > /proc/sys/net/ipv4/conf/$device/arp_accept
@@ -1872,12 +1898,12 @@ arp_setup() {
 	echo 1 > /proc/sys/net/ipv4/conf/all/arp_notify
 	echo 1 > /proc/sys/net/ipv4/conf/default/arp_notify
 	echo 1 > /proc/sys/net/ipv4/conf/$device/arp_notify
-	echo 1 > /proc/sys/net/ipv4/conf/all/proxy_arp
-	echo 1 > /proc/sys/net/ipv4/conf/default/proxy_arp
+	echo 0 > /proc/sys/net/ipv4/conf/all/proxy_arp
+	echo 0 > /proc/sys/net/ipv4/conf/default/proxy_arp
 	echo 1 > /proc/sys/net/ipv4/conf/$device/proxy_arp
-	echo 1 > /proc/sys/net/ipv4/conf/all/proxy_arp_pvlan
-	echo 1 > /proc/sys/net/ipv4/conf/default/proxy_arp_pvlan
-	echo 1 > /proc/sys/net/ipv4/conf/$device/proxy_arp_pvlan
+	echo 0 > /proc/sys/net/ipv4/conf/all/proxy_arp_pvlan
+	echo 0 > /proc/sys/net/ipv4/conf/default/proxy_arp_pvlan
+	echo 0 > /proc/sys/net/ipv4/conf/$device/proxy_arp_pvlan
 	echo 1 > /proc/sys/net/ipv4/conf/all/bc_forwarding
 	echo 1 > /proc/sys/net/ipv4/conf/default/bc_forwarding
 	echo 1 > /proc/sys/net/ipv4/conf/$device/bc_forwarding
@@ -3459,6 +3485,16 @@ elif [ "$1" = "daemon" ]; then
 
 						cpe_conf=1
 					fi
+				fi
+
+				if [ "$mesh_mac_forced_forwarding" -eq 1 ]; then
+					. $tmpdir/active_mesh_ifname
+					echo 1 > /proc/sys/net/ipv4/conf/$active_mesh_ifname/proxy_arp_pvlan
+				fi
+
+				if [ "$gateway_proxy_arp" -eq 0 ]; then
+					. $tmpdir/devicemac
+					echo 0 > /proc/sys/net/ipv4/conf/$device/proxy_arp
 				fi
 			fi
 
