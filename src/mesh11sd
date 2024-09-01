@@ -537,6 +537,36 @@ get_current_setup () {
 	syslogmessage="option gateway_proxy_arp [ $gateway_proxy_arp ]"
 	debugtype="info"
 	write_to_syslog
+
+	#####
+	reboot_on_error=$(uci get mesh11sd.setup.reboot_on_error 2> /dev/null)
+
+	if [ -z "$reboot_on_error" ]; then
+		reboot_on_error="1"
+	fi
+
+	if [ "$reboot_on_error" -ne 0 ]; then
+		reboot_on_error="1"
+	fi
+
+	syslogmessage="option reboot_on_error [ $reboot_on_error ]"
+	debugtype="info"
+	write_to_syslog
+
+	#####
+	stop_on_error=$(uci get mesh11sd.setup.stop_on_error 2> /dev/null)
+
+	if [ -z "$stop_on_error" ]; then
+		stop_on_error="0"
+	fi
+
+	if [ "$stop_on_error" -ne 0 ]; then
+		stop_on_error="1"
+	fi
+
+	syslogmessage="option stop_on_error [ $stop_on_error ]"
+	debugtype="info"
+	write_to_syslog
 }
 
 check_config_params() {
@@ -1067,10 +1097,22 @@ get_portal_state() {
 				elif [ "$network_restart" -eq 3 ]; then
 					# restarting the network did not work so:
 					debugtype="err"
-					syslogmessage="portal detect threshold exceeded, restarting network did not work... rebooting node"
-					write_to_syslog
-					write_to_watchdog_nonvolatile_log
-					reboot
+
+					if [ "$stop_on_error" -gt 0 ]; then
+						syslogmessage="portal detect threshold exceeded, restarting network did not work... stopping daemon"
+						enabled=0
+						write_to_syslog
+						write_to_watchdog_nonvolatile_log
+					elif [ "$reboot_on_error" -gt 0 ]; then
+						syslogmessage="portal detect threshold exceeded, restarting network did not work... rebooting node"
+						write_to_syslog
+						write_to_watchdog_nonvolatile_log
+						reboot
+					else
+						#Reset the portal detect threshold. Keep trying to find a portal...
+						ip4pingfailcount=0
+						network_restart=0
+					fi
 				fi
 
 			fi
