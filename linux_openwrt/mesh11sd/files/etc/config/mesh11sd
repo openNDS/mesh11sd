@@ -245,7 +245,7 @@ config mesh11sd 'setup'
 	# as otherwise it could create unstable multi hop paths within the backhaul.
 	#
 	# Default: 0 (disabled)
-	# Set to 1 to enable (turns off the node's mesh forwarding and HWMP mac-routing)
+	# Set to 1 to enable (turns off the node's mesh forwarding and active HWMP mac-routing)
 	#
 	# Example - enable leach mode
 	#option mesh_leechmode_enable '1'
@@ -289,6 +289,48 @@ config mesh11sd 'setup'
 	#
 	# To disable, set to zero:
 	#option mesh_path_stabilisation '0'
+
+	###########################################################################################
+	# mesh_mac_forced_forwarding (optional)
+	#
+	# This enables mac forced forewarding on the mesh interface
+	#
+	# Default: 1 (enabled)
+	#
+	# To disable, set to zero:
+	#option mesh_mac_forced_forwarding '0'
+
+	###########################################################################################
+	# gateway_proxy_arp (optional)
+	#
+	# This enables proxy arp on the gateway bridge interface
+	#
+	# Default: 1 (enabled)
+	#
+	# To disable, set to zero:
+	#option gateway_proxy_arp '0'
+
+	###########################################################################################
+	# stop_on_error (optional)
+	#
+	# If the watchdog detects a failure of ipv4 communication with a portal, the daemon will go into idle mode
+	# This is useful if the meshnode does not have a reset button and a critical error occurs, blocking access
+	#
+	# Default: 0 (disabled)
+	#
+	# To enable, set to 1. This setting will overide the reboot_on_error setting
+	#option stop_on_error '0'
+
+	###########################################################################################
+	# reboot_on_error (optional)
+	#
+	# If the watchdog detects a failure of ipv4 communication with a portal, the daemon will reboot the node
+	#
+	# Default: 1 (enabled)
+	#
+	# To disable, set to zero:
+	#option reboot_on_error '0'
+
 
 config mesh11sd 'mesh_params'
 	# A minimum set of parameters is automatically set for initial startup and do not have to be configured here
