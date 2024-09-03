@@ -604,6 +604,19 @@ check_config_params() {
 	write_to_syslog
 
 	#####
+	mesh_confirm_timeout=$(uci get mesh11sd.mesh_params.mesh_confirm_timeout 2> /dev/null)
+
+	if [ -z "$mesh_confirm_timeout" ]; then
+		mesh_confirm_timeout="255"
+	fi
+
+	echo "set mesh11sd.mesh_params.mesh_confirm_timeout='$mesh_confirm_timeout'" | uci batch
+
+	syslogmessage="option mesh_confirm_timeout [ $mesh_confirm_timeout ]"
+	debugtype="info"
+	write_to_syslog
+
+	#####
 	mesh_rssi_threshold=$(uci get mesh11sd.mesh_params.mesh_rssi_threshold 2> /dev/null)
 
 	if [ -z "$mesh_rssi_threshold" ] || [ "$mesh_rssi_threshold" -gt 0 ]; then
