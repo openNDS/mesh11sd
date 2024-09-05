@@ -512,7 +512,7 @@ get_current_setup () {
 	mesh_mac_forced_forwarding=$(uci get mesh11sd.setup.mesh_mac_forced_forwarding 2> /dev/null)
 
 	if [ -z "$mesh_mac_forced_forwarding" ]; then
-		mesh_mac_forced_forwarding="0"
+		mesh_mac_forced_forwarding="1"
 	fi
 
 	if [ "$mesh_mac_forced_forwarding" -ne 0 ]; then
@@ -2464,6 +2464,11 @@ elif [ "$1" = "status" ]; then
 	echo "    \"portal_detect_threshold\":\"$portal_detect_threshold\","
 	echo "    \"portal_channel\":\"$portal_channel\","
 	echo "    \"channel_tracking_checkinterval\":\"$channel_tracking_checkinterval\","
+	echo "    \"mesh_mac_forced_forwarding\":\"$mesh_mac_forced_forwarding\","
+	echo "    \"gateway_proxy_arp\":\"$gateway_proxy_arp\","
+	echo "    \"reboot_on_error\":\"$reboot_on_error\","
+	echo "    \"stop_on_error\":\"$stop_on_error\","
+	echo "    \"watchdog_nonvolatile_log\":\"$watchdog_nonvolatile_log\","
 	echo "    \"mesh_basename\":\"$mesh_basename\","
 	echo "    \"auto_config\":\"$auto_config\","
 	echo "    \"auto_mesh_network\":\"$auto_mesh_network\","
