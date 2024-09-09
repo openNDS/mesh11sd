@@ -22,7 +22,7 @@ mkdir -p "$tmpdir"
 
 get_mesh_iflist () {
 	iflist=""
-	all_ifcs=$(iw dev | awk -F "Interface " '$2>0{printf "%s " $2}')
+	all_ifcs=$(iw dev | awk -F "Interface " '$2>0{printf "%s ", $2}')
 
 	for iface in $all_ifcs; do
 		iftype=$(iw dev $iface info 2> /dev/null | grep "type" | awk '{printf "%s", $2}')
@@ -952,7 +952,7 @@ scan_channel() {
 
 	if [ "$link_to_portal" -gt 0 ]; then
 		# No link to portal. Maybe we are on the wrong channel, so scan for meshid to get channel
-		meshconfigs=$(uci show wireless 2> /dev/null | grep "mode='mesh'" | awk -F ".mode='mesh'" '{printf "%s " $1}')
+		meshconfigs=$(uci show wireless 2> /dev/null | grep "mode='mesh'" | awk -F ".mode='mesh'" '{printf "%s ", $1}')
 
 		if [ ! -z "$meshconfigs" ]; then
 
@@ -1615,7 +1615,7 @@ get_peers() {
 ccpy_setup() {
 	get_peers
 
-	meshconfigs=$(uci show wireless 2> /dev/null | grep "mode='mesh'" | awk -F ".mode='mesh'" '{printf "%s " $1}')
+	meshconfigs=$(uci show wireless 2> /dev/null | grep "mode='mesh'" | awk -F ".mode='mesh'" '{printf "%s ", $1}')
 	connectlist=""
 
 	if [ ! -z "$meshconfigs" ]; then
@@ -3311,7 +3311,7 @@ elif [ "$1" = "daemon" ]; then
 
 		if [ "$enabled" = 1 ]; then
 			#get list of mesh configs
-			meshconfigs=$(uci show wireless 2> /dev/null | grep "mode='mesh'" | awk -F ".mode='mesh'" '{printf "%s " $1}')
+			meshconfigs=$(uci show wireless 2> /dev/null | grep "mode='mesh'" | awk -F ".mode='mesh'" '{printf "%s ", $1}')
 
 			if [ -z "$meshconfigs" ]; then
 				# no mesh configuration yet
@@ -3335,7 +3335,7 @@ elif [ "$1" = "daemon" ]; then
 
 			# Is the list of meshconfigs still empty?
 			if [ -z "$meshconfigs" ]; then
-				meshconfigs=$(uci show wireless 2> /dev/null | grep "mode='mesh'" | awk -F ".mode='mesh'" '{printf "%s " $1}')
+				meshconfigs=$(uci show wireless 2> /dev/null | grep "mode='mesh'" | awk -F ".mode='mesh'" '{printf "%s ", $1}')
 			fi
 
 			if [ ! -z "$meshconfigs" ]; then
