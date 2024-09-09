@@ -42,7 +42,7 @@ check_mesh_phantom () {
 		syslogmessage="node [$node]"
 		write_to_syslog
 
-		phantom=$(echo "$node" | awk -F"," '$2 == "00:00:00:00:00:00" {printf $1 }')
+		phantom=$(echo "$node" | awk -F"," '$2 == "00:00:00:00:00:00" {printf "%s", $1}')
 
 		if [ ! -z "$phantom" ]; then
 			debugtype="info"
@@ -57,7 +57,7 @@ get_params () {
 	params=$(iw dev $iface mesh_param dump 2> /dev/null)
 
 	if [ "$?" -ne 0 ]; then
-		buffer="/tmp/"$(date | sha256sum | awk '{printf $1}')
+		buffer="/tmp/"$(date | sha256sum | awk '{printf "%s", $1}')
 		param_list=$(iw dev $iface get mesh_param 2> /dev/null | grep " - " | awk -F" - " '{printf "%s ", $2}')
 		params=""
 
@@ -256,7 +256,7 @@ get_current_setup () {
 		auto_mesh_id="--__"
 	fi
 
-	auto_mesh_id=$(printf "$auto_mesh_id" | sha256sum | awk '{printf $1}' | tail -c55 | head -c30)
+	auto_mesh_id=$(printf "$auto_mesh_id" | sha256sum | awk '{printf "%s", $1}' | tail -c55 | head -c30)
 
 	syslogmessage="auto_mesh_id hash [ $auto_mesh_id ]"
 	debugtype="info"
@@ -1600,7 +1600,7 @@ get_peers() {
 		fi
 
 		peers=$(iw dev $miface mpath dump | grep -c -w $miface)
-		macrouting=$(iw dev $miface mpath dump | awk -F" " 'NR>1 {printf "%s/%s ",$1,$2}')
+		macrouting=$(iw dev $miface mpath dump | awk -F" " 'NR>1 {printf "%s/%s ", $1, $2}')
 
 		for peer in $macrouting; do
 			peermac=$(echo "$peer" | awk -F"/" '{printf "%s", $1}')
@@ -1776,7 +1776,7 @@ auto_config() {
 
 								for i in $(seq 9 1 64); do
 									#choose start point of sequence away from end eg "9"
-									chan=$((0x$(printf "$devicemac" | sha256sum | awk '{printf $1}' | tail -c$i | head -c1)))
+									chan=$((0x$(printf "$devicemac" | sha256sum | awk '{printf "%s", $1}' | tail -c$i | head -c1)))
 
 									#Check for max
 									if [ "$chan" -gt 13 ]; then
@@ -2026,12 +2026,12 @@ check_path_changes() {
 			# this is not a mesh interface
 			continue
 		else
-			macrouting=$(iw dev $iface mpath dump 2>/dev/null | awk -F" " 'NR>1 {printf "%s/%s/%s/%s/%s ",$1,$2,$5,$11,$12}')
+			macrouting=$(iw dev $iface mpath dump 2>/dev/null | awk -F" " 'NR>1 {printf "%s/%s/%s/%s/%s ", $1, $2, $5, $11, $12}')
 
 			if [ ! -z "$macrouting" ]; then
 				for peer in $macrouting; do
 					peermac=$(echo "$peer" | awk -F"/" '{printf "%s", $1}')
-					peermac_id=$(echo -n "$peermac" | sha256sum | awk '{printf $1}')
+					peermac_id=$(echo -n "$peermac" | sha256sum | awk '{printf "%s", $1}')
 
 					next_hop=$(echo "$peer" | awk -F"/" '{printf "%s", $2}')
 
@@ -2550,8 +2550,8 @@ elif [ "$1" = "status" ]; then
 
 				peernum=0
 				peers=$(iw dev $iface mpath dump 2>/dev/null | grep -c -w $iface)
-				macrouting=$(iw dev $iface mpath dump 2>/dev/null | awk -F" " 'NR>1 {printf "%s/%s/%s/%s/%s ",$1,$2,$5,$11,$12}')
-				peer_macs="$devicemac ""$(iw dev $iface mpath dump 2>/dev/null | awk -F" " 'NR>1 {printf "%s ",$1}')"
+				macrouting=$(iw dev $iface mpath dump 2>/dev/null | awk -F" " 'NR>1 {printf "%s/%s/%s/%s/%s ", $1, $2, $5, $11, $12}')
+				peer_macs="$devicemac ""$(iw dev $iface mpath dump 2>/dev/null | awk -F" " 'NR>1 {printf "%s ", $1}')"
 
 				echo "      \"this_node\":\"$devicemac\","
 				echo "      \"active_peers\":\"$peers\","
@@ -2595,8 +2595,8 @@ elif [ "$1" = "status" ]; then
 
 				stanum=0
 				stations=0
-				starouting="$starouting"$(iw dev $iface mpp dump | awk -F" " 'NR>1 {printf "%s/%s ",$1,$2}')
-				stas=$(iw dev $iface mpp dump | awk -F" " 'NR>1 {printf "%s ",$1}')
+				starouting="$starouting"$(iw dev $iface mpp dump | awk -F" " 'NR>1 {printf "%s/%s ", $1, $2}')
+				stas=$(iw dev $iface mpp dump | awk -F" " 'NR>1 {printf "%s ", $1}')
 				stas="$ap_stas""$stas"
 
 				for sta in $stas; do
@@ -2726,7 +2726,7 @@ elif [ "$1" = "copy" ]; then
 	fi
 	nodeaddr=$(printf "%s" "$2" | tr "-" ":" | tr "[A-Z]" "[a-z]")
 	filepath=$3
-	filename=$(echo "$filepath" | awk -F "/" '{printf $NF}')
+	filename=$(echo "$filepath" | awk -F "/" '{printf "%s", $NF}')
 
 	echo "==========================================================================="
 
@@ -3127,7 +3127,7 @@ elif [ "$1" = "daemon" ]; then
 
 			for i in $(seq 9 1 64); do
 				#choose start point of sequence away from end eg "9"
-				cpipsubnet=$((0x$(printf "$devicemac" | sha256sum | awk '{printf $1}' | tail -c$i | head -c2)))
+				cpipsubnet=$((0x$(printf "$devicemac" | sha256sum | awk '{printf "%s", $1}' | tail -c$i | head -c2)))
 
 				#Check for max
 				if [ $cpipsubnet -ge 255 ];then
@@ -3430,7 +3430,7 @@ elif [ "$1" = "daemon" ]; then
 					continue
 				else
 					# Check if this interface has a uci ifname
-					uciname=$(uci show wireless | grep "ifname='$iface'" | awk -F "." '{printf "wireless.%s" $2}')
+					uciname=$(uci show wireless | grep "ifname='$iface'" | awk -F "." '{printf "wireless.%s", $2}')
 
 					if [ -z "$uciname" ]; then
 						# Error - No interface name in config, auto config would have added one
