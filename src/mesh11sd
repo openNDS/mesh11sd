@@ -1846,13 +1846,13 @@ auto_config() {
 						# We have a full version so owe is supported
 						owe_able=1
 						debugtype="notice"
-						syslogmessage="$wpad_pkg is installed, owe supported"
+						syslogmessage="full version of wpad is installed, owe supported"
 						write_to_syslog
 					else
 						encryption_type="none"
 						owe_able=0
 						debugtype="err"
-						syslogmessage="$wpad_pkg does not support owe, install a full version of wpad"
+						syslogmessage="owe not supported, install a full version of wpad"
 						write_to_syslog
 					fi
 
