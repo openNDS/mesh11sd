@@ -612,7 +612,7 @@ Here is a list of available parameters and their function:
 
  * mesh_retry_timeout: the initial retry timeout in millisecond units used by the Mesh Peering Open message
 
- * mesh_confirm_timeout: the initial retry timeout in millisecond units used by the Mesh Peering Open message
+ * mesh_confirm_timeout: the initial confirm timeout in millisecond units used by the Mesh Peering Open message
 
  * mesh_holding_timeout: the confirm timeout in millisecond units used by the mesh peering management to close a mesh peering
 

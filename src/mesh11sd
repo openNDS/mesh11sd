@@ -22,7 +22,7 @@ mkdir -p "$tmpdir"
 
 get_mesh_iflist () {
 	iflist=""
-	all_ifcs=$(iw dev | awk -F "Interface " '$2>0{printf "%s " $2}')
+	all_ifcs=$(iw dev | awk -F "Interface " '$2>0{printf "%s ", $2}')
 
 	for iface in $all_ifcs; do
 		iftype=$(iw dev $iface info 2> /dev/null | grep "type" | awk '{printf "%s", $2}')
@@ -512,7 +512,7 @@ get_current_setup () {
 	mesh_mac_forced_forwarding=$(uci get mesh11sd.setup.mesh_mac_forced_forwarding 2> /dev/null)
 
 	if [ -z "$mesh_mac_forced_forwarding" ]; then
-		mesh_mac_forced_forwarding="0"
+		mesh_mac_forced_forwarding="1"
 	fi
 
 	if [ "$mesh_mac_forced_forwarding" -ne 0 ]; then
@@ -587,6 +587,45 @@ check_config_params() {
 	echo "set mesh11sd.mesh_params.mesh_fwding='$mesh_fwding'" | uci batch
 
 	syslogmessage="option mesh_fwding [ $mesh_fwding ]"
+	debugtype="info"
+	write_to_syslog
+
+	#####
+	mesh_retry_timeout=$(uci get mesh11sd.mesh_params.mesh_retry_timeout 2> /dev/null)
+
+	if [ -z "$mesh_retry_timeout" ]; then
+		mesh_retry_timeout="255"
+	fi
+
+	echo "set mesh11sd.mesh_params.mesh_retry_timeout='$mesh_retry_timeout'" | uci batch
+
+	syslogmessage="option mesh_retry_timeout [ $mesh_retry_timeout ]"
+	debugtype="info"
+	write_to_syslog
+
+	#####
+	mesh_confirm_timeout=$(uci get mesh11sd.mesh_params.mesh_confirm_timeout 2> /dev/null)
+
+	if [ -z "$mesh_confirm_timeout" ]; then
+		mesh_confirm_timeout="255"
+	fi
+
+	echo "set mesh11sd.mesh_params.mesh_confirm_timeout='$mesh_confirm_timeout'" | uci batch
+
+	syslogmessage="option mesh_confirm_timeout [ $mesh_confirm_timeout ]"
+	debugtype="info"
+	write_to_syslog
+
+	#####
+	mesh_holding_timeout=$(uci get mesh11sd.mesh_params.mesh_holding_timeout 2> /dev/null)
+
+	if [ -z "$mesh_holding_timeout" ]; then
+		mesh_holding_timeout="255"
+	fi
+
+	echo "set mesh11sd.mesh_params.mesh_holding_timeout='$mesh_holding_timeout'" | uci batch
+
+	syslogmessage="option mesh_holding_timeout [ $mesh_holding_timeout ]"
 	debugtype="info"
 	write_to_syslog
 
@@ -913,7 +952,7 @@ scan_channel() {
 
 	if [ "$link_to_portal" -gt 0 ]; then
 		# No link to portal. Maybe we are on the wrong channel, so scan for meshid to get channel
-		meshconfigs=$(uci show wireless 2> /dev/null | grep "mode='mesh'" | awk -F ".mode='mesh'" '{printf "%s " $1}')
+		meshconfigs=$(uci show wireless 2> /dev/null | grep "mode='mesh'" | awk -F ".mode='mesh'" '{printf "%s ", $1}')
 
 		if [ ! -z "$meshconfigs" ]; then
 
@@ -1576,7 +1615,7 @@ get_peers() {
 ccpy_setup() {
 	get_peers
 
-	meshconfigs=$(uci show wireless 2> /dev/null | grep "mode='mesh'" | awk -F ".mode='mesh'" '{printf "%s " $1}')
+	meshconfigs=$(uci show wireless 2> /dev/null | grep "mode='mesh'" | awk -F ".mode='mesh'" '{printf "%s ", $1}')
 	connectlist=""
 
 	if [ ! -z "$meshconfigs" ]; then
@@ -2425,6 +2464,11 @@ elif [ "$1" = "status" ]; then
 	echo "    \"portal_detect_threshold\":\"$portal_detect_threshold\","
 	echo "    \"portal_channel\":\"$portal_channel\","
 	echo "    \"channel_tracking_checkinterval\":\"$channel_tracking_checkinterval\","
+	echo "    \"mesh_mac_forced_forwarding\":\"$mesh_mac_forced_forwarding\","
+	echo "    \"gateway_proxy_arp\":\"$gateway_proxy_arp\","
+	echo "    \"reboot_on_error\":\"$reboot_on_error\","
+	echo "    \"stop_on_error\":\"$stop_on_error\","
+	echo "    \"watchdog_nonvolatile_log\":\"$watchdog_nonvolatile_log\","
 	echo "    \"mesh_basename\":\"$mesh_basename\","
 	echo "    \"auto_config\":\"$auto_config\","
 	echo "    \"auto_mesh_network\":\"$auto_mesh_network\","
@@ -3267,7 +3311,7 @@ elif [ "$1" = "daemon" ]; then
 
 		if [ "$enabled" = 1 ]; then
 			#get list of mesh configs
-			meshconfigs=$(uci show wireless 2> /dev/null | grep "mode='mesh'" | awk -F ".mode='mesh'" '{printf "%s " $1}')
+			meshconfigs=$(uci show wireless 2> /dev/null | grep "mode='mesh'" | awk -F ".mode='mesh'" '{printf "%s ", $1}')
 
 			if [ -z "$meshconfigs" ]; then
 				# no mesh configuration yet
@@ -3291,7 +3335,7 @@ elif [ "$1" = "daemon" ]; then
 
 			# Is the list of meshconfigs still empty?
 			if [ -z "$meshconfigs" ]; then
-				meshconfigs=$(uci show wireless 2> /dev/null | grep "mode='mesh'" | awk -F ".mode='mesh'" '{printf "%s " $1}')
+				meshconfigs=$(uci show wireless 2> /dev/null | grep "mode='mesh'" | awk -F ".mode='mesh'" '{printf "%s ", $1}')
 			fi
 
 			if [ ! -z "$meshconfigs" ]; then
