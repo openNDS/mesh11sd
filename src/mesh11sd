@@ -1234,31 +1234,25 @@ get_portal_state() {
 				# we have reached the portal detect threshold. This either means there is no portal, or something has stopped working
 
 				if [ "$network_restart" -eq 0 ]; then
-					# Try clearing the routing table:
 					dhcpdevice=$(echo "get network.$auto_mesh_network.device" | uci batch | awk '{printf "%s", $1}')
 					debugtype="err"
-					syslogmessage="portal detect threshold reached, flushing routing tables"
+					syslogmessage="portal detect threshold reached, watchdog is monitoring"
 					write_to_syslog
 					write_to_watchdog_nonvolatile_log
 					network_restart=1
-#					ip neigh flush dev "$device"
-#					dhcp4_renew
-
+					dhcp4_renew
 				elif [ "$network_restart" -eq 1 ]; then
 					dhcpdevice=$(echo "get network.$auto_mesh_network.device" | uci batch | awk '{printf "%s", $1}')
 					debugtype="notice"
-					syslogmessage="portal detect threshold exceeded, restarting wpad..."
+					syslogmessage="portal detect threshold exceeded, watchdog continuing to monitor..."
 					write_to_syslog
 					write_to_watchdog_nonvolatile_log
 					network_restart=2
-#					/sbin/service wpad restart
-#					wait_for_mesh
-#					dhcp4_renew
-
+					dhcp4_renew
 				elif [ "$network_restart" -eq 2 ]; then
 					dhcpdevice=$(echo "get network.$auto_mesh_network.device" | uci batch | awk '{printf "%s", $1}')
 					debugtype="notice"
-					syslogmessage="portal detect threshold exceeded, restarting network..."
+					syslogmessage="portal detect threshold exceeded, watchdog is restarting the network..."
 					write_to_syslog
 					write_to_watchdog_nonvolatile_log
 					network_restart=3
