@@ -1396,17 +1396,20 @@ check_portal() {
 				ip route flush default
 				hostname=$(uci get system.@system[0].hostname 2>/dev/null)
 
-				# Start the dhcp client
-				dhcpstatus=$(udhcpc -p /var/run/udhcpc-$device.pid -b -t 3 -i $device -x hostname:$hostname -C -R -O 121)
-				echo "$dhcpstatus" | grep "setting default routers"
-				dhcptest=$?
+#				# Start the dhcp client
+#				dhcpstatus=$(udhcpc -p /var/run/udhcpc-$device.pid -b -t 3 -i $device -x hostname:$hostname -C -R -O 121)
+#				echo "$dhcpstatus" | grep "setting default routers"
+#				dhcptest=$?
+#
+#				if [ "$dhcptest" -eq 0 ]; then
+#					debugtype="debug"
+#					syslogmessage="Remote dhcpv4 server found"
+#					write_to_syslog
+#				fi
 
-				if [ "$dhcptest" -eq 0 ]; then
-					debugtype="debug"
-					syslogmessage="Remote dhcpv4 server found"
-					write_to_syslog
-				fi
 
+				uci set network.lan.proto='dhcp'
+				/sbin/service network reload
 				uci set dhcp.@dnsmasq[0].authoritative='0'
 				echo "set dhcp.$auto_mesh_network.ignore='1'" | uci batch
 				echo "set dhcp.$auto_mesh_network.ra_default='2'" | uci batch
@@ -1473,6 +1476,9 @@ check_portal() {
 				debugtype="debug"
 				syslogmessage="This meshnode is an upstream portal"
 				write_to_syslog
+
+				uci set network.lan.proto='static'
+				/sbin/service network reload
 
 				uci set dhcp.@dnsmasq[0].authoritative='1'
 				echo "set dhcp.$auto_mesh_network.ignore='0'" | uci batch
@@ -2468,141 +2474,164 @@ check_package_list() {
 	return $retval
 }
 
+create_vxlan_if() {
+	debugtype="debug"
+	syslogmessage="create_vxlan_if [ vxlan$tun_id ], address [ $vxmac_indexed ], local [ $link_local_addr ], group [ ff02::$tun_id ]"
+	write_to_syslog
+
+	ip -6 link add "vxlan$tun_id" \
+		address "$vxmac_indexed" \
+		type vxlan \
+		id "$tun_id" \
+		dstport 4789 \
+		local "$link_local_addr" \
+		group "ff02::$tun_id" \
+		dev "$device" \
+		ttl 5
+
+	ip link set "vxlan$tun_id" up
+
+	ip link set "$active_mesh_ifname" mtu 1600
+	ip link set "$device" mtu 1600
+	ip link set "vxlan$tun_id" mtu 1500
+}
+
 check_vtunnel() {
 	# Check if vxlan tunnel is required and set it up
-	vxlan_status=$(ip link show vxlan$vxlan &> /dev/null; echo $?)
 
-	if [ "$vxlan_status" -eq 0 ]; then
-		vtunnel=""
-	fi
+	if [ "$vtun_enable" = 1 ]; then
+		debugtype="debug"
+		syslogmessage="check_vtunnel"
+		write_to_syslog
 
-	package_list="ip-full vxlan"
-	check_package_list
+		vxlan_status=$(ip link show vxlan$tun_id &> /dev/null; echo $?)
 
-	if [ "$ip_full" ] && [ "$vxlan" ] && [ -z "$vtunnel" ]; then
-		# we have ip-full and vxlan packages
-		. $tmpdir/active_mesh_ifname
-		. $tmpdir/devicemac
-
-		if [ -z "$is_portal" ]; then
-			proto="none"
-		else
-			proto="static"
+		if [ "$vxlan_status" -eq 0 ]; then
+			vtunnel=""
 		fi
 
-		uci set network.vtunnel=device
-		echo "set network.vtunnel.name='br-tun$tun_id'" | uci batch
-		uci set network.vtunnel.type='bridge'
-		echo "set network.vtunnel.ports='vxlan$tun_id'" | uci batch
-		uci set network.vtunlan=interface
-		echo "set network.vtunlan.device='br-tun$tun_id'" | uci batch
-		echo "set network.vtunlan.ipaddr='$vtun_ip'" | uci batch
-		echo "set network.vtunlan.netmask='$vtun_mask'" | uci batch
-		echo "set network.vtunlan.proto='$proto'" | uci batch
-		uci set network.vtunlan.ip6assign='60'
+		package_list="ip-full vxlan"
+		check_package_list
 
-		uci set dhcp.vtunlan=dhcp
-		uci set dhcp.vtunlan.interface='vtunlan'
-		uci set dhcp.vtunlan.start='100'
-		uci set dhcp.vtunlan.limit='150'
-		uci set dhcp.vtunlan.leasetime='12h'
-		uci set dhcp.vtunlan.ra_slaac='1'
-		uci add_list dhcp.vtunlan.ra_flags='managed-config'
-		uci add_list dhcp.vtunlan.ra_flags='other-config'
-		uci set dhcp.vtunlan.ignore='1'
-		uci set dhcp.vtunlan.ra_default='2'
+		if [ "$ip_full" ] && [ "$vxlan" ] && [ -z "$vtunnel" ] && [ -z "$vxlan_if" ]; then
+			# we have ip-full and vxlan packages
+			debugtype="debug"
+			syslogmessage="vxtunnel configuration"
+			write_to_syslog
 
-		uci set firewall.vtunlan='zone'
-		uci set firewall.vtunlan.name='vtunlan'
-		uci set firewall.vtunlan.network='vtunlan'
-		uci set firewall.vtunlan.input='ACCEPT'
-		uci set firewall.vtunlan.output='ACCEPT'
-		uci set firewall.vtunlan.forward='REJECT'
+			. $tmpdir/active_mesh_ifname
+			. $tmpdir/devicemac
 
-		uci set firewall.dhcptun$tun_id=rule
-		uci set firewall.dhcptun$tun_id.name='VTUN-DHCP-Renew'
-		uci set firewall.dhcptun$tun_id.src='vtunlan'
-		uci set firewall.dhcptun$tun_id.proto='udp'
-		uci set firewall.dhcptun$tun_id.dest_port='67'
-		uci set firewall.dhcptun$tun_id.target='ACCEPT'
-		uci set firewall.dhcptun$tun_id.family='ipv4'
+			if [ -z "$is_portal" ]; then
+				proto="none"
+			else
+				proto="static"
+			fi
 
-		uci set firewall.dnstun$tun_id=rule
-		uci set firewall.dnstun$tun_id.name='VTUN-Allow-DNS'
-		uci set firewall.dnstun$tun_id.src='vtunlan'
-		uci set firewall.dnstun$tun_id.proto='udp tcp'
-		uci set firewall.dnstun$tun_id.dest_port='53'
-		uci set firewall.dnstun$tun_id.target='ACCEPT'
-		uci set firewall.dnstun$tun_id.family='ipv4'
+			uci set network.vtunnel=device
+			echo "set network.vtunnel.name='br-tun$tun_id'" | uci batch
+			uci set network.vtunnel.type='bridge'
+			echo "set network.vtunnel.ports='vxlan$tun_id'" | uci batch
+			uci set network.vtunlan=interface
+			echo "set network.vtunlan.device='br-tun$tun_id'" | uci batch
+			echo "set network.vtunlan.ipaddr='$vtun_ip'" | uci batch
+			echo "set network.vtunlan.netmask='$vtun_mask'" | uci batch
+			echo "set network.vtunlan.proto='$proto'" | uci batch
+			uci set network.vtunlan.ip6assign='60'
 
-		uci set firewall.vxlan=rule
-		uci set firewall.vxlan.name='Allow-vxlan'
-		uci set firewall.vxlan.src='lan'
-		uci set firewall.vxlan.proto='udp'
-		uci set firewall.vxlan.dest_port='4789'
-		uci set firewall.vxlan.target='ACCEPT'
-
-		uci set firewall.vxlan_fwd=forwarding
-		uci set firewall.vxlan_fwd.src='vtunlan'
-		uci set firewall.vxlan_fwd.dest='wan'
-
-
-		vtunnel="configured"
-		/sbin/service firewall restart
-		/sbin/service network reload
-
-
-		convert_to_la "$devicemac"
-		index=$(($index + 1))
-		make_indexed_mac "$mac_la" "$index"
-
-
-		link_local_addr=$(ip addr show "$device" | grep "inet6 fe80" | awk '{printf "%s", $2}' | awk -F "/" '{printf "%s", $1}')
-
-		ip -6 link add "vxlan$tun_id" \
-			address "$mac_indexed" \
-			type vxlan \
-			id "$tun_id" \
-			dstport 4789 \
-			local "$link_local_addr" \
-			group "ff02::$tun_id" \
-			dev "$device" \
-			ttl 5
-
-		ip link set "vxlan$tun_id" up
-
-		ip link set "$active_mesh_ifname" mtu 1600
-		ip link set "$device" mtu 1600
-		ip link set "vxlan$tun_id" mtu 1500
-	fi
-
-	if [ "$ip_full" ] && [ "$vxlan" ]; then
-		device="br-tun$tun_id"
-
-		if [ "$portal_detect" -gt 1 ] || [ -z "$is_portal" ]; then
-			uci set dhcp.vtunlan.dhcpv4='disabled'
-			uci set dhcp.vtunlan.dhcpv6='disabled'
-			uci set dhcp.vtunlan.ra='disabled'
+			uci set dhcp.vtunlan=dhcp
+			uci set dhcp.vtunlan.interface='vtunlan'
+			uci set dhcp.vtunlan.start='100'
+			uci set dhcp.vtunlan.limit='150'
+			uci set dhcp.vtunlan.leasetime='12h'
+			uci set dhcp.vtunlan.ra_slaac='1'
+			uci add_list dhcp.vtunlan.ra_flags='managed-config'
+			uci add_list dhcp.vtunlan.ra_flags='other-config'
 			uci set dhcp.vtunlan.ignore='1'
-		else
-			uci set dhcp.vtunlan.dhcpv4='server'
-			uci set dhcp.vtunlan.dhcpv6='server'
-			uci set dhcp.vtunlan.ra='server'
-			uci set dhcp.vtunlan.ignore='0'
+			uci set dhcp.vtunlan.ra_default='2'
+
+			uci set firewall.vtunlan='zone'
+			uci set firewall.vtunlan.name='vtunlan'
+			uci set firewall.vtunlan.network='vtunlan'
+			uci set firewall.vtunlan.input='ACCEPT'
+			uci set firewall.vtunlan.output='ACCEPT'
+			uci set firewall.vtunlan.forward='REJECT'
+
+			uci set firewall.dhcptun$tun_id=rule
+			uci set firewall.dhcptun$tun_id.name='VTUN-DHCP-Renew'
+			uci set firewall.dhcptun$tun_id.src='vtunlan'
+			uci set firewall.dhcptun$tun_id.proto='udp'
+			uci set firewall.dhcptun$tun_id.dest_port='67'
+			uci set firewall.dhcptun$tun_id.target='ACCEPT'
+			uci set firewall.dhcptun$tun_id.family='ipv4'
+
+			uci set firewall.dnstun$tun_id=rule
+			uci set firewall.dnstun$tun_id.name='VTUN-Allow-DNS'
+			uci set firewall.dnstun$tun_id.src='vtunlan'
+			uci set firewall.dnstun$tun_id.proto='udp tcp'
+			uci set firewall.dnstun$tun_id.dest_port='53'
+			uci set firewall.dnstun$tun_id.target='ACCEPT'
+			uci set firewall.dnstun$tun_id.family='ipv4'
+
+			uci set firewall.vxlan=rule
+			uci set firewall.vxlan.name='Allow-vxlan'
+			uci set firewall.vxlan.src='lan'
+			uci set firewall.vxlan.proto='udp'
+			uci set firewall.vxlan.dest_port='4789'
+			uci set firewall.vxlan.target='ACCEPT'
+
+			uci set firewall.vxlan_fwd=forwarding
+			uci set firewall.vxlan_fwd.src='vtunlan'
+			uci set firewall.vxlan_fwd.dest='wan'
+
+			vtunnel="configured"
+			/sbin/service firewall restart
+			/sbin/service network reload
+
+			convert_to_la "$devicemac"
+			index=$(($index + 1))
+			make_indexed_mac "$mac_la" "$index"
+			vxmac_indexed="$mac_indexed"
+			link_local_addr=$(ip addr show "$device" | grep "inet6 fe80" | awk '{printf "%s", $2}' | awk -F "/" '{printf "%s", $1}')
+			create_vxlan_if
+			vxlan_if="created"
 		fi
 
-		echo 1 > /proc/sys/net/ipv4/conf/$device/proxy_arp
-		/sbin/service dnsmasq reload
+		if [ "$ip_full" ] && [ "$vxlan" ] &&  [ "$vxlan_status" -eq 1 ] && [ "$vxlan_if" = "created" ]; then
+			. $tmpdir/active_mesh_ifname
+			. $tmpdir/devicemac
+			create_vxlan_if
+			vtunnel="configured"
+		fi
+
+		if [ "$ip_full" ] && [ "$vxlan" ]; then
+			device="br-tun$tun_id"
+
+			if [ "$portal_detect" -gt 1 ] || [ -z "$is_portal" ]; then
+				uci set dhcp.vtunlan.dhcpv4='disabled'
+				uci set dhcp.vtunlan.dhcpv6='disabled'
+				uci set dhcp.vtunlan.ra='disabled'
+				uci set dhcp.vtunlan.ignore='1'
+			else
+				uci set dhcp.vtunlan.dhcpv4='server'
+				uci set dhcp.vtunlan.dhcpv6='server'
+				uci set dhcp.vtunlan.ra='server'
+				uci set dhcp.vtunlan.ignore='0'
+			fi
+
+			echo 1 > /proc/sys/net/ipv4/conf/$device/proxy_arp
+			/sbin/service dnsmasq reload
 
 
-		vxiflist=$(uci show wireless | grep "network='vtunlan'" | awk -F "." '{printf "%s.%s ", $1, $2}')
+			vxiflist=$(uci show wireless | grep "network='vtunlan'" | awk -F "." '{printf "%s.%s ", $1, $2}')
 
-		for vxif in $vxiflist; do
-			vxifname=$(echo "get $vxif.ifname" | uci batch | awk '{printf "%s", $1}')
-			brctl addif "$device" "$vxifname"
-		done
+			for vxif in $vxiflist; do
+				vxifname=$(echo "get $vxif.ifname" | uci batch | awk '{printf "%s", $1}')
+				brctl addif "$device" "$vxifname"
+			done
 
-		. $tmpdir/devicemac
+			. $tmpdir/devicemac
+		fi
 	fi
 }
 
@@ -3535,7 +3564,7 @@ elif [ "$1" = "daemon" ]; then
 
 		fi
 
-		/sbin/service network restart
+		/sbin/service network reload
 		/sbin/service dnsmasq restart
 		/sbin/service firewall restart
 		sleep 5
@@ -3571,6 +3600,7 @@ elif [ "$1" = "daemon" ]; then
 	previous_path_change_count=1
 	index=0
 	transition_count=0
+	vtunnel=""
 
 	# Clear the dhcp authoritative flag
 	uci delete dhcp.@dnsmasq[0].authoritative 2>/dev/null
