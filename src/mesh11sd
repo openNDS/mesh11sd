@@ -2865,7 +2865,7 @@ elif [ "$1" = "status" ]; then
 	echo "    \"ssid_suffix_enable\":\"$ssid_suffix_enable\","
 	echo "    \"debuglevel\":\"$debuglevel\""
 	echo "  },"
-	echo "  \"interfaces\":{"
+	echo "  \"mesh_interfaces\":{"
 
 	for iface in $iflist; do
 		wait_for_interface "$iface"
@@ -2964,15 +2964,7 @@ elif [ "$1" = "status" ]; then
 				stas="$ap_stas""$stas"
 
 				for sta in $stas; do
-					# strip off first octet
-					sta=$(printf "%s" "$sta" | awk -F ":" '{printf "%s:%s:%s:%s:%s", $2, $3, $4, $5, $6}')
-					inpeermacs=$(echo "$peer_macs" | grep "$sta")
-
-					if [ "$inpeermacs" = "$peer_macs" ]; then
-						continue
-					else
-						stations=$((stations+1))
-					fi
+					stations=$((stations+1))
 				done
 
 				echo "      \"active_stations\":\"$stations\","
@@ -2992,11 +2984,6 @@ elif [ "$1" = "status" ]; then
 
 					stamacid=$(printf "%s" "$stamac" | awk -F ":" '{printf "%s%s%s%s%s", $2, $3, $4, $5, $6}')
 					proxy_nodeid=$(printf "%s" "$proxy_node" | awk -F ":" '{printf "%s%s%s%s%s", $2, $3, $4, $5, $6}')
-
-					if [ "$stamacid" = "$proxy_nodeid" ]; then
-						continue
-					fi
-
 					stanum=$((stanum+1))
 					echo "        \"$stamac\":{"
 					echo "          \"proxy_node\":\"$proxy_node\""
@@ -3008,10 +2995,46 @@ elif [ "$1" = "status" ]; then
 					fi
 
 				done
+
 				echo "      }"
 				echo "    }"
+
 			fi
 		fi
+	done
+
+	echo "  },"
+
+	echo "  \"layer2_connections\":{"
+
+	bridges=$(uci show network | grep ".name=" | awk -F "=" '{printf "%s ", $2}' | tr -d "'")
+
+	for bridge in $bridges; do
+		echo "    \"bridge\":\"$bridge\"{"
+		bridgeportlist=$(brctl showstp "$bridge" | grep " (" | grep ")" | awk '{printf "interface=%s;port=%s ", $1, $2}'| tr -d "(" | tr -d ")")
+		firstmac=1
+
+		for bridgeport in $bridgeportlist; do
+			eval "$bridgeport"
+			allmacs=$(brctl showmacs "$bridge" | awk -v bridge="$bridge" '$3=="no" {printf "%s,%s,%s ", bridge, $1, $2}')
+
+			for clientmac in $allmacs; do
+				cmac=$(echo "$clientmac" | awk -v port="$port" -F "," '$2==port {printf "%s", $3}')
+
+				if [ ! -z "$cmac" ]; then
+
+					if [ "$firstmac" -eq 0 ]; then
+						echo ","
+					else
+						firstmac=0
+					fi
+
+					echo -n "      \"$cmac\":\"$interface\""
+				fi
+			done
+		done
+
+		echo -e "\n    }"
 	done
 
 	echo "  }"
