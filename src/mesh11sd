@@ -12,7 +12,7 @@
 #
 # mesh11sd daemon
 #
-version="4.2.0beta"
+version="5.0.0beta"
 fixup1=0
 ip4pingfailcount=0
 network_restart=0
@@ -423,6 +423,139 @@ get_current_setup () {
 		debugtype="info"
 		write_to_syslog
 	fi
+
+	####
+	# vxlan configs
+	package_list="ip-full vxlan"
+	check_package_list
+
+	if [ "$ip_full" ] && [ "$vxlan" ]; then # we have the required packages for vxlan
+
+		#####
+		vtun_enable=$(uci get mesh11sd.setup.vtun_enable 2> /dev/null)
+
+		if [ -z "$vtun_enable" ]; then
+			vtun_enable=1
+		elif [ "$vtun_enable" -gt 1 ]; then
+			vtun_enable=1
+		else
+			vtun_enable=0
+		fi
+
+		syslogmessage="option vtun_enable [ $vtun_enable ]"
+		debugtype="info"
+		write_to_syslog
+
+		#####
+		tun_id=$(uci get mesh11sd.setup.tun_id 2> /dev/null)
+
+		if [ -z "$tun_id" ]; then
+			tun_id="69"
+		fi
+
+		# Change any leading zero to 42
+
+		if [ "${tun_id:0:1}" -eq 0 ]; then
+			tun_id="42${tun_id:1:9}"
+		fi
+
+		syslogmessage="option tun_id [ $tun_id ]"
+		debugtype="info"
+		write_to_syslog
+
+
+		#####
+		vtun_ip=$(uci get mesh11sd.setup.vtun_ip 2> /dev/null)
+
+		if [ -z "$vtun_ip" ]; then
+			vtun_ip="192.168.168.1"
+		fi
+
+		is_ipv4addr_valid
+
+		if [ "$?" -gt 0 ]; then
+			vtun_ip="192.168.168.1"
+		fi
+
+		syslogmessage="option vtun_ip [ $vtun_ip ]"
+		debugtype="info"
+		write_to_syslog
+
+		#####
+		vtun_mask=$(uci get mesh11sd.setup.vtun_mask 2> /dev/null)
+
+		if [ -z "$vtun_mask" ]; then
+			vtun_mask="255.255.255.0"
+		fi
+
+		is_ipv4mask_valid
+
+		if [ "$?" -gt 0 ]; then
+			vtun_mask="255.255.255.0"
+		fi
+
+		syslogmessage="option vtun_mask [ $vtun_mask ]"
+		debugtype="info"
+		write_to_syslog
+
+		#####
+		vtun_gate_encryption=$(uci get mesh11sd.setup.vtun_gate_encryption 2> /dev/null)
+
+		if [ -z "$vtun_gate_encryption" ]; then
+			vtun_gate_encryption=0
+		fi
+
+		if [ "$vtun_gate_encryption" -eq 4 ] && [ "$installed_wpad" -gt 0 ]; then
+			vtun_gate_encryption=0
+		fi
+
+		if [ "$vtun_gate_encryption" -le 4 ]; then
+			syslogmessage="option vtun_gate_encryption [ $vtun_gate_encryption ]"
+			debugtype="info"
+			write_to_syslog
+		else
+			syslogmessage="option vtun_gate_encryption must be 0 (none), 1 (sae, aka wpa3), 2 (sae-mixed, aka wpa2/wpa3), 3 (psk2, aka wpa2) or 4 (owe)"
+			debugtype="err"
+			write_to_syslog
+		fi
+
+		#####
+		vtun_gate_key=$(uci get mesh11sd.setup.vtun_gate_key 2> /dev/null)
+
+		if [ -z "$vtun_gate_key" ]; then
+			vtun_gate_key=""
+		fi
+
+		if [ "$vtun_gate_encryption" -eq 4 ]; then
+			vtun_gate_key="owe_null_key"
+		fi
+
+		keylen=$((${#vtun_gate_key}))
+
+		if [ "$keylen" -le 7 ] && [ "$keylen" -gt 0 ]; then
+			syslogmessage="vtun_gate_key [ $vtun_gate_key ] is too short, it must be 8 or more characters in length"
+			debugtype="err"
+			write_to_syslog
+			vtun_gate_key=""
+		else
+			syslogmessage="option vtun_gate_key [ $vtun_gate_key ]"
+			debugtype="info"
+			write_to_syslog
+		fi
+
+		#####
+		vtun_base_ssid=$(uci get mesh11sd.setup.vtun_base_ssid 2> /dev/null)
+
+		if [ -z "$vtun_base_ssid" ]; then
+			vtun_base_ssid="Guest"
+		fi
+
+		syslogmessage="option vtun_base_ssid [ $vtun_base_ssid ]"
+		debugtype="info"
+		write_to_syslog
+
+	fi
+
 
 	#####
 	mesh_gate_enable=$(uci get mesh11sd.setup.mesh_gate_enable 2> /dev/null)
@@ -1101,31 +1234,25 @@ get_portal_state() {
 				# we have reached the portal detect threshold. This either means there is no portal, or something has stopped working
 
 				if [ "$network_restart" -eq 0 ]; then
-					# Try clearing the routing table:
 					dhcpdevice=$(echo "get network.$auto_mesh_network.device" | uci batch | awk '{printf "%s", $1}')
 					debugtype="err"
-					syslogmessage="portal detect threshold reached, flushing routing tables"
+					syslogmessage="portal detect threshold reached, watchdog is monitoring"
 					write_to_syslog
 					write_to_watchdog_nonvolatile_log
 					network_restart=1
-					ip neigh flush dev "$device"
 					dhcp4_renew
-
 				elif [ "$network_restart" -eq 1 ]; then
 					dhcpdevice=$(echo "get network.$auto_mesh_network.device" | uci batch | awk '{printf "%s", $1}')
 					debugtype="notice"
-					syslogmessage="portal detect threshold exceeded, restarting wpad..."
+					syslogmessage="portal detect threshold exceeded, watchdog continuing to monitor..."
 					write_to_syslog
 					write_to_watchdog_nonvolatile_log
 					network_restart=2
-					/sbin/service wpad restart
-					wait_for_mesh
 					dhcp4_renew
-
 				elif [ "$network_restart" -eq 2 ]; then
 					dhcpdevice=$(echo "get network.$auto_mesh_network.device" | uci batch | awk '{printf "%s", $1}')
 					debugtype="notice"
-					syslogmessage="portal detect threshold exceeded, restarting network..."
+					syslogmessage="portal detect threshold exceeded, watchdog is restarting the network..."
 					write_to_syslog
 					write_to_watchdog_nonvolatile_log
 					network_restart=3
@@ -1138,7 +1265,7 @@ get_portal_state() {
 					debugtype="err"
 
 					if [ "$stop_on_error" -gt 0 ]; then
-						syslogmessage="portal detect threshold exceeded, restarting network did not work... stopping daemon"
+						syslogmessage="portal detect threshold exceeded, restarting network did not work... disabling mesh management, changing to mesh status mode"
 						enabled=0
 						write_to_syslog
 						write_to_watchdog_nonvolatile_log
@@ -1269,17 +1396,20 @@ check_portal() {
 				ip route flush default
 				hostname=$(uci get system.@system[0].hostname 2>/dev/null)
 
-				# Start the dhcp client
-				dhcpstatus=$(udhcpc -p /var/run/udhcpc-$device.pid -b -t 3 -i $device -x hostname:$hostname -C -R -O 121)
-				echo "$dhcpstatus" | grep "setting default routers"
-				dhcptest=$?
+#				# Start the dhcp client
+#				dhcpstatus=$(udhcpc -p /var/run/udhcpc-$device.pid -b -t 3 -i $device -x hostname:$hostname -C -R -O 121)
+#				echo "$dhcpstatus" | grep "setting default routers"
+#				dhcptest=$?
+#
+#				if [ "$dhcptest" -eq 0 ]; then
+#					debugtype="debug"
+#					syslogmessage="Remote dhcpv4 server found"
+#					write_to_syslog
+#				fi
 
-				if [ "$dhcptest" -eq 0 ]; then
-					debugtype="debug"
-					syslogmessage="Remote dhcpv4 server found"
-					write_to_syslog
-				fi
 
+				uci set network.lan.proto='dhcp'
+				/sbin/service network reload
 				uci set dhcp.@dnsmasq[0].authoritative='0'
 				echo "set dhcp.$auto_mesh_network.ignore='1'" | uci batch
 				echo "set dhcp.$auto_mesh_network.ra_default='2'" | uci batch
@@ -1347,6 +1477,9 @@ check_portal() {
 				syslogmessage="This meshnode is an upstream portal"
 				write_to_syslog
 
+				uci set network.lan.proto='static'
+				/sbin/service network reload
+
 				uci set dhcp.@dnsmasq[0].authoritative='1'
 				echo "set dhcp.$auto_mesh_network.ignore='0'" | uci batch
 				echo "set dhcp.$auto_mesh_network.ra_default='2'" | uci batch
@@ -1356,6 +1489,14 @@ check_portal() {
 				uci set dhcp.@dnsmasq[0].logfacility='-'
 				uci set dhcp.@dnsmasq[0].quietdhcp='1'
 				echo "del_list dhcp.@dnsmasq[0].server='$config_ipaddr'" | uci batch
+
+
+				if [ "$vtunnel" = "configured" ]; then
+					uci set dhcp.vtunlan.dhcpv4='server'
+					uci set dhcp.vtunlan.dhcpv6='server'
+					uci set dhcp.vtunlan.ra='server'
+					uci set dhcp.vtunlan.ignore='0'
+				fi
 
 				if [ "$mesh_gate_only" -eq 0 ]; then
 					mesh_hwmp_rootmode="4"
@@ -1678,6 +1819,27 @@ auto_config() {
 	fi
 
 	if [ "$autoconfig" -eq 0 ]; then
+		# Add vxlan wireless interface(s)
+		package_list="ip-full vxlan"
+		check_package_list
+
+		if [ "$ip_full" ] && [ "$vxlan" ]; then
+			# we have the required packages for vxlan
+			aplist=$(uci show wireless | grep "mode='ap'" | awk -F "." '{printf "%s ", $2}')
+
+			for ap in $aplist; do
+				radio_index=$(echo "show wireless.$ap" | uci batch 2> /dev/null | grep "device=" | awk -F "'" '{printf "%s", $2}' | awk -F "radio" '{printf "%s", $2}')
+
+				echo "set wireless.vxradio$radio_index=wifi-iface" | uci batch
+				echo "set wireless.vxradio$radio_index.device='radio$radio_index'" | uci batch
+				echo "set wireless.vxradio$radio_index.network='vtunlan'" | uci batch
+				echo "set wireless.vxradio$radio_index.mode='ap'" | uci batch
+				echo "set wireless.vxradio$radio_index.ifname='vxradio$radio_index'" | uci batch
+				echo "set wireless.vxradio$radio_index.ssid='$vtun_base_ssid'" | uci batch
+				echo "set wireless.vxradio$radio_index.encryption='none'" | uci batch
+				echo "set wireless.vxradio$radio_index.disabled='0'" | uci batch
+			done
+		fi
 
 		# do we have a mesh supporting wpad?
 		package_list="wpad-mbedtls wpad-wolfssl wpad-openssl wpad-mesh-mbedtls wpad-mesh-wolfssl wpad-mesh-openssl"
@@ -1715,7 +1877,6 @@ auto_config() {
 					echo "set wireless.m11s$phyindex.mesh_rssi_threshold='$mesh_rssi_threshold'" | uci batch
 					echo "set wireless.radio$phyindex.disabled='0'" | uci batch
 					echo "set wireless.radio$phyindex.log_level='0'" | uci batch
-
 
 					country=$(uci get wireless.radio$phyindex.country 2> /dev/null | awk '{printf "%s", $1}')
 
@@ -1900,20 +2061,22 @@ auto_config() {
 owe_transition() {
 	section_ap=$(uci show "$ap")
 	section_list=$(echo "$section_ap" | awk '{printf "%s ", $1}')
-	radio_index=$(echo "$ap" | awk -F "radio" '{printf "%s", $2}')
 
-	echo "set $ap.ifname='open-$radio_index'" | uci batch
-	echo "set $ap.owe_transition_ifname='owe-$radio_index'" | uci batch
+	radio_index=$(echo "$section_ap" | grep "radio" | awk -F "'" '{printf "%s", $2}' | awk -F "radio" '{printf "%i", $2}')
+
+	echo "set $ap.ifname='open$transition_count-$radio_index'" | uci batch
+	echo "set $ap.owe_transition_ifname='owe$transition_count-$radio_index'" | uci batch
 
 	for section_item in $section_list; do
-		oweap="s/$ap/wireless.owe$radio_index/g"
+		oweap="s/$ap/wireless.owe$transition_count$radio_index/g"
 		uci_option=$(echo "$section_item" | sed "$oweap")
 		echo "set $uci_option" | uci batch
 	done
 
-	echo "set wireless.owe$radio_index.ifname='owe-$radio_index'" | uci batch
-	echo "set wireless.owe$radio_index.hidden='1'" | uci batch
-	echo "set wireless.owe$radio_index.encryption='owe'" | uci batch
+	echo "set wireless.owe$transition_count$radio_index.ifname='owe$transition_count-$radio_index'" | uci batch
+	echo "set wireless.owe$transition_count$radio_index.hidden='1'" | uci batch
+	echo "set wireless.owe$transition_count$radio_index.encryption='owe'" | uci batch
+	transition_count=$(($transition_count + 1))
 
 }
 
@@ -2311,6 +2474,192 @@ check_package_list() {
 	return $retval
 }
 
+create_vxlan_if() {
+	debugtype="debug"
+	syslogmessage="create_vxlan_if [ vxlan$tun_id ], address [ $vxmac_indexed ], local [ $link_local_addr ], group [ ff02::$tun_id ]"
+	write_to_syslog
+
+	ip -6 link add "vxlan$tun_id" \
+		address "$vxmac_indexed" \
+		type vxlan \
+		id "$tun_id" \
+		dstport 4789 \
+		local "$link_local_addr" \
+		group "ff02::$tun_id" \
+		dev "$device" \
+		ttl 5
+
+	ip link set "vxlan$tun_id" up
+
+	ip link set "$active_mesh_ifname" mtu 1600
+	ip link set "$device" mtu 1600
+	ip link set "vxlan$tun_id" mtu 1500
+}
+
+check_vtunnel() {
+	# Check if vxlan tunnel is required and set it up
+
+	if [ "$vtun_enable" = 1 ]; then
+		debugtype="debug"
+		syslogmessage="check_vtunnel"
+		write_to_syslog
+
+		vxlan_status=$(ip link show vxlan$tun_id &> /dev/null; echo $?)
+
+		if [ "$vxlan_status" -eq 0 ]; then
+			vtunnel=""
+		fi
+
+		package_list="ip-full vxlan"
+		check_package_list
+
+		if [ "$ip_full" ] && [ "$vxlan" ] && [ -z "$vtunnel" ] && [ -z "$vxlan_if" ]; then
+			# we have ip-full and vxlan packages
+			debugtype="debug"
+			syslogmessage="vxtunnel configuration"
+			write_to_syslog
+
+			. $tmpdir/active_mesh_ifname
+			. $tmpdir/devicemac
+
+			if [ -z "$is_portal" ]; then
+				proto="none"
+			else
+				proto="static"
+			fi
+
+			uci set network.vtunnel=device
+			echo "set network.vtunnel.name='br-tun$tun_id'" | uci batch
+			uci set network.vtunnel.type='bridge'
+			echo "set network.vtunnel.ports='vxlan$tun_id'" | uci batch
+			uci set network.vtunlan=interface
+			echo "set network.vtunlan.device='br-tun$tun_id'" | uci batch
+			echo "set network.vtunlan.ipaddr='$vtun_ip'" | uci batch
+			echo "set network.vtunlan.netmask='$vtun_mask'" | uci batch
+			echo "set network.vtunlan.proto='$proto'" | uci batch
+			uci set network.vtunlan.ip6assign='60'
+
+			uci set dhcp.vtunlan=dhcp
+			uci set dhcp.vtunlan.interface='vtunlan'
+			uci set dhcp.vtunlan.start='100'
+			uci set dhcp.vtunlan.limit='150'
+			uci set dhcp.vtunlan.leasetime='12h'
+			uci set dhcp.vtunlan.ra_slaac='1'
+			uci add_list dhcp.vtunlan.ra_flags='managed-config'
+			uci add_list dhcp.vtunlan.ra_flags='other-config'
+			uci set dhcp.vtunlan.ignore='1'
+			uci set dhcp.vtunlan.ra_default='2'
+
+			uci set firewall.vtunlan='zone'
+			uci set firewall.vtunlan.name='vtunlan'
+			uci set firewall.vtunlan.network='vtunlan'
+			uci set firewall.vtunlan.input='ACCEPT'
+			uci set firewall.vtunlan.output='ACCEPT'
+			uci set firewall.vtunlan.forward='REJECT'
+
+			uci set firewall.dhcptun$tun_id=rule
+			uci set firewall.dhcptun$tun_id.name='VTUN-DHCP-Renew'
+			uci set firewall.dhcptun$tun_id.src='vtunlan'
+			uci set firewall.dhcptun$tun_id.proto='udp'
+			uci set firewall.dhcptun$tun_id.dest_port='67'
+			uci set firewall.dhcptun$tun_id.target='ACCEPT'
+			uci set firewall.dhcptun$tun_id.family='ipv4'
+
+			uci set firewall.dnstun$tun_id=rule
+			uci set firewall.dnstun$tun_id.name='VTUN-Allow-DNS'
+			uci set firewall.dnstun$tun_id.src='vtunlan'
+			uci set firewall.dnstun$tun_id.proto='udp tcp'
+			uci set firewall.dnstun$tun_id.dest_port='53'
+			uci set firewall.dnstun$tun_id.target='ACCEPT'
+			uci set firewall.dnstun$tun_id.family='ipv4'
+
+			uci set firewall.vxlan=rule
+			uci set firewall.vxlan.name='Allow-vxlan'
+			uci set firewall.vxlan.src='lan'
+			uci set firewall.vxlan.proto='udp'
+			uci set firewall.vxlan.dest_port='4789'
+			uci set firewall.vxlan.target='ACCEPT'
+
+			uci set firewall.vxlan_fwd=forwarding
+			uci set firewall.vxlan_fwd.src='vtunlan'
+			uci set firewall.vxlan_fwd.dest='wan'
+
+			vtunnel="configured"
+			/sbin/service firewall restart
+			/sbin/service network reload
+
+			convert_to_la "$devicemac"
+			index=$(($index + 1))
+			make_indexed_mac "$mac_la" "$index"
+			vxmac_indexed="$mac_indexed"
+			link_local_addr=$(ip addr show "$device" | grep "inet6 fe80" | awk '{printf "%s", $2}' | awk -F "/" '{printf "%s", $1}')
+			create_vxlan_if
+			vxlan_if="created"
+		fi
+
+		if [ "$ip_full" ] && [ "$vxlan" ] &&  [ "$vxlan_status" -eq 1 ] && [ "$vxlan_if" = "created" ]; then
+			. $tmpdir/active_mesh_ifname
+			. $tmpdir/devicemac
+			create_vxlan_if
+			vtunnel="configured"
+		fi
+
+		if [ "$ip_full" ] && [ "$vxlan" ]; then
+			device="br-tun$tun_id"
+
+			if [ "$portal_detect" -gt 1 ] || [ -z "$is_portal" ]; then
+				uci set dhcp.vtunlan.dhcpv4='disabled'
+				uci set dhcp.vtunlan.dhcpv6='disabled'
+				uci set dhcp.vtunlan.ra='disabled'
+				uci set dhcp.vtunlan.ignore='1'
+			else
+				uci set dhcp.vtunlan.dhcpv4='server'
+				uci set dhcp.vtunlan.dhcpv6='server'
+				uci set dhcp.vtunlan.ra='server'
+				uci set dhcp.vtunlan.ignore='0'
+			fi
+
+			echo 1 > /proc/sys/net/ipv4/conf/$device/proxy_arp
+			/sbin/service dnsmasq reload
+
+
+			vxiflist=$(uci show wireless | grep "network='vtunlan'" | awk -F "." '{printf "%s.%s ", $1, $2}')
+
+			for vxif in $vxiflist; do
+				vxifname=$(echo "get $vxif.ifname" | uci batch | awk '{printf "%s", $1}')
+				brctl addif "$device" "$vxifname"
+			done
+
+			. $tmpdir/devicemac
+		fi
+	fi
+}
+
+is_ipv4addr_valid() {
+	checkip=$(echo -n "$1" | \
+		awk '/^([0-9]{1,3}[.])([0-9]{1,3}[.]){2}([0-9]{1,3})$/{printf "%s", $1}' | \
+		awk -F "." '($1+0<255) && ($2+0<255) && ($3+0<255) && ($4+0<255) {printf "%i.%i.%i.%i", $1, $2, $3, $4}')
+
+	if [ "$1" = "$checkip" ]; then
+		return 0
+	else
+		return 1
+	fi
+}
+
+is_ipv4mask_valid() {
+	checkmask=$(echo -n "$1" | \
+		awk '/^([0-9]{1,3}[.])([0-9]{1,3}[.]){2}([0-9]{1,3})$/{printf "%s", $1}' | \
+		awk -F "." '($1+0<256) && ($2+0<256) && ($3+0<256) && ($4+0<255) {printf "%i.%i.%i.%i", $1, $2, $3, $4}')
+
+	if [ "$1" = "$checkmask" ]; then
+		return 0
+	else
+		return 1
+	fi
+}
+
+
 ##############
 # Start point
 ##############
@@ -2478,6 +2827,21 @@ elif [ "$1" = "status" ]; then
 	echo "    \"mesh_leechmode_enable\":\"$mesh_gate_only\","
 	echo "    \"mesh_gate_encryption\":\"$mesh_gate_encryption\","
 
+
+	# vxlan configs
+	package_list="ip-full vxlan"
+	check_package_list
+
+	if [ "$ip_full" ] && [ "$vxlan" ]; then # we have the required packages for vxlan
+		echo "    \"vtun_enable\":\"$vtun_enable\","
+		echo "    \"tun_id\":\"$tun_id\","
+		echo "    \"vtun_ip\":\"$vtun_ip\","
+		echo "    \"vtun_mask\":\"$vtun_mask\","
+		echo "    \"vtun_gate_encryption\":\"$vtun_gate_encryption\","
+		echo "    \"vtun_base_ssid\":\"$vtun_base_ssid\","
+	fi
+
+
 	# get list of interfaces
 	get_mesh_iflist
 
@@ -2501,7 +2865,7 @@ elif [ "$1" = "status" ]; then
 	echo "    \"ssid_suffix_enable\":\"$ssid_suffix_enable\","
 	echo "    \"debuglevel\":\"$debuglevel\""
 	echo "  },"
-	echo "  \"interfaces\":{"
+	echo "  \"mesh_interfaces\":{"
 
 	for iface in $iflist; do
 		wait_for_interface "$iface"
@@ -2600,15 +2964,7 @@ elif [ "$1" = "status" ]; then
 				stas="$ap_stas""$stas"
 
 				for sta in $stas; do
-					# strip off first octet
-					sta=$(printf "%s" "$sta" | awk -F ":" '{printf "%s:%s:%s:%s:%s", $2, $3, $4, $5, $6}')
-					inpeermacs=$(echo "$peer_macs" | grep "$sta")
-
-					if [ "$inpeermacs" = "$peer_macs" ]; then
-						continue
-					else
-						stations=$((stations+1))
-					fi
+					stations=$((stations+1))
 				done
 
 				echo "      \"active_stations\":\"$stations\","
@@ -2628,11 +2984,6 @@ elif [ "$1" = "status" ]; then
 
 					stamacid=$(printf "%s" "$stamac" | awk -F ":" '{printf "%s%s%s%s%s", $2, $3, $4, $5, $6}')
 					proxy_nodeid=$(printf "%s" "$proxy_node" | awk -F ":" '{printf "%s%s%s%s%s", $2, $3, $4, $5, $6}')
-
-					if [ "$stamacid" = "$proxy_nodeid" ]; then
-						continue
-					fi
-
 					stanum=$((stanum+1))
 					echo "        \"$stamac\":{"
 					echo "          \"proxy_node\":\"$proxy_node\""
@@ -2644,10 +2995,46 @@ elif [ "$1" = "status" ]; then
 					fi
 
 				done
+
 				echo "      }"
 				echo "    }"
+
 			fi
 		fi
+	done
+
+	echo "  },"
+
+	echo "  \"layer2_connections\":{"
+
+	bridges=$(uci show network | grep ".name=" | awk -F "=" '{printf "%s ", $2}' | tr -d "'")
+
+	for bridge in $bridges; do
+		echo "    \"bridge\":\"$bridge\"{"
+		bridgeportlist=$(brctl showstp "$bridge" | grep " (" | grep ")" | awk '{printf "interface=%s;port=%s ", $1, $2}'| tr -d "(" | tr -d ")")
+		firstmac=1
+
+		for bridgeport in $bridgeportlist; do
+			eval "$bridgeport"
+			allmacs=$(brctl showmacs "$bridge" | awk -v bridge="$bridge" '$3=="no" {printf "%s,%s,%s ", bridge, $1, $2}')
+
+			for clientmac in $allmacs; do
+				cmac=$(echo "$clientmac" | awk -v port="$port" -F "," '$2==port {printf "%s", $3}')
+
+				if [ ! -z "$cmac" ]; then
+
+					if [ "$firstmac" -eq 0 ]; then
+						echo ","
+					else
+						firstmac=0
+					fi
+
+					echo -n "      \"$cmac\":\"$interface\""
+				fi
+			done
+		done
+
+		echo -e "\n    }"
 	done
 
 	echo "  }"
@@ -3118,7 +3505,7 @@ elif [ "$1" = "daemon" ]; then
 		uci revert firewall
 
 		# Check the configured ipv4 address and change it if left at default of 192.168.1.1
-		# For now, only chack in CPE mode.
+		# For now, only check in CPE mode.
 		# Possibly make this active for portal devices (via config option?)
 		setipaddr=$(uci get network.lan.ipaddr)
 
@@ -3200,7 +3587,7 @@ elif [ "$1" = "daemon" ]; then
 
 		fi
 
-		/sbin/service network restart
+		/sbin/service network reload
 		/sbin/service dnsmasq restart
 		/sbin/service firewall restart
 		sleep 5
@@ -3235,6 +3622,8 @@ elif [ "$1" = "daemon" ]; then
 	mute=0 # Mute some debug messages in function calls
 	previous_path_change_count=1
 	index=0
+	transition_count=0
+	vtunnel=""
 
 	# Clear the dhcp authoritative flag
 	uci delete dhcp.@dnsmasq[0].authoritative 2>/dev/null
@@ -3517,6 +3906,13 @@ elif [ "$1" = "daemon" ]; then
 						uci set dhcp.@dnsmasq[0].logfacility='-'
 						uci set dhcp.@dnsmasq[0].quietdhcp='1'
 
+						if [ "$vtunnel" = "configured" ]; then
+							uci set dhcp.vtunlan.dhcpv4='server'
+							uci set dhcp.vtunlan.dhcpv6='server'
+							uci set dhcp.vtunlan.ra='server'
+							uci set dhcp.vtunlan.ignore='0'
+						fi
+
 						if [ "$mesh_gate_only" -eq 0 ]; then
 							mesh_hwmp_rootmode="4"
 						else
@@ -3596,7 +3992,7 @@ elif [ "$1" = "daemon" ]; then
 				check_channel
 			fi
 
-
+			check_vtunnel
 		fi
 
 		debugtype="debug"
