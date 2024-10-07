@@ -429,7 +429,7 @@ get_current_setup () {
 	package_list="ip-full vxlan"
 	check_package_list
 
-	if [ "$ip_full" ] && [ "$vxlan" ]; then # we have the required packages for vxlan
+	if [ "$ip_full" -eq 0 ] && [ "$vxlan" -eq 0 ]; then # we have the required packages for vxlan
 
 		#####
 		vtun_enable=$(uci get mesh11sd.setup.vtun_enable 2> /dev/null)
@@ -553,7 +553,8 @@ get_current_setup () {
 		syslogmessage="option vtun_base_ssid [ $vtun_base_ssid ]"
 		debugtype="info"
 		write_to_syslog
-
+	else
+		vtun_enable=0
 	fi
 
 
@@ -1823,7 +1824,7 @@ auto_config() {
 		package_list="ip-full vxlan"
 		check_package_list
 
-		if [ "$ip_full" ] && [ "$vxlan" ]; then
+		if [ "$ip_full" -eq 0 ] && [ "$vxlan" -eq 0 ]; then
 			# we have the required packages for vxlan
 			aplist=$(uci show wireless | grep "mode='ap'" | awk -F "." '{printf "%s ", $2}')
 
@@ -2513,7 +2514,7 @@ check_vtunnel() {
 		package_list="ip-full vxlan"
 		check_package_list
 
-		if [ "$ip_full" ] && [ "$vxlan" ] && [ -z "$vtunnel" ] && [ -z "$vxlan_if" ]; then
+		if [ "$ip_full" -eq 0 ] && [ "$vxlan" -eq 0 ] && [ -z "$vtunnel" ] && [ -z "$vxlan_if" ]; then
 			# we have ip-full and vxlan packages
 			debugtype="debug"
 			syslogmessage="vxtunnel configuration"
@@ -2831,9 +2832,9 @@ elif [ "$1" = "status" ]; then
 	# vxlan configs
 	package_list="ip-full vxlan"
 	check_package_list
+	echo "    \"vtun_enable\":\"$vtun_enable\","
 
-	if [ "$ip_full" ] && [ "$vxlan" ]; then # we have the required packages for vxlan
-		echo "    \"vtun_enable\":\"$vtun_enable\","
+	if [ "$ip_full" -eq 0 ] && [ "$vxlan" -eq 0 ]; then # we have the required packages for vxlan
 		echo "    \"tun_id\":\"$tun_id\","
 		echo "    \"vtun_ip\":\"$vtun_ip\","
 		echo "    \"vtun_mask\":\"$vtun_mask\","
