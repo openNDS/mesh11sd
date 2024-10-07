@@ -3001,7 +3001,7 @@ elif [ "$1" = "status" ]; then
 	for devicesection in $devicelist; do
 		bridge=$(uci get "$devicesection".name)
 		echo "    \"bridge\":\"$bridge\"{"
-		bridgeportlist=$(brctl showstp "$bridge" | grep " (" | grep ")" | awk '{printf "interface=%s;port=%s ", $1, $2}'| tr -d "(" | tr -d ")")
+		bridgeportlist=$(brctl showstp "$bridge" 2>/dev/null | grep " (" | grep ")" | awk '{printf "interface=%s;port=%s ", $1, $2}'| tr -d "(" | tr -d ")")
 		firstmac=1
 
 		for bridgeport in $bridgeportlist; do
