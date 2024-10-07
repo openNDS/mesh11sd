@@ -1397,18 +1397,6 @@ check_portal() {
 				ip route flush default
 				hostname=$(uci get system.@system[0].hostname 2>/dev/null)
 
-#				# Start the dhcp client
-#				dhcpstatus=$(udhcpc -p /var/run/udhcpc-$device.pid -b -t 3 -i $device -x hostname:$hostname -C -R -O 121)
-#				echo "$dhcpstatus" | grep "setting default routers"
-#				dhcptest=$?
-#
-#				if [ "$dhcptest" -eq 0 ]; then
-#					debugtype="debug"
-#					syslogmessage="Remote dhcpv4 server found"
-#					write_to_syslog
-#				fi
-
-
 				uci set network.lan.proto='dhcp'
 				/sbin/service network reload
 				uci set dhcp.@dnsmasq[0].authoritative='0'
@@ -3008,9 +2996,10 @@ elif [ "$1" = "status" ]; then
 
 	echo "  \"layer2_connections\":{"
 
-	bridges=$(uci show network | grep ".name=" | awk -F "=" '{printf "%s ", $2}' | tr -d "'")
+	devicelist=$(uci show network | grep "type='bridge'" | awk -F "." '{printf "%s.%s ", $1, $2}')
 
-	for bridge in $bridges; do
+	for devicesection in $devicelist; do
+		bridge=$(uci get "$devicesection".name)
 		echo "    \"bridge\":\"$bridge\"{"
 		bridgeportlist=$(brctl showstp "$bridge" | grep " (" | grep ")" | awk '{printf "interface=%s;port=%s ", $1, $2}'| tr -d "(" | tr -d ")")
 		firstmac=1
