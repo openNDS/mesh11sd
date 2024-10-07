@@ -3024,7 +3024,11 @@ elif [ "$1" = "status" ]; then
 			done
 		done
 
-		echo -e "\n    }"
+		if [ -z "$allmacs" ]; then
+			echo -e "    }"
+		else
+			echo -e "\n    }"
+		fi
 	done
 
 	echo "  }"
