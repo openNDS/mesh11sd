@@ -429,7 +429,7 @@ get_current_setup () {
 	package_list="ip-full vxlan"
 	check_package_list
 
-	if [ "$ip_full" ] && [ "$vxlan" ]; then # we have the required packages for vxlan
+	if [ "$ip_full" -eq 0 ] && [ "$vxlan" -eq 0 ]; then # we have the required packages for vxlan
 
 		#####
 		vtun_enable=$(uci get mesh11sd.setup.vtun_enable 2> /dev/null)
@@ -553,7 +553,8 @@ get_current_setup () {
 		syslogmessage="option vtun_base_ssid [ $vtun_base_ssid ]"
 		debugtype="info"
 		write_to_syslog
-
+	else
+		vtun_enable=0
 	fi
 
 
@@ -1396,18 +1397,6 @@ check_portal() {
 				ip route flush default
 				hostname=$(uci get system.@system[0].hostname 2>/dev/null)
 
-#				# Start the dhcp client
-#				dhcpstatus=$(udhcpc -p /var/run/udhcpc-$device.pid -b -t 3 -i $device -x hostname:$hostname -C -R -O 121)
-#				echo "$dhcpstatus" | grep "setting default routers"
-#				dhcptest=$?
-#
-#				if [ "$dhcptest" -eq 0 ]; then
-#					debugtype="debug"
-#					syslogmessage="Remote dhcpv4 server found"
-#					write_to_syslog
-#				fi
-
-
 				uci set network.lan.proto='dhcp'
 				/sbin/service network reload
 				uci set dhcp.@dnsmasq[0].authoritative='0'
@@ -1823,7 +1812,7 @@ auto_config() {
 		package_list="ip-full vxlan"
 		check_package_list
 
-		if [ "$ip_full" ] && [ "$vxlan" ]; then
+		if [ "$ip_full" -eq 0 ] && [ "$vxlan" -eq 0 ]; then
 			# we have the required packages for vxlan
 			aplist=$(uci show wireless | grep "mode='ap'" | awk -F "." '{printf "%s ", $2}')
 
@@ -2513,7 +2502,7 @@ check_vtunnel() {
 		package_list="ip-full vxlan"
 		check_package_list
 
-		if [ "$ip_full" ] && [ "$vxlan" ] && [ -z "$vtunnel" ] && [ -z "$vxlan_if" ]; then
+		if [ "$ip_full" -eq 0 ] && [ "$vxlan" -eq 0 ] && [ -z "$vtunnel" ] && [ -z "$vxlan_if" ]; then
 			# we have ip-full and vxlan packages
 			debugtype="debug"
 			syslogmessage="vxtunnel configuration"
@@ -2831,9 +2820,9 @@ elif [ "$1" = "status" ]; then
 	# vxlan configs
 	package_list="ip-full vxlan"
 	check_package_list
+	echo "    \"vtun_enable\":\"$vtun_enable\","
 
-	if [ "$ip_full" ] && [ "$vxlan" ]; then # we have the required packages for vxlan
-		echo "    \"vtun_enable\":\"$vtun_enable\","
+	if [ "$ip_full" -eq 0 ] && [ "$vxlan" -eq 0 ]; then # we have the required packages for vxlan
 		echo "    \"tun_id\":\"$tun_id\","
 		echo "    \"vtun_ip\":\"$vtun_ip\","
 		echo "    \"vtun_mask\":\"$vtun_mask\","
@@ -3007,11 +2996,12 @@ elif [ "$1" = "status" ]; then
 
 	echo "  \"layer2_connections\":{"
 
-	bridges=$(uci show network | grep ".name=" | awk -F "=" '{printf "%s ", $2}' | tr -d "'")
+	devicelist=$(uci show network | grep "type='bridge'" | awk -F "." '{printf "%s.%s ", $1, $2}')
 
-	for bridge in $bridges; do
+	for devicesection in $devicelist; do
+		bridge=$(uci get "$devicesection".name)
 		echo "    \"bridge\":\"$bridge\"{"
-		bridgeportlist=$(brctl showstp "$bridge" | grep " (" | grep ")" | awk '{printf "interface=%s;port=%s ", $1, $2}'| tr -d "(" | tr -d ")")
+		bridgeportlist=$(brctl showstp "$bridge" 2>/dev/null | grep " (" | grep ")" | awk '{printf "interface=%s;port=%s ", $1, $2}'| tr -d "(" | tr -d ")")
 		firstmac=1
 
 		for bridgeport in $bridgeportlist; do
@@ -3034,7 +3024,11 @@ elif [ "$1" = "status" ]; then
 			done
 		done
 
-		echo -e "\n    }"
+		if [ -z "$allmacs" ]; then
+			echo -e "    }"
+		else
+			echo -e "\n    }"
+		fi
 	done
 
 	echo "  }"
