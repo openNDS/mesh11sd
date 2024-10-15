@@ -28,9 +28,16 @@ It is unfortunate that some manufacturers have used the word “Mesh” for mark
 
 These are two completely unrelated standards.
 
-## 3. Manual or Auto Configuration:
+## 3. Major Features:
+ 1. Auto configuration of 802.11s mesh backhaul
+ 2. Optional Customer/Client Premises Mode (CPE)
+ 3. Default support for Opportunistic Wireless Encryption (OWE), with OWE Transition.
+ 4. Optional multi point to multi point vxlan group support, enabling "guest" networking over mesh backhaul.
 
-From version 4.0.0 onwards, the default mode after install is for manual configuration.
+
+## 4. Manual or Auto Configuration:
+
+The default mode after install is "manual configuration".
 
 ***Manual (default) - If you have not done any manual mesh configuration, mesh11sd will do nothing and wait in the background for you to do so.***
 
@@ -38,7 +45,13 @@ From version 4.0.0 onwards, the default mode after install is for manual configu
 
 Switching on Auto Configuration is a simple task and is recommended if you are starting from a basic OpenWrt reflash.
 
-First, make sure your freshly flashed router is connected to your upstream Internet feed using its wan port and that you get Internet access when connected to (one of) its lan ports.
+**WARNING: If you have done ANY mesh configuration manually, you might cause a soft-brick condition.**
+
+**Pre-configuring before enabling auto_config is for advanced users only. Make sure you know what you are doing!**
+
+**If the mesh network interface is defined in the wireless configuration file, mesh11sd will attempt to use it, but be warned, this may have very unpredictable results and is not normally recommended.**
+
+First, make sure your freshly flashed router (with mesh11sd installed) is connected to your upstream Internet feed using its wan port and that you get Internet access when connected to (one of) its lan ports.
 
 Now, execute the following commands:
 
@@ -80,7 +93,7 @@ It is possible for a Portal node to also be a Gateway node (ie it hosts an AP as
 
 All Peer and Gateway nodes will track the wireless channel that the Portal node is using. If the Portal node changes its working channel, this will be detected and tracked autonomously by downstream meshnodes.
 
-## 4. Installation
+## 5. Installation
 
 It is assumed that the additional dependencies for encrypted mesh and opportunistic wireless encryption (owe) are pre-installed, ie:
 
@@ -112,7 +125,7 @@ Example:
     opkg install mesh11sd
 ```
 
-## 5. Configuration
+## 6. Configuration
 Mesh11sd supports two types of configuration, automatic and manual.
 
 **Manual Configuration (default)**
@@ -548,7 +561,7 @@ This means that all meshnodes can be the same basic router configuration and onc
 Access to the remote meshnode peers will not be possible using the default ipv4 address as this will be disabled. Remote management can be achieved by using the `mesh11sd connect` and `mesh11sd copy` commands, or alternatively by reconnecting the wan port to an upstream feed.
 
 
-## 6. Setup Options
+## 7. Setup Options
 * enabled - 0=disabled, 1=enabled. Default 1
 
 * debuglevel - 0=silent, 1=notice, 2=info, 3=debug. Default 1
@@ -603,7 +616,7 @@ Changes can be made permanent with the following command:
 
         uci commit mesh11sd
 
-## 7. Mesh Parameter Options
+## 8. Mesh Parameter Options
 
 
 Mesh parameters can be changed only while the mesh is active.
@@ -683,7 +696,7 @@ RANN - Root ANNouncement
 RSSI - Received Signal Strength Indication
 
 
-## 8. Command Line Interface
+## 9. Command Line Interface
 Mesh11sd is an OpenWrt service daemon and runs continuously in the background. It does however also have a CLI interface:
 
       Usage: mesh11sd [option] [argument...]]
