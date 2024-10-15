@@ -57,7 +57,7 @@ get_params () {
 	params=$(iw dev $iface mesh_param dump 2> /dev/null)
 
 	if [ "$?" -ne 0 ]; then
-		buffer="/tmp/"$(date | sha256sum | awk '{printf "%s", $1}')
+		buffer="$tmpdir/"$(date | sha256sum | awk '{printf "%s", $1}')
 		param_list=$(iw dev $iface get mesh_param 2> /dev/null | grep " - " | awk -F" - " '{printf "%s ", $2}')
 		params=""
 
@@ -99,13 +99,13 @@ check_mesh_params () {
 		if [ "$param_value" != "$conf" ]; then
 
 			if [ "$param" = "mesh_rssi_threshold" ]; then
-				if [ ! -f "/tmp/mesh_rssi_threshold" ]; then
+				if [ ! -f "$tmpdir/mesh_rssi_threshold" ]; then
 					debugtype="info"
 					syslogmessage="Old value:$param=$param_value, Setting new value:$param=$conf"
 					write_to_syslog
 					iwstatus=$(iw dev $iface set mesh_param $param "$conf" 2>&1)
 					mesh_rssi_threshold=$conf
-					echo "meshinterface=\"$iface\"" > /tmp/meshinterface
+					echo "meshinterface=\"$iface\"" > "$tmpdir/meshinterface"
 					all_nodes_rssi_update
 				fi
 			elif [ "$param" != "mesh_rssi_threshold" ]; then
@@ -1684,14 +1684,14 @@ all_nodes_rssi_update() {
 
 	if [ "$auto_config" -gt 0 ]; then
 
-		if [ -f "/tmp/meshinterface" ]; then
+		if [ -f "$tmpdir/meshinterface" ]; then
 
-			if [ ! -f "/tmp/mesh_rssi_threshold" ]; then
+			if [ ! -f "$tmpdir/mesh_rssi_threshold" ]; then
 				debugtype="debug"
 				syslogmessage="Disconnecting nodes"
 				write_to_syslog
 
-				rm /tmp/meshinterface
+				rm "$tmpdir/meshinterface"
 
 				get_wiphys
 
@@ -2268,9 +2268,8 @@ block_bridge_loops() {
 	local br_iface
 	local br_ifaces=$(brctl showstp "$device" | grep -B 1 -w "port id" | grep "(" | awk '{printf "%s ", $1}')
 
-	if [ ! -e "/tmp/mesh11sd/brmac_la" ]; then
-		#br_ifaces="$br_ifaces $device"
-		touch "/tmp/mesh11sd/brmac_la"
+	if [ ! -e "$tmpdir/mesh11sd/brmac_la" ]; then
+		touch "$tmpdir/mesh11sd/brmac_la"
 	fi
 
 	get_mesh_iflist
@@ -3153,7 +3152,7 @@ elif [ "$1" = "copy" ]; then
 				if [ "$nodeaddr" = "$ndpmac" ] && [ ! -z "$filepath" ]; then
 					echo
 					echo "Trying to copy to meshnode \"$ndpmacf\"....."
-					scp "$filepath" "root@[$linklocal]:/tmp/$filename"
+					scp "$filepath" "root@[$linklocal]:$tmpdir/$filename"
 					echo
 					echo "Disconnected from meshnode \"$ndpmacf\""
 					echo
@@ -3384,7 +3383,7 @@ elif [ "$1" = "mesh_rssi_threshold" ]; then
 		echo "    Previous threshold [ $current_rssi ] dBm "
 
 		if [ -z "$3" ]; then
-			touch /tmp/mesh_rssi_threshold
+			touch "$tmpdir/mesh_rssi_threshold"
 			iw dev $iface set mesh_param mesh_rssi_threshold $new_rssi
 			echo "set mesh11sd.mesh_params.mesh_rssi_threshold='$new_rssi'" | uci batch
 			new_current_rssi=$(iw dev $iface get mesh_param mesh_rssi_threshold | awk '{printf "%s", $1}')
@@ -3394,8 +3393,8 @@ elif [ "$1" = "mesh_rssi_threshold" ]; then
 			echo
 			echo "    Forcing new threshold on all peers..."
 
-			if [ -f "/tmp/mesh_rssi_threshold" ]; then
-				rm /tmp/mesh_rssi_threshold
+			if [ -f "$tmpdir/mesh_rssi_threshold" ]; then
+				rm "$tmpdir/mesh_rssi_threshold"
 			fi
 
 			new_current_rssi=$new_rssi
@@ -3409,7 +3408,7 @@ elif [ "$1" = "mesh_rssi_threshold" ]; then
 		echo "    Previous threshold [ $current_rssi ] dBm "
 
 		if [ -z "$3" ]; then
-			touch /tmp/mesh_rssi_threshold
+			touch "$tmpdir/mesh_rssi_threshold"
 			iw dev $iface set mesh_param mesh_rssi_threshold $new_rssi
 			echo "set mesh11sd.mesh_params.mesh_rssi_threshold='$new_rssi'" | uci batch
 			new_current_rssi=$(iw dev $iface get mesh_param mesh_rssi_threshold | awk '{printf "%s", $1}')
@@ -3419,8 +3418,8 @@ elif [ "$1" = "mesh_rssi_threshold" ]; then
 			echo
 			echo "    Forcing new threshold on all peers..."
 
-			if [ -f "/tmp/mesh_rssi_threshold" ]; then
-				rm /tmp/mesh_rssi_threshold
+			if [ -f "$tmpdir/mesh_rssi_threshold" ]; then
+				rm "$tmpdir/mesh_rssi_threshold"
 			fi
 
 			new_current_rssi=$new_rssi
@@ -3596,12 +3595,12 @@ elif [ "$1" = "daemon" ]; then
 		probe_interface_mac
 	fi
 
-	if [ -e "/tmp/mesh11sd/brmac_la" ]; then
-		rm "/tmp/mesh11sd/brmac_la"
+	if [ -e "$tmpdir/brmac_la" ]; then
+		rm "$tmpdir/brmac_la"
 	fi
 
-	if [ -f "/tmp/mesh_rssi_threshold" ]; then
-		rm /tmp/mesh_rssi_threshold
+	if [ -f "$tmpdir/mesh_rssi_threshold" ]; then
+		rm "$tmpdir/mesh_rssi_threshold"
 	fi
 
 	if [ -f "$tmpdir/dhcp6probe" ]; then
@@ -3795,7 +3794,7 @@ elif [ "$1" = "daemon" ]; then
 				firstloop=0
 				changed=0
 
-				touch /tmp/meshinterface
+				touch "$tmpdir/meshinterface"
 				all_nodes_rssi_update
 			fi
 			# get a list of interfaces
