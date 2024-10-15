@@ -70,8 +70,6 @@ get_params () {
 			fi
 		done
 
-
-
 		if [ -f "$buffer" ]; then
 			params=$(cat $buffer)
 			rm "$buffer"
@@ -2210,8 +2208,13 @@ check_path_changes() {
 								syslogmessage="Station [ $peermac ] is [ $hop_count ] hops away and [ $path_change_count ] path_change(s) for station have been detected"
 								write_to_syslog
 								debugtype="debug"
-								syslogmessage="Station [ $peermac ] has an incrementing path change count, consider its location or adjust txpower and/or rssi_threshold"
+								syslogmessage="Station [ $peermac ] has an incrementing path change count, consider its location or adjust txpower and/or rssi_threshold ....."
 								write_to_syslog
+
+								if [ -z "$is_portal" ]; then
+									syslogmessage=" ..... or consider enabling mesh_leechmode on this node"
+									write_to_syslog
+								fi
 
 								if [ "$mesh_path_stabilisation" -eq 1 ]; then
 									# If we want reactive path stabilisation:
@@ -2229,6 +2232,11 @@ check_path_changes() {
 							debugtype="debug"
 							syslogmessage="Station [ $peermac ], consider its location or adjust txpower and/or rssi_threshold"
 							write_to_syslog
+
+							if [ -z "$is_portal" ]; then
+								syslogmessage=" ..... or consider enabling mesh_leechmode on this node"
+								write_to_syslog
+							fi
 						fi
 
 						echo "previous_path_change_count=$path_change_count" > $tmpdir/$peermac_id
@@ -2647,7 +2655,6 @@ is_ipv4mask_valid() {
 		return 1
 	fi
 }
-
 
 ##############
 # Start point
