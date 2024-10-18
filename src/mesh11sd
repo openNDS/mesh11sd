@@ -2655,6 +2655,51 @@ is_ipv4mask_valid() {
 	fi
 }
 
+str_to_hex() {
+	hex=$(echo -n "$1" | hexdump -v -e "\"%08x\"")
+}
+
+hex_to_str() {
+	local input="$1"
+	maxwordsize=8
+	i=0
+	hexstr=""
+	inputlen=$((${#input}))
+
+	while true; do
+		# get a word
+		word=${input:$i:$maxwordsize}
+
+		if [ -z "$word" ]; then
+			break
+		fi
+
+		wordsize=$((${#word}))
+		j=2
+
+		while true; do
+			hexchar=${word:$((wordsize-$j)):2}
+
+			if [ -z "$hexchar" ]; then
+				break
+			fi
+
+			hexstr="$hexstr\x$hexchar"
+
+			j=$((j+2))
+
+			if [ "$j" -gt "$wordsize" ]; then
+				break
+			fi
+
+		done
+		# Increment the pointer
+		i=$((i+$maxwordsize))
+	done
+
+	str=$(printf "$hexstr")
+}
+
 ##############
 # Start point
 ##############
@@ -3466,6 +3511,21 @@ elif [ "$1" = "opkg_revert_to_default" ]; then
 elif [ "$1" = "dhcp4_renew" ]; then
 	dhcpdevice=$(echo "get network.$auto_mesh_network.device" | uci batch | awk '{printf "%s", $1}')
 	dhcp4_renew
+	exit 0
+
+elif [ "$1" = "get_portal_ula" ]; then
+	get_portal_ula
+	echo -n "$portal_ula"
+	exit 0
+
+elif [ "$1" = "str_to_hex" ]; then
+	str_to_hex "$2"
+	echo -n "$hex"
+	exit 0
+
+elif [ "$1" = "hex_to_str" ]; then
+	hex_to_str "$2"
+	echo -n "$str"
 	exit 0
 
 elif [ "$1" = "is_installed" ]; then
