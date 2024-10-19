@@ -1300,6 +1300,12 @@ get_portal_state() {
 	debugtype="debug"
 	syslogmessage="leaving get_portal_state - is_portal=$is_portal.. gwstatus=$gwstatus.. gw_ip=$gw_ip.."
 	write_to_syslog
+
+	if [ -z "$is_portal" ] && [ -e "$tmpdir/is_portal" ]; then
+		rm /$tmpdir/is_portal
+	elif [ ! -z "$is_portal" ] && [ ! -e "$tmpdir/is_portal" ]; then
+		touch /$tmpdir/is_portal
+	fi
 }
 
 restore_ipv4() {
@@ -2652,6 +2658,20 @@ is_ipv4mask_valid() {
 		return 0
 	else
 		return 1
+	fi
+}
+
+get_portal_ula() {
+
+	if [ -e "$tmpdir/is_portal" ]; then
+		. $tmpdir/devicemac
+		portal_ula=$(ip -6 addr show dev $device scope global | grep "inet6" | awk '{print $2}' | awk -F "/" '{print $1}')
+
+	else
+		dev=$(ip -6 route | grep -w "default via" | awk '{printf "%s", $5}')
+		portal_ll=$(ip -6 route | grep -w "default via" | awk '{printf "%s", $3}')
+		portal_mac=$(ip -6 neigh | grep -w "$portal_ll dev $dev lladdr" | awk '{printf "%s", $5}')
+		portal_ula=$(ip -6 neigh | grep -w "$portal_mac" | grep -w -v "$portal_ll" | awk '{printf "%s", $1}')
 	fi
 }
 
