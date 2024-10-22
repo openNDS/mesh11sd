@@ -2720,6 +2720,51 @@ hex_to_str() {
 	str=$(printf "$hexstr")
 }
 
+write_node_data() {
+	####### placeholder!!!
+	status="$1! $2! ack"
+}
+
+setup_apmon_cgi() {
+	apmon_cgi_status=127
+
+	if [ "$(is_installed uhttpd; echo -n $?)" -eq 0 ]; then
+		cgiuhttp="/www/cgi-bin/apmon.cgi"
+		cgitmp="$tmpdir/apmon.cgi"
+
+		if [ -f "$cgiuhttp" ]; then
+			apmon_cgi_status=$(apmon_cgi "$cgitmp"; echo -n $?)
+			cgitmphash=$(sha256sum "$cgitmp" | awk '{printf "%s", $1}')
+			cgihash=$(sha256sum "$cgiuhttp" | awk '{printf "%s", $1}')
+
+			if [ "$cgitmphash" != "$cgihash" ]; then
+				cp "$cgitmp" "$cgiuhttp"
+			fi
+		else
+			apmon_cgi_status=$(apmon_cgi "$cgiuhttp"; echo -n $?)
+		fi
+	fi
+
+	return $apmon_cgi_status
+}
+
+apmon_cgi() {
+	local cgi=$1
+
+	if [ -z "$cgi" ]; then
+		return 127
+	fi
+
+	echo "#!/bin/sh" > "$cgi"
+	echo "printf \"%s\n\n\" \"Content-type: text/html\"" >> "$cgi"
+	echo "node_id=\"\$HTTP_USER_AGENT\"" >> "$cgi"
+	echo "querystring=\"\$QUERY_STRING\"" >> "$cgi"
+	echo "status=\$(mesh11sd write_node_data \"\$node_id\" \"\$querystring\")" >> "$cgi"
+	echo "echo \"\$status\"" >> "$cgi"
+	chmod 755 "$cgi"
+	return $?
+}
+
 ##############
 # Start point
 ##############
@@ -3561,6 +3606,11 @@ elif [ "$1" = "is_installed" ]; then
 
 	exit $exitcode
 
+elif [ "$1" = "write_node_data" ]; then
+	write_node_data "$2" "$3"
+	echo "$status"
+	exit 0
+
 elif [ "$1" = "daemon" ]; then
 	debugtype="notice"
 	syslogmessage="mesh11sd is in startup"
@@ -3719,6 +3769,8 @@ elif [ "$1" = "daemon" ]; then
 	check_config_params
 
 	arp_setup
+
+	setup_apmon_cgi
 
 	# Start the main loop
 	while true; do
