@@ -2676,7 +2676,7 @@ get_portal_ula() {
 }
 
 str_to_hex() {
-	hex=$(echo -n "$1" | hexdump -v -e "\"%08x\"")
+	echo -n "$1" | hexdump -v -e "\"%08x\"" > "$tmpdir/apmond/hexencoded"
 }
 
 hex_to_str() {
@@ -2721,8 +2721,88 @@ hex_to_str() {
 }
 
 write_node_data() {
-	####### placeholder!!!
-	status="$1! $2! ack"
+	node_id="$1"
+	data_raw="$2"
+	maxchunksize=16
+	strindex=0
+	chunkstr=""
+	data_raw_len=$((${#data_raw}))
+	data_checked=""
+	cumulative_transfer=0
+	node_type=$(echo "$node_id" | awk -F ";" '{printf "%s", $1}')
+	node_hostname=$(echo "$node_id" | awk -F ";" '{printf "%s", $2}')
+	node_mac=$(echo "$node_id" | awk -F ";" '{printf "%s", $3}' | awk -F ":" 'NF==6 {printf "%s%s%s%s%s%s%s", $1, $2, $3, $4, $5, $6}')
+	chunkstatus=$(echo "$node_id" | awk -F ";" '{printf "%s", $4}')
+	strindex=$(echo "$node_id" | awk -F ";" '{printf "%s", $5}')
+
+	while true; do
+		# get a chunk
+		chunk=${data_raw:$strindex:$maxchunksize}
+		chunksize="%.$((${#chunk}))x"
+
+		if [ -z "$chunk" ]; then
+			break
+		fi
+
+
+		hextest=$(printf "$chunksize" "0x$chunk")
+
+		if [ "$hextest" = "$chunk" ]; then
+			# Increment the pointer
+			strindex=$((strindex+$maxchunksize))
+
+			continue
+		else
+			status="nack"
+			retval=127
+			echo -n "$status"
+			return $retval
+		fi
+	done
+
+	if [ ! -z "$node_mac" ]; then
+
+		if [ "$node_type" = "apmond" ]; then
+
+			if [ "$chunkstatus" = "begin" ]; then
+				echo -n "$node_id $data_raw" > "$tmpdir/$node_type/ap/$node_mac"
+				status="* "
+				echo -n "$status"
+				retval=0
+			elif [ "$chunkstatus" = "chunk" ]; then
+				echo -n "$data_raw" >> "$tmpdir/$node_type/ap/$node_mac"
+				status="* "
+				echo -n "$status"
+				retval=0
+			elif [ "$chunkstatus" = "end" ]; then
+				echo " $node_id" >> "$tmpdir/$node_type/ap/$node_mac"
+				debugtype="info"
+				syslogmessage="apmond data received from node [$node_hostname] id [ $node_mac ]"
+				write_to_syslog
+				status="ack"
+				echo -n "$status"
+				retval=0
+			fi
+		else
+			status="nack"
+			retval=1
+		fi
+	else
+		status="nack"
+		retval=127
+	fi
+
+	if [ "$retval" -gt 0 ]; then
+		debugtype="warn"
+		syslogmessage="WARNING! Invalid remote data format - rejecting..."
+		write_to_syslog
+	fi
+
+	if [ "$status" = "nack" ]; then
+		echo -n "ERROR 418: Invalid HTCPCP"
+	fi
+
+	return $retval
 }
 
 setup_apmon_cgi() {
@@ -2756,13 +2836,131 @@ apmon_cgi() {
 	fi
 
 	echo "#!/bin/sh" > "$cgi"
-	echo "printf \"%s\n\n\" \"Content-type: text/html\"" >> "$cgi"
+	echo "printf \"%s\n%s\n\n\" \"Content-type: text/html\"" >> "$cgi"
 	echo "node_id=\"\$HTTP_USER_AGENT\"" >> "$cgi"
 	echo "querystring=\"\$QUERY_STRING\"" >> "$cgi"
 	echo "status=\$(mesh11sd write_node_data \"\$node_id\" \"\$querystring\")" >> "$cgi"
 	echo "echo \"\$status\"" >> "$cgi"
 	chmod 755 "$cgi"
+	mkdir -p "$tmpdir/apmond"
+	mkdir -p "$tmpdir/apmond/ap"
 	return $?
+}
+
+send_ap_data() {
+	maxchunksize=4048
+	strindex=0
+	chunkstr=""
+	hostname=$(uci get system.@system[0].hostname 2> /dev/null | awk '{printf "%s", $1}')
+	. $tmpdir/devicemac
+	str_data=$(get_ap_data)
+
+	str_to_hex "$str_data"
+	hexencoded=$(cat "$tmpdir/apmond/hexencoded")
+	hexencoded_len=$((${#hexencoded}))
+
+	get_portal_ula
+
+	while true; do
+		# get a chunk
+		chunk=${hexencoded:$strindex:$maxchunksize}
+		chunksize="%.$((${#chunk}))x"
+
+		if [ -z "$chunk" ]; then
+			chunkstatus="end"
+			send_status=$(wget -6 -q -O - -U "apmond;$hostname;$devicemac;$chunkstatus;$strindex" --no-check-certificate https://[$portal_ula]/cgi-bin/apmon.cgi)
+			retcode=$?
+			echo "$send_status" | awk '{printf "%s", $1}'
+			break
+		elif [ "$strindex" -eq 0 ]; then
+			chunkstatus="begin"
+		else
+			chunkstatus="chunk"
+		fi
+
+		send_status=$(wget -6 -q -O - -U "apmond;$hostname;$devicemac;$chunkstatus;$strindex" --no-check-certificate https://[$portal_ula]/cgi-bin/apmon.cgi?"$chunk")
+		retcode=$?
+
+		# Increment the pointer
+		strindex=$((strindex+$maxchunksize))
+	done
+
+	return "$retcode"
+}
+
+get_ap_data() {
+	aplist=$(uci show wireless | grep "mode='ap'" | awk -F "." '{printf "%s ", $2}')
+	json_init=1
+	first_ap=1
+	sta_flag=0
+
+	for ap in $aplist; do
+		first_sta=1
+		ap_ifname=$(uci get wireless."$ap".ifname)
+		ap_ssid=$(uci get wireless."$ap".ssid)
+		iw dev "$ap_ifname" station dump > $tmpdir/stations
+
+		if [ ! -s "$tmpdir/stations" ]; then
+			continue
+		else
+			sta_flag=1
+		fi
+
+		if [ "$json_init" -eq 1 ]; then
+			echo -n "{"
+			json_init=0
+		fi
+
+		cat /tmp/mesh11sd/stations | while read line; do
+
+			if [ -z "$line" ]; then
+				continue
+			fi
+
+			is_station_id=$(echo "$line" | grep "Station")
+
+			if [ ! -z "$is_station_id" ]; then
+
+				if [ "$first_ap" -eq 0 ]; then
+					echo -n ","
+				fi
+
+				if [ "$first_sta" -eq 1 ]; then
+					echo -e "\n  \"$ap_ssid@$ap_ifname\":{"
+				else
+					echo
+				fi
+
+				echo "$line" | awk '{printf "    \"%s\":{", $2}'; echo
+			else
+				ap_param_str=$(echo "$line" | tr -d \\t | tr -s " " "_" | awk -F ":" '{printf "\"%s\":\"%s\"", $1, $2}'; echo)
+				ap_param=$(echo "$ap_param_str" | awk -F "\"" '{printf "%s", $2}')
+
+				case $ap_param in
+					"rx_bytes") echo	"      $ap_param_str,";;
+					"tx_bytes") echo	"      $ap_param_str,";;
+					"tx_retries") echo	"      $ap_param_str,";;
+					"tx_failed") echo	"      $ap_param_str,";;
+					"signal_avg") echo	"      $ap_param_str,";;
+					"tx_bitrate") echo	"      $ap_param_str,";;
+					"rx_bitrate") echo	"      $ap_param_str,";;
+					"avg_ack_signal") echo	"      $ap_param_str,";;
+					"connected_time") echo	"      $ap_param_str"; echo -n "    }";;
+				esac
+
+			fi
+
+			first_sta=0
+		done
+
+		first_ap=0
+		echo -n -e "\n  }"
+
+	done
+
+	if [ "$sta_flag" -eq 1 ]; then
+		echo -e "\n}"
+	fi
 }
 
 ##############
@@ -3113,10 +3311,12 @@ elif [ "$1" = "status" ]; then
 	echo "  \"layer2_connections\":{"
 
 	devicelist=$(uci show network | grep "type='bridge'" | awk -F "." '{printf "%s.%s ", $1, $2}')
+	devicecount=$( echo "$devicelist" | awk '{printf "%s", NF}')
 
 	for devicesection in $devicelist; do
+		devicecount=$((devicecount - 1))
 		bridge=$(uci get "$devicesection".name)
-		echo "    \"bridge\":\"$bridge\"{"
+		echo "    \"$bridge\":{"
 		bridgeportlist=$(brctl showstp "$bridge" 2>/dev/null | grep " (" | grep ")" | awk '{printf "interface=%s;port=%s ", $1, $2}'| tr -d "(" | tr -d ")")
 		firstmac=1
 
@@ -3141,9 +3341,15 @@ elif [ "$1" = "status" ]; then
 		done
 
 		if [ -z "$allmacs" ]; then
-			echo -e "    }"
+			echo -n -e "    }"
 		else
-			echo -e "\n    }"
+			echo -n -e "\n    }"
+		fi
+
+		if [ "$devicecount" -eq 0 ]; then
+			echo
+		else
+			echo ","
 		fi
 	done
 
@@ -3585,7 +3791,11 @@ elif [ "$1" = "get_portal_ula" ]; then
 
 elif [ "$1" = "str_to_hex" ]; then
 	str_to_hex "$2"
-	echo -n "$hex"
+
+	if [ -f "$tmpdir/apmond/hexencoded" ]; then
+		cat "$tmpdir/apmond/hexencoded"
+	fi
+
 	exit 0
 
 elif [ "$1" = "hex_to_str" ]; then
@@ -3594,7 +3804,7 @@ elif [ "$1" = "hex_to_str" ]; then
 	exit 0
 
 elif [ "$1" = "is_installed" ]; then
-	is_installed $2
+	is_installed "$2"
 
 	case $exitcode in
 		0) echo "Package [ $2 ] is installed";;
@@ -3608,7 +3818,14 @@ elif [ "$1" = "is_installed" ]; then
 
 elif [ "$1" = "write_node_data" ]; then
 	write_node_data "$2" "$3"
-	echo "$status"
+	exit 0
+
+elif [ "$1" = "send_ap_data" ]; then
+	send_ap_data
+	exit $retcode
+
+elif [ "$1" = "get_ap_data" ]; then
+	get_ap_data
 	exit 0
 
 elif [ "$1" = "daemon" ]; then
