@@ -148,6 +148,7 @@ get_current_setup () {
 
 	syslogmessage="Reading configuration"
 	debugtype="notice"
+	mute="$mutestate"
 	write_to_syslog
 
 	enabled=$(uci get mesh11sd.setup.enabled 2> /dev/null)
@@ -158,11 +159,13 @@ get_current_setup () {
 
 	syslogmessage="option enabled [ $enabled ]"
 	debugtype="info"
+	mute="$mutestate"
 	write_to_syslog
 
 	#####
 	syslogmessage="option debuglevel [ $debuglevel ]"
 	debugtype="info"
+	mute="$mutestate"
 	write_to_syslog
 
 	#####
@@ -174,6 +177,7 @@ get_current_setup () {
 
 	syslogmessage="option checkinterval [ $checkinterval ]"
 	debugtype="info"
+	mute="$mutestate"
 	write_to_syslog
 
 	#####
@@ -185,6 +189,7 @@ get_current_setup () {
 
 	syslogmessage="option portal_detect [ $portal_detect ]"
 	debugtype="info"
+	mute="$mutestate"
 	write_to_syslog
 
 	#####
@@ -196,6 +201,7 @@ get_current_setup () {
 
 	syslogmessage="option portal_channel [ $portal_channel ]"
 	debugtype="info"
+	mute="$mutestate"
 	write_to_syslog
 
 	#####
@@ -207,6 +213,7 @@ get_current_setup () {
 
 	syslogmessage="option channel_tracking_checkinterval [ $channel_tracking_checkinterval ]"
 	debugtype="info"
+	mute="$mutestate"
 	write_to_syslog
 
 	#####
@@ -218,6 +225,7 @@ get_current_setup () {
 
 	syslogmessage="option portal_detect_threshold [ $portal_detect_threshold ]"
 	debugtype="info"
+	mute="$mutestate"
 	write_to_syslog
 
 	#####
@@ -232,6 +240,7 @@ get_current_setup () {
 
 	syslogmessage="option interface_timeout [ $interface_timeout ]"
 	debugtype="info"
+	mute="$mutestate"
 	write_to_syslog
 
 	#####
@@ -245,6 +254,7 @@ get_current_setup () {
 
 	syslogmessage="option auto_config [ $auto_config ]"
 	debugtype="info"
+	mute="$mutestate"
 	write_to_syslog
 
 	#####
@@ -258,6 +268,7 @@ get_current_setup () {
 
 	syslogmessage="auto_mesh_id hash [ $auto_mesh_id ]"
 	debugtype="info"
+	mute="$mutestate"
 	write_to_syslog
 
 	#####
@@ -285,6 +296,7 @@ get_current_setup () {
 
 	syslogmessage="option auto_mesh_band [ $auto_mesh_band ]"
 	debugtype="info"
+	mute="$mutestate"
 	write_to_syslog
 
 	#####
@@ -298,6 +310,7 @@ get_current_setup () {
 
 	syslogmessage="option auto_mesh_key [ $auto_mesh_key ]"
 	debugtype="info"
+	mute="$mutestate"
 	write_to_syslog
 
 	#####
@@ -313,6 +326,7 @@ get_current_setup () {
 
 		if [ "$auto_config" -eq 0 ]; then
 			syslogmessage="option auto_mesh_network is not configured, defaulting to [ $auto_mesh_network ]. Is this what you intended?"
+			mute="$mutestate"
 			debugtype="warn"
 			write_to_syslog
 		fi
@@ -335,15 +349,19 @@ get_current_setup () {
 	if [ "$zone_status" -eq 1 ]; then
 		syslogmessage="network zone [ $auto_mesh_network ] does not exist"
 		debugtype="warn"
+		mute="$mutestate"
 		write_to_syslog
 		auto_mesh_network="lan"
 	else
 		syslogmessage="option auto_mesh_network [ $auto_mesh_network ]"
 		debugtype="info"
+		mute="$mutestate"
 		write_to_syslog
 	fi
+
 	syslogmessage="option auto_mesh_network [ $auto_mesh_network ]"
 	debugtype="info"
+	mute="$mutestate"
 	write_to_syslog
 
 	#####
@@ -362,6 +380,7 @@ get_current_setup () {
 
 	syslogmessage="option mesh_basename [ $mesh_basename ]"
 	debugtype="info"
+	mute="$mutestate"
 	write_to_syslog
 
 	#####
@@ -391,10 +410,12 @@ get_current_setup () {
 	if [ "$mesh_gate_encryption" -le 4 ]; then
 		syslogmessage="option mesh_gate_encryption [ $mesh_gate_encryption ]"
 		debugtype="info"
+		mute="$mutestate"
 		write_to_syslog
 	else
 		syslogmessage="option mesh_gate_encryption must be 0 (none), 1 (sae, aka wpa3), 2 (sae-mixed, aka wpa2/wpa3), 3 (psk2, aka wpa2) or 4 (owe)"
 		debugtype="err"
+		mute="$mutestate"
 		write_to_syslog
 	fi
 
@@ -414,11 +435,13 @@ get_current_setup () {
 	if [ "$keylen" -le 7 ] && [ "$keylen" -gt 0 ]; then
 		syslogmessage="mesh_gate_key [ $mesh_gate_key ] is too short, it must be 8 or more characters in length"
 		debugtype="err"
+		mute="$mutestate"
 		write_to_syslog
 		mesh_gate_key=""
 	else
 		syslogmessage="option mesh_gate_key [ $mesh_gate_key ]"
 		debugtype="info"
+		mute="$mutestate"
 		write_to_syslog
 	fi
 
@@ -442,6 +465,7 @@ get_current_setup () {
 
 		syslogmessage="option vtun_enable [ $vtun_enable ]"
 		debugtype="info"
+		mute="$mutestate"
 		write_to_syslog
 
 		#####
@@ -459,6 +483,7 @@ get_current_setup () {
 
 		syslogmessage="option tun_id [ $tun_id ]"
 		debugtype="info"
+		mute="$mutestate"
 		write_to_syslog
 
 
@@ -477,6 +502,7 @@ get_current_setup () {
 
 		syslogmessage="option vtun_ip [ $vtun_ip ]"
 		debugtype="info"
+		mute="$mutestate"
 		write_to_syslog
 
 		#####
@@ -494,6 +520,7 @@ get_current_setup () {
 
 		syslogmessage="option vtun_mask [ $vtun_mask ]"
 		debugtype="info"
+		mute="$mutestate"
 		write_to_syslog
 
 		#####
@@ -510,10 +537,12 @@ get_current_setup () {
 		if [ "$vtun_gate_encryption" -le 4 ]; then
 			syslogmessage="option vtun_gate_encryption [ $vtun_gate_encryption ]"
 			debugtype="info"
+			mute="$mutestate"
 			write_to_syslog
 		else
 			syslogmessage="option vtun_gate_encryption must be 0 (none), 1 (sae, aka wpa3), 2 (sae-mixed, aka wpa2/wpa3), 3 (psk2, aka wpa2) or 4 (owe)"
 			debugtype="err"
+			mute="$mutestate"
 			write_to_syslog
 		fi
 
@@ -533,11 +562,13 @@ get_current_setup () {
 		if [ "$keylen" -le 7 ] && [ "$keylen" -gt 0 ]; then
 			syslogmessage="vtun_gate_key [ $vtun_gate_key ] is too short, it must be 8 or more characters in length"
 			debugtype="err"
+			mute="$mutestate"
 			write_to_syslog
 			vtun_gate_key=""
 		else
 			syslogmessage="option vtun_gate_key [ $vtun_gate_key ]"
 			debugtype="info"
+			mute="$mutestate"
 			write_to_syslog
 		fi
 
@@ -550,6 +581,7 @@ get_current_setup () {
 
 		syslogmessage="option vtun_base_ssid [ $vtun_base_ssid ]"
 		debugtype="info"
+		mute="$mutestate"
 		write_to_syslog
 	else
 		vtun_enable=0
@@ -565,6 +597,7 @@ get_current_setup () {
 
 	syslogmessage="option mesh_gate_enable [ $mesh_gate_enable ]"
 	debugtype="info"
+	mute="$mutestate"
 	write_to_syslog
 
 	#####
@@ -585,6 +618,7 @@ get_current_setup () {
 
 	syslogmessage="option mesh_leechmode_enable [ $mesh_gate_only ]"
 	debugtype="info"
+	mute="$mutestate"
 	write_to_syslog
 
 	#####
@@ -594,6 +628,7 @@ get_current_setup () {
 	if [ ! -z "$txpower" ]; then
 		syslogmessage="option txpower [ $txpower ]"
 		debugtype="info"
+		mute="$mutestate"
 		write_to_syslog
 	fi
 
@@ -606,6 +641,7 @@ get_current_setup () {
 
 	syslogmessage="option ssid_suffix_enable [ $ssid_suffix_enable ]"
 	debugtype="info"
+	mute="$mutestate"
 	write_to_syslog
 
 	#####
@@ -617,14 +653,17 @@ get_current_setup () {
 
 	syslogmessage="option watchdog_nonvolatile_log [ $watchdog_nonvolatile_log ]"
 	debugtype="info"
+	mute="$mutestate"
 	write_to_syslog
 
 	if [ "$watchdog_nonvolatile_log" -gt 0 ]; then
 		syslogmessage="******WARNING******: Irrepairable flash wear will occur and storage space will be used up. Please disable watchdog nonvolatile logging as soon as possible."
 		debugtype="warn"
+		mute="$mutestate"
 		write_to_syslog
 		syslogmessage="******WARNING******: Irrepairable flash wear will occur and storage space will be used up by watchdog debug log at /mesh11sd_log/watchdog.log"
 		debugtype="warn"
+		mute="$mutestate"
 		write_to_syslog
 		mkdir -p /mesh11sd_log
 	fi
@@ -638,6 +677,7 @@ get_current_setup () {
 
 	syslogmessage="option mesh_path_stabilisation [ $mesh_path_stabilisation ]"
 	debugtype="info"
+	mute="$mutestate"
 	write_to_syslog
 
 	#####
@@ -653,6 +693,7 @@ get_current_setup () {
 
 	syslogmessage="option mesh_mac_forced_forwarding [ $mesh_mac_forced_forwarding ]"
 	debugtype="info"
+	mute="$mutestate"
 	write_to_syslog
 
 	#####
@@ -668,6 +709,7 @@ get_current_setup () {
 
 	syslogmessage="option gateway_proxy_arp [ $gateway_proxy_arp ]"
 	debugtype="info"
+	mute="$mutestate"
 	write_to_syslog
 
 	#####
@@ -683,6 +725,7 @@ get_current_setup () {
 
 	syslogmessage="option reboot_on_error [ $reboot_on_error ]"
 	debugtype="info"
+	mute="$mutestate"
 	write_to_syslog
 
 	#####
@@ -698,6 +741,7 @@ get_current_setup () {
 
 	syslogmessage="option stop_on_error [ $stop_on_error ]"
 	debugtype="info"
+	mute="$mutestate"
 	write_to_syslog
 }
 
@@ -891,6 +935,11 @@ get_mesh_path_cost () {
 	fi
 
 	syslogmessage="option mesh_path_cost [ $mesh_path_cost ]"
+
+	if [ "$mute" -eq  0 ]; then
+		mute="$mutestate"
+	fi
+
 	debugtype="info"
 	write_to_syslog
 }
@@ -929,17 +978,17 @@ write_to_syslog() {
 		if [ ! -z "$syslogmessage" ]; then
 
 			case $debugtype in
-				"emerg") debugnum=0;;
-				"err") debugnum=0;;
-				"notice") debugnum=1;;
-				"warn") debugnum=1;;
-				"info") debugnum=2;;
-				"debug") debugnum=3;;
-				*) debugnum=1; debugtype="notice";;
+				"emerg") debugnum=0; log_to_stderr="-s";;
+				"err") debugnum=0; log_to_stderr="-s";;
+				"notice") debugnum=1; log_to_stderr="";;
+				"warn") debugnum=1; log_to_stderr="-s";;
+				"info") debugnum=2; log_to_stderr="";;
+				"debug") debugnum=3; log_to_stderr="-s";;
+				*) debugnum=1; debugtype="notice"; log_to_stderr="";;
 			esac
 
 			if [ "$debuglevel" -ge "$debugnum" ]; then
-				echo "$syslogmessage" | logger -p "daemon.$debugtype" -s -t "mesh11sd[$mesh11sdpid]"
+				logger -p "daemon.$debugtype" "$log_to_stderr" -t "mesh11sd[$mesh11sdpid]" "$syslogmessage"
 			fi
 		fi
 	else
@@ -2668,10 +2717,7 @@ get_portal_ula() {
 		portal_ula=$(ip -6 addr show dev $device scope global | grep "inet6" | awk '{print $2}' | awk -F "/" '{print $1}')
 
 	else
-		dev=$(ip -6 route | grep -w "default via" | awk '{printf "%s", $5}')
-		portal_ll=$(ip -6 route | grep -w "default via" | awk '{printf "%s", $3}')
-		portal_mac=$(ip -6 neigh | grep -w "$portal_ll dev $dev lladdr" | awk '{printf "%s", $5}')
-		portal_ula=$(ip -6 neigh | grep -w "$portal_mac" | grep -w -v "$portal_ll" | awk '{printf "%s", $1}')
+		portal_ula=$(cat $tmpdir/dhcp6probe | grep -A 2 "Got a valid ADVERTISE" | grep "preferred" | awk '{printf "%s", $2}' | awk -F ":" '{printf "%s:%s:%s::1", $1, $2, $3 }')
 	fi
 }
 
@@ -2859,6 +2905,15 @@ send_ap_data() {
 	hexencoded=$(cat "$tmpdir/apmond/hexencoded")
 	hexencoded_len=$((${#hexencoded}))
 
+	if [ "$hexencoded_len" -eq 0 ]; then
+		retcode=0
+		return 0
+	fi
+
+	debugtype="debug"
+	syslogmessage="apmond sending chunked data"
+	write_to_syslog
+
 	get_portal_ula
 
 	while true; do
@@ -2940,12 +2995,12 @@ get_ap_data() {
 					"rx_bytes") echo	"      $ap_param_str,";;
 					"tx_bytes") echo	"      $ap_param_str,";;
 					"tx_retries") echo	"      $ap_param_str,";;
-					"tx_failed") echo	"      $ap_param_str,";;
 					"signal_avg") echo	"      $ap_param_str,";;
 					"tx_bitrate") echo	"      $ap_param_str,";;
 					"rx_bitrate") echo	"      $ap_param_str,";;
 					"avg_ack_signal") echo	"      $ap_param_str,";;
-					"connected_time") echo	"      $ap_param_str"; echo -n "    }";;
+					"connected_time") echo	"      $ap_param_str,";;
+					"current_time") echo	"      $ap_param_str"; echo -n "    }";;
 				esac
 
 			fi
@@ -2971,6 +3026,12 @@ if [ -f "/var/run/mesh11sd.pid" ]; then
 	mesh11sdpid=$(cat /var/run/mesh11sd.pid)
 else
 	mesh11sdpid=$(pgrep -f "/bin/sh /usr/sbin/mesh11sd")
+fi
+
+if [ "$1" = "daemon" ]; then
+	mutestate=0
+else
+	mutestate=1
 fi
 
 get_current_setup 2> /dev/null
@@ -3828,6 +3889,12 @@ elif [ "$1" = "get_ap_data" ]; then
 	get_ap_data
 	exit 0
 
+elif [ "$1" = "show_ap_data" ]; then
+	echo "placeholder"
+
+
+	exit 0
+
 elif [ "$1" = "daemon" ]; then
 	debugtype="notice"
 	syslogmessage="mesh11sd is in startup"
@@ -3971,6 +4038,8 @@ elif [ "$1" = "daemon" ]; then
 	index=0
 	transition_count=0
 	vtunnel=""
+	apmondloopcount=0
+	apmondloopstart=6
 
 	# Clear the dhcp authoritative flag
 	uci delete dhcp.@dnsmasq[0].authoritative 2>/dev/null
@@ -4342,12 +4411,18 @@ elif [ "$1" = "daemon" ]; then
 			fi
 
 			check_vtunnel
+			apmondloopcount=$((apmondloopcount + 1))
+
+			if [ "$apmondloopcount" -ge "$apmondloopstart" ]; then
+				send_ap_data
+				apmondloopcount=0
+				apmondloopstart=3
+			fi
 		fi
 
 		debugtype="debug"
 		syslogmessage="checkinterval $checkinterval seconds"
 		write_to_syslog
-
 		sleep $checkinterval
 	done
 	exit 0
