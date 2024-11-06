@@ -3890,8 +3890,46 @@ elif [ "$1" = "get_ap_data" ]; then
 	exit 0
 
 elif [ "$1" = "show_ap_data" ]; then
-	echo "placeholder"
 
+	if [ "$auto_config" -eq 0 ]; then
+		echo "================================================================================"
+		echo "Unable to collect access point data -  enable auto_config for this functionality"
+		echo "================================================================================"
+		exit 1
+	fi
+
+	data_nodes=$(ls "$tmpdir/apmond/ap/" | awk '{printf "%s ", $1}')
+
+	if [ -z "$2" ]; then
+		echo "==========================================================================="
+
+		echo " Show access point usage data"
+		echo "    Usage: mesh11sd show_ap_data [ap_mac_id]"
+		echo
+
+		if [ ! -z "$data_nodes" ]; then
+			echo " If the node you are looking for is not in the list - it probably has not had any connections yet - try again later."
+			echo "===================================================================================================================="
+			echo " The following access points have sent usage data:"
+
+			for data_node in $data_nodes; do
+				echo "==========================================================================="
+				echo
+				echo "Acess point ID (ap_mac_id)	$data_node"
+			done
+
+			echo "==================================================================================="
+		else
+			echo " If the node you are looking for is not shown - it probably has not had any connections yet - try again later."
+			echo "=============================================================================================================="
+		fi
+	else
+		hex_to_str "$(awk '{printf "%s", $2}'  "$tmpdir/apmond/ap/$2" 2>/dev/null)"
+
+		if [ ! -z "$str" ]; then
+			echo "$str"
+		fi
+	fi
 
 	exit 0
 
