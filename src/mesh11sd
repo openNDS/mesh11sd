@@ -148,6 +148,7 @@ get_current_setup () {
 
 	syslogmessage="Reading configuration"
 	debugtype="notice"
+	mute="$mutestate"
 	write_to_syslog
 
 	enabled=$(uci get mesh11sd.setup.enabled 2> /dev/null)
@@ -158,11 +159,13 @@ get_current_setup () {
 
 	syslogmessage="option enabled [ $enabled ]"
 	debugtype="info"
+	mute="$mutestate"
 	write_to_syslog
 
 	#####
 	syslogmessage="option debuglevel [ $debuglevel ]"
 	debugtype="info"
+	mute="$mutestate"
 	write_to_syslog
 
 	#####
@@ -174,6 +177,7 @@ get_current_setup () {
 
 	syslogmessage="option checkinterval [ $checkinterval ]"
 	debugtype="info"
+	mute="$mutestate"
 	write_to_syslog
 
 	#####
@@ -185,6 +189,7 @@ get_current_setup () {
 
 	syslogmessage="option portal_detect [ $portal_detect ]"
 	debugtype="info"
+	mute="$mutestate"
 	write_to_syslog
 
 	#####
@@ -196,6 +201,7 @@ get_current_setup () {
 
 	syslogmessage="option portal_channel [ $portal_channel ]"
 	debugtype="info"
+	mute="$mutestate"
 	write_to_syslog
 
 	#####
@@ -207,6 +213,7 @@ get_current_setup () {
 
 	syslogmessage="option channel_tracking_checkinterval [ $channel_tracking_checkinterval ]"
 	debugtype="info"
+	mute="$mutestate"
 	write_to_syslog
 
 	#####
@@ -218,6 +225,7 @@ get_current_setup () {
 
 	syslogmessage="option portal_detect_threshold [ $portal_detect_threshold ]"
 	debugtype="info"
+	mute="$mutestate"
 	write_to_syslog
 
 	#####
@@ -232,6 +240,7 @@ get_current_setup () {
 
 	syslogmessage="option interface_timeout [ $interface_timeout ]"
 	debugtype="info"
+	mute="$mutestate"
 	write_to_syslog
 
 	#####
@@ -245,6 +254,7 @@ get_current_setup () {
 
 	syslogmessage="option auto_config [ $auto_config ]"
 	debugtype="info"
+	mute="$mutestate"
 	write_to_syslog
 
 	#####
@@ -258,6 +268,7 @@ get_current_setup () {
 
 	syslogmessage="auto_mesh_id hash [ $auto_mesh_id ]"
 	debugtype="info"
+	mute="$mutestate"
 	write_to_syslog
 
 	#####
@@ -285,6 +296,7 @@ get_current_setup () {
 
 	syslogmessage="option auto_mesh_band [ $auto_mesh_band ]"
 	debugtype="info"
+	mute="$mutestate"
 	write_to_syslog
 
 	#####
@@ -298,6 +310,7 @@ get_current_setup () {
 
 	syslogmessage="option auto_mesh_key [ $auto_mesh_key ]"
 	debugtype="info"
+	mute="$mutestate"
 	write_to_syslog
 
 	#####
@@ -313,6 +326,7 @@ get_current_setup () {
 
 		if [ "$auto_config" -eq 0 ]; then
 			syslogmessage="option auto_mesh_network is not configured, defaulting to [ $auto_mesh_network ]. Is this what you intended?"
+			mute="$mutestate"
 			debugtype="warn"
 			write_to_syslog
 		fi
@@ -335,15 +349,19 @@ get_current_setup () {
 	if [ "$zone_status" -eq 1 ]; then
 		syslogmessage="network zone [ $auto_mesh_network ] does not exist"
 		debugtype="warn"
+		mute="$mutestate"
 		write_to_syslog
 		auto_mesh_network="lan"
 	else
 		syslogmessage="option auto_mesh_network [ $auto_mesh_network ]"
 		debugtype="info"
+		mute="$mutestate"
 		write_to_syslog
 	fi
+
 	syslogmessage="option auto_mesh_network [ $auto_mesh_network ]"
 	debugtype="info"
+	mute="$mutestate"
 	write_to_syslog
 
 	#####
@@ -362,6 +380,7 @@ get_current_setup () {
 
 	syslogmessage="option mesh_basename [ $mesh_basename ]"
 	debugtype="info"
+	mute="$mutestate"
 	write_to_syslog
 
 	#####
@@ -391,10 +410,12 @@ get_current_setup () {
 	if [ "$mesh_gate_encryption" -le 4 ]; then
 		syslogmessage="option mesh_gate_encryption [ $mesh_gate_encryption ]"
 		debugtype="info"
+		mute="$mutestate"
 		write_to_syslog
 	else
 		syslogmessage="option mesh_gate_encryption must be 0 (none), 1 (sae, aka wpa3), 2 (sae-mixed, aka wpa2/wpa3), 3 (psk2, aka wpa2) or 4 (owe)"
 		debugtype="err"
+		mute="$mutestate"
 		write_to_syslog
 	fi
 
@@ -414,11 +435,13 @@ get_current_setup () {
 	if [ "$keylen" -le 7 ] && [ "$keylen" -gt 0 ]; then
 		syslogmessage="mesh_gate_key [ $mesh_gate_key ] is too short, it must be 8 or more characters in length"
 		debugtype="err"
+		mute="$mutestate"
 		write_to_syslog
 		mesh_gate_key=""
 	else
 		syslogmessage="option mesh_gate_key [ $mesh_gate_key ]"
 		debugtype="info"
+		mute="$mutestate"
 		write_to_syslog
 	fi
 
@@ -442,6 +465,7 @@ get_current_setup () {
 
 		syslogmessage="option vtun_enable [ $vtun_enable ]"
 		debugtype="info"
+		mute="$mutestate"
 		write_to_syslog
 
 		#####
@@ -459,6 +483,7 @@ get_current_setup () {
 
 		syslogmessage="option tun_id [ $tun_id ]"
 		debugtype="info"
+		mute="$mutestate"
 		write_to_syslog
 
 
@@ -477,6 +502,7 @@ get_current_setup () {
 
 		syslogmessage="option vtun_ip [ $vtun_ip ]"
 		debugtype="info"
+		mute="$mutestate"
 		write_to_syslog
 
 		#####
@@ -494,6 +520,7 @@ get_current_setup () {
 
 		syslogmessage="option vtun_mask [ $vtun_mask ]"
 		debugtype="info"
+		mute="$mutestate"
 		write_to_syslog
 
 		#####
@@ -510,10 +537,12 @@ get_current_setup () {
 		if [ "$vtun_gate_encryption" -le 4 ]; then
 			syslogmessage="option vtun_gate_encryption [ $vtun_gate_encryption ]"
 			debugtype="info"
+			mute="$mutestate"
 			write_to_syslog
 		else
 			syslogmessage="option vtun_gate_encryption must be 0 (none), 1 (sae, aka wpa3), 2 (sae-mixed, aka wpa2/wpa3), 3 (psk2, aka wpa2) or 4 (owe)"
 			debugtype="err"
+			mute="$mutestate"
 			write_to_syslog
 		fi
 
@@ -533,11 +562,13 @@ get_current_setup () {
 		if [ "$keylen" -le 7 ] && [ "$keylen" -gt 0 ]; then
 			syslogmessage="vtun_gate_key [ $vtun_gate_key ] is too short, it must be 8 or more characters in length"
 			debugtype="err"
+			mute="$mutestate"
 			write_to_syslog
 			vtun_gate_key=""
 		else
 			syslogmessage="option vtun_gate_key [ $vtun_gate_key ]"
 			debugtype="info"
+			mute="$mutestate"
 			write_to_syslog
 		fi
 
@@ -550,6 +581,7 @@ get_current_setup () {
 
 		syslogmessage="option vtun_base_ssid [ $vtun_base_ssid ]"
 		debugtype="info"
+		mute="$mutestate"
 		write_to_syslog
 	else
 		vtun_enable=0
@@ -565,6 +597,7 @@ get_current_setup () {
 
 	syslogmessage="option mesh_gate_enable [ $mesh_gate_enable ]"
 	debugtype="info"
+	mute="$mutestate"
 	write_to_syslog
 
 	#####
@@ -585,6 +618,7 @@ get_current_setup () {
 
 	syslogmessage="option mesh_leechmode_enable [ $mesh_gate_only ]"
 	debugtype="info"
+	mute="$mutestate"
 	write_to_syslog
 
 	#####
@@ -594,6 +628,7 @@ get_current_setup () {
 	if [ ! -z "$txpower" ]; then
 		syslogmessage="option txpower [ $txpower ]"
 		debugtype="info"
+		mute="$mutestate"
 		write_to_syslog
 	fi
 
@@ -606,6 +641,7 @@ get_current_setup () {
 
 	syslogmessage="option ssid_suffix_enable [ $ssid_suffix_enable ]"
 	debugtype="info"
+	mute="$mutestate"
 	write_to_syslog
 
 	#####
@@ -617,14 +653,17 @@ get_current_setup () {
 
 	syslogmessage="option watchdog_nonvolatile_log [ $watchdog_nonvolatile_log ]"
 	debugtype="info"
+	mute="$mutestate"
 	write_to_syslog
 
 	if [ "$watchdog_nonvolatile_log" -gt 0 ]; then
 		syslogmessage="******WARNING******: Irrepairable flash wear will occur and storage space will be used up. Please disable watchdog nonvolatile logging as soon as possible."
 		debugtype="warn"
+		mute="$mutestate"
 		write_to_syslog
 		syslogmessage="******WARNING******: Irrepairable flash wear will occur and storage space will be used up by watchdog debug log at /mesh11sd_log/watchdog.log"
 		debugtype="warn"
+		mute="$mutestate"
 		write_to_syslog
 		mkdir -p /mesh11sd_log
 	fi
@@ -638,6 +677,7 @@ get_current_setup () {
 
 	syslogmessage="option mesh_path_stabilisation [ $mesh_path_stabilisation ]"
 	debugtype="info"
+	mute="$mutestate"
 	write_to_syslog
 
 	#####
@@ -653,6 +693,7 @@ get_current_setup () {
 
 	syslogmessage="option mesh_mac_forced_forwarding [ $mesh_mac_forced_forwarding ]"
 	debugtype="info"
+	mute="$mutestate"
 	write_to_syslog
 
 	#####
@@ -668,6 +709,7 @@ get_current_setup () {
 
 	syslogmessage="option gateway_proxy_arp [ $gateway_proxy_arp ]"
 	debugtype="info"
+	mute="$mutestate"
 	write_to_syslog
 
 	#####
@@ -683,6 +725,7 @@ get_current_setup () {
 
 	syslogmessage="option reboot_on_error [ $reboot_on_error ]"
 	debugtype="info"
+	mute="$mutestate"
 	write_to_syslog
 
 	#####
@@ -698,6 +741,7 @@ get_current_setup () {
 
 	syslogmessage="option stop_on_error [ $stop_on_error ]"
 	debugtype="info"
+	mute="$mutestate"
 	write_to_syslog
 }
 
@@ -891,6 +935,11 @@ get_mesh_path_cost () {
 	fi
 
 	syslogmessage="option mesh_path_cost [ $mesh_path_cost ]"
+
+	if [ "$mute" -eq  0 ]; then
+		mute="$mutestate"
+	fi
+
 	debugtype="info"
 	write_to_syslog
 }
@@ -929,17 +978,17 @@ write_to_syslog() {
 		if [ ! -z "$syslogmessage" ]; then
 
 			case $debugtype in
-				"emerg") debugnum=0;;
-				"err") debugnum=0;;
-				"notice") debugnum=1;;
-				"warn") debugnum=1;;
-				"info") debugnum=2;;
-				"debug") debugnum=3;;
-				*) debugnum=1; debugtype="notice";;
+				"emerg") debugnum=0; log_to_stderr="-s";;
+				"err") debugnum=0; log_to_stderr="-s";;
+				"notice") debugnum=1; log_to_stderr="";;
+				"warn") debugnum=1; log_to_stderr="-s";;
+				"info") debugnum=2; log_to_stderr="";;
+				"debug") debugnum=3; log_to_stderr="-s";;
+				*) debugnum=1; debugtype="notice"; log_to_stderr="";;
 			esac
 
 			if [ "$debuglevel" -ge "$debugnum" ]; then
-				echo "$syslogmessage" | logger -p "daemon.$debugtype" -s -t "mesh11sd[$mesh11sdpid]"
+				logger -p "daemon.$debugtype" "$log_to_stderr" -t "mesh11sd[$mesh11sdpid]" "$syslogmessage"
 			fi
 		fi
 	else
@@ -2668,15 +2717,12 @@ get_portal_ula() {
 		portal_ula=$(ip -6 addr show dev $device scope global | grep "inet6" | awk '{print $2}' | awk -F "/" '{print $1}')
 
 	else
-		dev=$(ip -6 route | grep -w "default via" | awk '{printf "%s", $5}')
-		portal_ll=$(ip -6 route | grep -w "default via" | awk '{printf "%s", $3}')
-		portal_mac=$(ip -6 neigh | grep -w "$portal_ll dev $dev lladdr" | awk '{printf "%s", $5}')
-		portal_ula=$(ip -6 neigh | grep -w "$portal_mac" | grep -w -v "$portal_ll" | awk '{printf "%s", $1}')
+		portal_ula=$(cat $tmpdir/dhcp6probe | grep -A 2 "Got a valid ADVERTISE" | grep "preferred" | awk '{printf "%s", $2}' | awk -F ":" '{printf "%s:%s:%s::1", $1, $2, $3 }')
 	fi
 }
 
 str_to_hex() {
-	hex=$(echo -n "$1" | hexdump -v -e "\"%08x\"")
+	echo -n "$1" | hexdump -v -e "\"%08x\"" > "$tmpdir/apmond/hexencoded"
 }
 
 hex_to_str() {
@@ -2721,8 +2767,88 @@ hex_to_str() {
 }
 
 write_node_data() {
-	####### placeholder!!!
-	status="$1! $2! ack"
+	node_id="$1"
+	data_raw="$2"
+	maxchunksize=16
+	strindex=0
+	chunkstr=""
+	data_raw_len=$((${#data_raw}))
+	data_checked=""
+	cumulative_transfer=0
+	node_type=$(echo "$node_id" | awk -F ";" '{printf "%s", $1}')
+	node_hostname=$(echo "$node_id" | awk -F ";" '{printf "%s", $2}')
+	node_mac=$(echo "$node_id" | awk -F ";" '{printf "%s", $3}' | awk -F ":" 'NF==6 {printf "%s%s%s%s%s%s%s", $1, $2, $3, $4, $5, $6}')
+	chunkstatus=$(echo "$node_id" | awk -F ";" '{printf "%s", $4}')
+	strindex=$(echo "$node_id" | awk -F ";" '{printf "%s", $5}')
+
+	while true; do
+		# get a chunk
+		chunk=${data_raw:$strindex:$maxchunksize}
+		chunksize="%.$((${#chunk}))x"
+
+		if [ -z "$chunk" ]; then
+			break
+		fi
+
+
+		hextest=$(printf "$chunksize" "0x$chunk")
+
+		if [ "$hextest" = "$chunk" ]; then
+			# Increment the pointer
+			strindex=$((strindex+$maxchunksize))
+
+			continue
+		else
+			status="nack"
+			retval=127
+			echo -n "$status"
+			return $retval
+		fi
+	done
+
+	if [ ! -z "$node_mac" ]; then
+
+		if [ "$node_type" = "apmond" ]; then
+
+			if [ "$chunkstatus" = "begin" ]; then
+				echo -n "$node_id $data_raw" > "$tmpdir/$node_type/ap/$node_mac"
+				status="* "
+				echo -n "$status"
+				retval=0
+			elif [ "$chunkstatus" = "chunk" ]; then
+				echo -n "$data_raw" >> "$tmpdir/$node_type/ap/$node_mac"
+				status="* "
+				echo -n "$status"
+				retval=0
+			elif [ "$chunkstatus" = "end" ]; then
+				echo " $node_id" >> "$tmpdir/$node_type/ap/$node_mac"
+				debugtype="info"
+				syslogmessage="apmond data received from node [$node_hostname] id [ $node_mac ]"
+				write_to_syslog
+				status="ack"
+				echo -n "$status"
+				retval=0
+			fi
+		else
+			status="nack"
+			retval=1
+		fi
+	else
+		status="nack"
+		retval=127
+	fi
+
+	if [ "$retval" -gt 0 ]; then
+		debugtype="warn"
+		syslogmessage="WARNING! Invalid remote data format - rejecting..."
+		write_to_syslog
+	fi
+
+	if [ "$status" = "nack" ]; then
+		echo -n "ERROR 418: Invalid HTCPCP"
+	fi
+
+	return $retval
 }
 
 setup_apmon_cgi() {
@@ -2756,13 +2882,140 @@ apmon_cgi() {
 	fi
 
 	echo "#!/bin/sh" > "$cgi"
-	echo "printf \"%s\n\n\" \"Content-type: text/html\"" >> "$cgi"
+	echo "printf \"%s\n%s\n\n\" \"Content-type: text/html\"" >> "$cgi"
 	echo "node_id=\"\$HTTP_USER_AGENT\"" >> "$cgi"
 	echo "querystring=\"\$QUERY_STRING\"" >> "$cgi"
 	echo "status=\$(mesh11sd write_node_data \"\$node_id\" \"\$querystring\")" >> "$cgi"
 	echo "echo \"\$status\"" >> "$cgi"
 	chmod 755 "$cgi"
+	mkdir -p "$tmpdir/apmond"
+	mkdir -p "$tmpdir/apmond/ap"
 	return $?
+}
+
+send_ap_data() {
+	maxchunksize=4048
+	strindex=0
+	chunkstr=""
+	hostname=$(uci get system.@system[0].hostname 2> /dev/null | awk '{printf "%s", $1}')
+	. $tmpdir/devicemac
+	str_data=$(get_ap_data)
+
+	str_to_hex "$str_data"
+	hexencoded=$(cat "$tmpdir/apmond/hexencoded")
+	hexencoded_len=$((${#hexencoded}))
+
+	if [ "$hexencoded_len" -eq 0 ]; then
+		retcode=0
+		return 0
+	fi
+
+	debugtype="debug"
+	syslogmessage="apmond sending chunked data"
+	write_to_syslog
+
+	get_portal_ula
+
+	while true; do
+		# get a chunk
+		chunk=${hexencoded:$strindex:$maxchunksize}
+		chunksize="%.$((${#chunk}))x"
+
+		if [ -z "$chunk" ]; then
+			chunkstatus="end"
+			send_status=$(wget -6 -q -O - -U "apmond;$hostname;$devicemac;$chunkstatus;$strindex" --no-check-certificate https://[$portal_ula]/cgi-bin/apmon.cgi)
+			retcode=$?
+			echo "$send_status" | awk '{printf "%s", $1}'
+			break
+		elif [ "$strindex" -eq 0 ]; then
+			chunkstatus="begin"
+		else
+			chunkstatus="chunk"
+		fi
+
+		send_status=$(wget -6 -q -O - -U "apmond;$hostname;$devicemac;$chunkstatus;$strindex" --no-check-certificate https://[$portal_ula]/cgi-bin/apmon.cgi?"$chunk")
+		retcode=$?
+
+		# Increment the pointer
+		strindex=$((strindex+$maxchunksize))
+	done
+
+	return "$retcode"
+}
+
+get_ap_data() {
+	aplist=$(uci show wireless | grep "mode='ap'" | awk -F "." '{printf "%s ", $2}')
+	json_init=1
+	first_ap=1
+	sta_flag=0
+
+	for ap in $aplist; do
+		first_sta=1
+		ap_ifname=$(uci get wireless."$ap".ifname)
+		ap_ssid=$(uci get wireless."$ap".ssid)
+		iw dev "$ap_ifname" station dump > $tmpdir/stations
+
+		if [ ! -s "$tmpdir/stations" ]; then
+			continue
+		else
+			sta_flag=1
+		fi
+
+		if [ "$json_init" -eq 1 ]; then
+			echo -n "{"
+			json_init=0
+		fi
+
+		cat /tmp/mesh11sd/stations | while read line; do
+
+			if [ -z "$line" ]; then
+				continue
+			fi
+
+			is_station_id=$(echo "$line" | grep "Station")
+
+			if [ ! -z "$is_station_id" ]; then
+
+				if [ "$first_ap" -eq 0 ]; then
+					echo -n ","
+				fi
+
+				if [ "$first_sta" -eq 1 ]; then
+					echo -e "\n  \"$ap_ssid@$ap_ifname\":{"
+				else
+					echo
+				fi
+
+				echo "$line" | awk '{printf "    \"%s\":{", $2}'; echo
+			else
+				ap_param_str=$(echo "$line" | tr -d \\t | tr -s " " "_" | awk -F ":" '{printf "\"%s\":\"%s\"", $1, $2}'; echo)
+				ap_param=$(echo "$ap_param_str" | awk -F "\"" '{printf "%s", $2}')
+
+				case $ap_param in
+					"rx_bytes") echo	"      $ap_param_str,";;
+					"tx_bytes") echo	"      $ap_param_str,";;
+					"tx_retries") echo	"      $ap_param_str,";;
+					"signal_avg") echo	"      $ap_param_str,";;
+					"tx_bitrate") echo	"      $ap_param_str,";;
+					"rx_bitrate") echo	"      $ap_param_str,";;
+					"avg_ack_signal") echo	"      $ap_param_str,";;
+					"connected_time") echo	"      $ap_param_str,";;
+					"current_time") echo	"      $ap_param_str"; echo -n "    }";;
+				esac
+
+			fi
+
+			first_sta=0
+		done
+
+		first_ap=0
+		echo -n -e "\n  }"
+
+	done
+
+	if [ "$sta_flag" -eq 1 ]; then
+		echo -e "\n}"
+	fi
 }
 
 ##############
@@ -2773,6 +3026,12 @@ if [ -f "/var/run/mesh11sd.pid" ]; then
 	mesh11sdpid=$(cat /var/run/mesh11sd.pid)
 else
 	mesh11sdpid=$(pgrep -f "/bin/sh /usr/sbin/mesh11sd")
+fi
+
+if [ "$1" = "daemon" ]; then
+	mutestate=0
+else
+	mutestate=1
 fi
 
 get_current_setup 2> /dev/null
@@ -3113,10 +3372,12 @@ elif [ "$1" = "status" ]; then
 	echo "  \"layer2_connections\":{"
 
 	devicelist=$(uci show network | grep "type='bridge'" | awk -F "." '{printf "%s.%s ", $1, $2}')
+	devicecount=$( echo "$devicelist" | awk '{printf "%s", NF}')
 
 	for devicesection in $devicelist; do
+		devicecount=$((devicecount - 1))
 		bridge=$(uci get "$devicesection".name)
-		echo "    \"bridge\":\"$bridge\"{"
+		echo "    \"$bridge\":{"
 		bridgeportlist=$(brctl showstp "$bridge" 2>/dev/null | grep " (" | grep ")" | awk '{printf "interface=%s;port=%s ", $1, $2}'| tr -d "(" | tr -d ")")
 		firstmac=1
 
@@ -3141,9 +3402,15 @@ elif [ "$1" = "status" ]; then
 		done
 
 		if [ -z "$allmacs" ]; then
-			echo -e "    }"
+			echo -n -e "    }"
 		else
-			echo -e "\n    }"
+			echo -n -e "\n    }"
+		fi
+
+		if [ "$devicecount" -eq 0 ]; then
+			echo
+		else
+			echo ","
 		fi
 	done
 
@@ -3585,7 +3852,11 @@ elif [ "$1" = "get_portal_ula" ]; then
 
 elif [ "$1" = "str_to_hex" ]; then
 	str_to_hex "$2"
-	echo -n "$hex"
+
+	if [ -f "$tmpdir/apmond/hexencoded" ]; then
+		cat "$tmpdir/apmond/hexencoded"
+	fi
+
 	exit 0
 
 elif [ "$1" = "hex_to_str" ]; then
@@ -3594,7 +3865,7 @@ elif [ "$1" = "hex_to_str" ]; then
 	exit 0
 
 elif [ "$1" = "is_installed" ]; then
-	is_installed $2
+	is_installed "$2"
 
 	case $exitcode in
 		0) echo "Package [ $2 ] is installed";;
@@ -3608,7 +3879,58 @@ elif [ "$1" = "is_installed" ]; then
 
 elif [ "$1" = "write_node_data" ]; then
 	write_node_data "$2" "$3"
-	echo "$status"
+	exit 0
+
+elif [ "$1" = "send_ap_data" ]; then
+	send_ap_data
+	exit $retcode
+
+elif [ "$1" = "get_ap_data" ]; then
+	get_ap_data
+	exit 0
+
+elif [ "$1" = "show_ap_data" ]; then
+
+	if [ "$auto_config" -eq 0 ]; then
+		echo "================================================================================"
+		echo "Unable to collect access point data -  enable auto_config for this functionality"
+		echo "================================================================================"
+		exit 1
+	fi
+
+	data_nodes=$(ls "$tmpdir/apmond/ap/" | awk '{printf "%s ", $1}')
+
+	if [ -z "$2" ]; then
+		echo "==========================================================================="
+
+		echo " Show access point usage data"
+		echo "    Usage: mesh11sd show_ap_data [ap_mac_id]"
+		echo
+
+		if [ ! -z "$data_nodes" ]; then
+			echo " If the node you are looking for is not in the list - it probably has not had any connections yet - try again later."
+			echo "===================================================================================================================="
+			echo " The following access points have sent usage data:"
+
+			for data_node in $data_nodes; do
+				echo "==========================================================================="
+				echo
+				echo "Acess point ID (ap_mac_id)	$data_node"
+			done
+
+			echo "==================================================================================="
+		else
+			echo " If the node you are looking for is not shown - it probably has not had any connections yet - try again later."
+			echo "=============================================================================================================="
+		fi
+	else
+		hex_to_str "$(awk '{printf "%s", $2}'  "$tmpdir/apmond/ap/$2" 2>/dev/null)"
+
+		if [ ! -z "$str" ]; then
+			echo "$str"
+		fi
+	fi
+
 	exit 0
 
 elif [ "$1" = "daemon" ]; then
@@ -3754,6 +4076,8 @@ elif [ "$1" = "daemon" ]; then
 	index=0
 	transition_count=0
 	vtunnel=""
+	apmondloopcount=0
+	apmondloopstart=6
 
 	# Clear the dhcp authoritative flag
 	uci delete dhcp.@dnsmasq[0].authoritative 2>/dev/null
@@ -4125,12 +4449,18 @@ elif [ "$1" = "daemon" ]; then
 			fi
 
 			check_vtunnel
+			apmondloopcount=$((apmondloopcount + 1))
+
+			if [ "$apmondloopcount" -ge "$apmondloopstart" ]; then
+				send_ap_data
+				apmondloopcount=0
+				apmondloopstart=3
+			fi
 		fi
 
 		debugtype="debug"
 		syslogmessage="checkinterval $checkinterval seconds"
 		write_to_syslog
-
 		sleep $checkinterval
 	done
 	exit 0
