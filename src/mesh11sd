@@ -1186,8 +1186,8 @@ get_portal_state() {
 	write_to_syslog
 	. $tmpdir/devicemac
 
-	if [ "$firstloop" -eq 1 ] && [ "$portal_detect" -eq 1 ]; then
-		# 1 - check if portal
+	if [ "$firstloop" -eq 1 ] && [ "$portal_detect" -ge 1 ]; then
+		# - check if portal
 		local retries=10
 
 		for retry in $(seq $retries); do
@@ -1205,7 +1205,6 @@ get_portal_state() {
 	elif [ "$portal_detect" -eq 2 ] || [ "$portal_detect" -eq 3 ]; then
 		# 2 - force peer mode , 3 - force CPE peer mode
 		uci set dhcp.@dnsmasq[0].authoritative='0'
-		default_gw=""
 
 	elif [ "$portal_detect" -eq 0 ]; then
 		# 0 - force portal mode
@@ -1259,12 +1258,17 @@ get_portal_state() {
 	fi
 
 	# Set detected state
-	if [ -z "$is_portal" ] && [ "$portal_detect" -eq 1 ]; then
+	if [ -z "$is_portal" ] && [ "$portal_detect" -ge 1 ]; then
 		# do portal detect with watchdog:
 		detected_state="peer"
 
 		#Check ipv4 connectivity to portal
 		pingresult=$(ping -q -W 1 -c 2 "$gw_ip" &>/dev/null; echo $?)
+
+		debugtype="debug"
+		syslogmessage="ipV4 gateway status [ $pingresult ]"
+		write_to_syslog
+
 
 		if [ "$pingresult" -eq 1 ]; then
 			ip4pingfailcount=$(($ip4pingfailcount + 1))
@@ -1335,15 +1339,16 @@ get_portal_state() {
 			network_restart=0
 		fi
 
-	elif [ -z "$is_portal" ] && [ "$portal_detect" -eq 3 ]; then
+	else
+		detected_state="portal"
+	fi
+
+	if [ -z "$is_portal" ] && [ "$portal_detect" -eq 3 ]; then
 		# CPE mode required
 		detected_state="cpe_peer"
 		debugtype="debug"
 		syslogmessage="CPE mode..."
 		write_to_syslog
-
-	else
-		detected_state="portal"
 	fi
 
 	debugtype="debug"
@@ -1861,6 +1866,15 @@ auto_config() {
 	fi
 
 	if [ "$autoconfig" -eq 0 ]; then
+
+		# Set the odhcpd loglevel
+		uci set dhcp.odhcpd.loglevel='3'
+
+		# mute dnsmasq logging
+		uci set dhcp.@dnsmasq[0].logfacility='-'
+		uci set dhcp.@dnsmasq[0].quietdhcp='1'
+
+
 		# Add vxlan wireless interface(s)
 		package_list="ip-full vxlan"
 		check_package_list
@@ -4330,7 +4344,7 @@ elif [ "$1" = "daemon" ]; then
 
 			if [ "$auto_config" -eq 1 ]; then
 
-				if [ "$portal_detect" -eq 1 ]; then
+				if [ "$portal_detect" -ge 1 ]; then
 					check_portal
 
 				elif [ "$portal_detect" -eq 0 ]; then
