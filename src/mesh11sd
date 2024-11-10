@@ -3051,7 +3051,7 @@ get_ap_data() {
 					"rx_bitrate") echo	"      $ap_param_str,";;
 					"avg_ack_signal") echo	"      $ap_param_str,";;
 					"connected_time") echo	"      $ap_param_str,";;
-					"current_time") echo	"      $ap_param_str"; echo -n "    }";;
+					"current_time") ap_param_str=$(echo -n "$ap_param_str" | sed s/current_time/timestamp/g);  echo	"      $ap_param_str"; echo -n "    }";;
 				esac
 
 			fi
