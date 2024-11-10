@@ -743,6 +743,37 @@ get_current_setup () {
 	debugtype="info"
 	mute="$mutestate"
 	write_to_syslog
+
+	#####
+	apmond_enable=$(uci get mesh11sd.setup.apmond_enable 2> /dev/null)
+
+	if [ -z "$apmond_enable" ]; then
+		apmond_enable="1"
+	fi
+
+	syslogmessage="option apmond_enable [ $apmond_enable ]"
+	debugtype="info"
+	mute="$mutestate"
+	write_to_syslog
+
+	#####
+	apmond_cgi_dir=$(uci get mesh11sd.setup.apmond_cgi_dir 2> /dev/null)
+
+	if [ -z "$apmond_cgi_dir" ]; then
+		apmond_cgi_dir="/www/cgi-bin"
+	fi
+
+	strlen=$((${#apmon_cgi_dir}));
+	lastchar=${apmond_cgi_dir:$strlen -1 :1}
+
+	if [ "$lastchar" != "/" ]; then
+		apmond_cgi_dir="$apmond_cgi_dir/"
+	fi
+
+	syslogmessage="option apmond_cgi_dir [ $apmond_cgi_dir ]"
+	debugtype="info"
+	mute="$mutestate"
+	write_to_syslog
 }
 
 check_config_params() {
@@ -2868,8 +2899,8 @@ write_node_data() {
 setup_apmon_cgi() {
 	apmon_cgi_status=127
 
-	if [ "$(is_installed uhttpd; echo -n $?)" -eq 0 ]; then
-		cgiuhttp="/www/cgi-bin/apmon.cgi"
+	if [ -e "$apmond_cgi_dir" ]; then
+		cgiuhttp="$apmond_cgi_dir""apmon.cgi"
 		cgitmp="$tmpdir/apmon.cgi"
 
 		if [ -f "$cgiuhttp" ]; then
@@ -2908,6 +2939,12 @@ apmon_cgi() {
 }
 
 send_ap_data() {
+
+	if [ "$apmond_enable" -eq 0 ]; then
+		retcode=1
+		return "$retcode"
+	fi
+
 	maxchunksize=4048
 	strindex=0
 	chunkstr=""
@@ -3241,6 +3278,8 @@ elif [ "$1" = "status" ]; then
 	echo "    \"checkinterval\":\"$checkinterval\","
 	echo "    \"interface_timeout\":\"$interface_timeout\","
 	echo "    \"ssid_suffix_enable\":\"$ssid_suffix_enable\","
+	echo "    \"apmond_enable\":\"$apmond_enable\","
+	echo "    \"apmond_cgi_dir\":\"$apmond_cgi_dir\","
 	echo "    \"debuglevel\":\"$debuglevel\""
 	echo "  },"
 	echo "  \"mesh_interfaces\":{"
@@ -3929,7 +3968,7 @@ elif [ "$1" = "show_ap_data" ]; then
 			for data_node in $data_nodes; do
 				echo "==========================================================================="
 				echo
-				echo "Acess point ID (ap_mac_id)	$data_node"
+				echo "Access point ID (ap_mac_id)	$data_node"
 			done
 
 			echo "==================================================================================="
