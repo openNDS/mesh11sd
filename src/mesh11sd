@@ -3032,7 +3032,7 @@ get_ap_data() {
 				fi
 
 				if [ "$first_sta" -eq 1 ]; then
-					echo -e "\n  \"$ap_ssid@$ap_ifname\":{"
+					echo -e "\n  \"$ap_ssid@$ap_ifname@$devicemac\":{"
 				else
 					echo
 				fi
