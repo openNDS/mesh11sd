@@ -3953,6 +3953,19 @@ elif [ "$1" = "show_ap_data" ]; then
 
 	data_nodes=$(ls "$tmpdir/apmond/ap/" | awk '{printf "%s ", $1}')
 
+	if [ "$2" = "all" ]; then
+		all_first=1
+
+		for data_node in $data_nodes; do
+			hex_to_str "$(awk '{printf "%s", $2}'  "$tmpdir/apmond/ap/$data_node" 2>/dev/null)"
+
+			if [ ! -z "$str" ]; then
+				echo "$str"
+			fi
+
+		done
+	fi
+
 	if [ -z "$2" ]; then
 		echo "==========================================================================="
 
@@ -3976,7 +3989,8 @@ elif [ "$1" = "show_ap_data" ]; then
 			echo " If the node you are looking for is not shown - it probably has not had any connections yet - try again later."
 			echo "=============================================================================================================="
 		fi
-	else
+
+	elif [ "$2" != "all" ]; then
 		hex_to_str "$(awk '{printf "%s", $2}'  "$tmpdir/apmond/ap/$2" 2>/dev/null)"
 
 		if [ ! -z "$str" ]; then
