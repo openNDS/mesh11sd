@@ -633,6 +633,14 @@ get_current_setup () {
 	fi
 
 	#####
+	default_ssid=$(uci get mesh11sd.setup.default_ssid 2> /dev/null)
+
+	syslogmessage="option default_ssid [ $default_ssid ]"
+	debugtype="info"
+	mute="$mutestate"
+	write_to_syslog
+
+	#####
 	ssid_suffix_enable=$(uci get mesh11sd.setup.ssid_suffix_enable 2> /dev/null)
 
 	if [ -z "$ssid_suffix_enable" ]; then
@@ -2062,20 +2070,25 @@ auto_config() {
 				# get list of access points
 				aplist=$(uci show wireless 2> /dev/null | grep "='ap'" | awk -F "." '{printf "%s.%s ", $1, $2}')
 
-				#Add suffix to ssid
-				if [ "$ssid_suffix_enable" -eq 1 ]; then
-					suffix=$(echo $devicemac | awk -F":" '{printf "%s%s", $5, $6}')
+				#Add ssid and suffix
+				suffix=$(echo $devicemac | awk -F":" '{printf "%s%s", $5, $6}')
 
-					for ap in $aplist; do
-						radio=$(uci get "$ap.device" 2> /dev/null)
-						band=$(uci get "wireless.$radio.band" 2> /dev/null)
-						ssid=$(uci get "$ap.ssid" 2> /dev/null | awk '{printf "%s", $1}')
+				for ap in $aplist; do
+					radio=$(uci get "$ap.device" 2> /dev/null)
+					band=$(uci get "wireless.$radio.band" 2> /dev/null)
+					ssid=$(uci get "$ap.ssid" 2> /dev/null | awk '{printf "%s", $1}')
+
+					if [ "$ssid" != "$vtun_base_ssid" ] && [ ! -z "$default_ssid" ]; then
+						ssid="$default_ssid"
+					fi
+
+					if [ "$ssid_suffix_enable" -eq 1 ]; then
 						echo "set $ap.ssid='$ssid-$band-$suffix'" | uci batch
-					done
+					fi
+				done
 
-					echo "set system.@system[0].hostname='meshnode-$suffix'" | uci batch
-					/sbin/service system restart
-				fi
+				echo "set system.@system[0].hostname='meshnode-$suffix'" | uci batch
+				/sbin/service system restart
 
 				#Configure gate encryption
 				case $mesh_gate_encryption in
