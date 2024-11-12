@@ -3034,7 +3034,7 @@ get_ap_data() {
 				if [ "$first_sta" -eq 1 ]; then
 					echo -e "\n  \"$ap_ssid@$ap_ifname@$devicemac\":{"
 				else
-					echo
+					echo ","
 				fi
 
 				echo "$line" | awk '{printf "    \"%s\":{", $2}'; echo
@@ -3960,10 +3960,20 @@ elif [ "$1" = "show_ap_data" ]; then
 			hex_to_str "$(awk '{printf "%s", $2}'  "$tmpdir/apmond/ap/$data_node" 2>/dev/null)"
 
 			if [ ! -z "$str" ]; then
-				echo "$str"
+				str=$(echo -n "$str" | tail -n +2 | head -n -2)
+
+				if [ "$all_first" -eq 1 ]; then
+					echo "{"
+					echo -n "$str"
+					all_first=0
+				else
+					echo -e -n "\n  },\n$str"
+				fi
 			fi
 
 		done
+
+		echo -e "\n  }\n}"
 	fi
 
 	if [ -z "$2" ]; then
