@@ -445,6 +445,35 @@ get_current_setup () {
 		write_to_syslog
 	fi
 
+	#####
+	ssid_suffix_enable=$(uci get mesh11sd.setup.ssid_suffix_enable 2> /dev/null)
+
+	if [ -z "$ssid_suffix_enable" ]; then
+		ssid_suffix_enable="1"
+	fi
+
+	syslogmessage="option ssid_suffix_enable [ $ssid_suffix_enable ]"
+	debugtype="info"
+	mute="$mutestate"
+	write_to_syslog
+
+	#####
+	default_ssid=$(uci get mesh11sd.setup.default_ssid 2> /dev/null)
+
+	if [ "$ssid_suffix_enable" -eq 1 ]; then
+		maxlen=22
+	else
+		maxlen=30
+	fi
+
+	default_ssid=$(echo -n "$default_ssid" | tr -d " " | head -c "$maxlen")
+
+	syslogmessage="option default_ssid [ $default_ssid ]"
+	debugtype="info"
+	mute="$mutestate"
+	write_to_syslog
+
+
 	####
 	# vxlan configs
 	package_list="ip-full vxlan"
@@ -579,6 +608,7 @@ get_current_setup () {
 			vtun_base_ssid="Guest"
 		fi
 
+		vtun_base_ssid=$(echo -n "$vtun_base_ssid" | tr -d " " | head -c "$maxlen")
 		syslogmessage="option vtun_base_ssid [ $vtun_base_ssid ]"
 		debugtype="info"
 		mute="$mutestate"
@@ -631,26 +661,6 @@ get_current_setup () {
 		mute="$mutestate"
 		write_to_syslog
 	fi
-
-	#####
-	default_ssid=$(uci get mesh11sd.setup.default_ssid 2> /dev/null)
-
-	syslogmessage="option default_ssid [ $default_ssid ]"
-	debugtype="info"
-	mute="$mutestate"
-	write_to_syslog
-
-	#####
-	ssid_suffix_enable=$(uci get mesh11sd.setup.ssid_suffix_enable 2> /dev/null)
-
-	if [ -z "$ssid_suffix_enable" ]; then
-		ssid_suffix_enable="1"
-	fi
-
-	syslogmessage="option ssid_suffix_enable [ $ssid_suffix_enable ]"
-	debugtype="info"
-	mute="$mutestate"
-	write_to_syslog
 
 	#####
 	watchdog_nonvolatile_log=$(uci get mesh11sd.setup.watchdog_nonvolatile_log 2> /dev/null)
@@ -2084,6 +2094,8 @@ auto_config() {
 
 					if [ "$ssid_suffix_enable" -eq 1 ]; then
 						echo "set $ap.ssid='$ssid-$band-$suffix'" | uci batch
+					else
+						echo "set $ap.ssid='$ssid'" | uci batch
 					fi
 				done
 
