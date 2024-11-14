@@ -445,6 +445,35 @@ get_current_setup () {
 		write_to_syslog
 	fi
 
+	#####
+	ssid_suffix_enable=$(uci get mesh11sd.setup.ssid_suffix_enable 2> /dev/null)
+
+	if [ -z "$ssid_suffix_enable" ]; then
+		ssid_suffix_enable="1"
+	fi
+
+	syslogmessage="option ssid_suffix_enable [ $ssid_suffix_enable ]"
+	debugtype="info"
+	mute="$mutestate"
+	write_to_syslog
+
+	#####
+	default_ssid=$(uci get mesh11sd.setup.default_ssid 2> /dev/null)
+
+	if [ "$ssid_suffix_enable" -eq 1 ]; then
+		maxlen=22
+	else
+		maxlen=30
+	fi
+
+	default_ssid=$(echo -n "$default_ssid" | tr -d " " | head -c "$maxlen")
+
+	syslogmessage="option default_ssid [ $default_ssid ]"
+	debugtype="info"
+	mute="$mutestate"
+	write_to_syslog
+
+
 	####
 	# vxlan configs
 	package_list="ip-full vxlan"
@@ -579,6 +608,7 @@ get_current_setup () {
 			vtun_base_ssid="Guest"
 		fi
 
+		vtun_base_ssid=$(echo -n "$vtun_base_ssid" | tr -d " " | head -c "$maxlen")
 		syslogmessage="option vtun_base_ssid [ $vtun_base_ssid ]"
 		debugtype="info"
 		mute="$mutestate"
@@ -631,18 +661,6 @@ get_current_setup () {
 		mute="$mutestate"
 		write_to_syslog
 	fi
-
-	#####
-	ssid_suffix_enable=$(uci get mesh11sd.setup.ssid_suffix_enable 2> /dev/null)
-
-	if [ -z "$ssid_suffix_enable" ]; then
-		ssid_suffix_enable="1"
-	fi
-
-	syslogmessage="option ssid_suffix_enable [ $ssid_suffix_enable ]"
-	debugtype="info"
-	mute="$mutestate"
-	write_to_syslog
 
 	#####
 	watchdog_nonvolatile_log=$(uci get mesh11sd.setup.watchdog_nonvolatile_log 2> /dev/null)
@@ -740,6 +758,37 @@ get_current_setup () {
 	fi
 
 	syslogmessage="option stop_on_error [ $stop_on_error ]"
+	debugtype="info"
+	mute="$mutestate"
+	write_to_syslog
+
+	#####
+	apmond_enable=$(uci get mesh11sd.setup.apmond_enable 2> /dev/null)
+
+	if [ -z "$apmond_enable" ]; then
+		apmond_enable="1"
+	fi
+
+	syslogmessage="option apmond_enable [ $apmond_enable ]"
+	debugtype="info"
+	mute="$mutestate"
+	write_to_syslog
+
+	#####
+	apmond_cgi_dir=$(uci get mesh11sd.setup.apmond_cgi_dir 2> /dev/null)
+
+	if [ -z "$apmond_cgi_dir" ]; then
+		apmond_cgi_dir="/www/cgi-bin"
+	fi
+
+	strlen=$((${#apmon_cgi_dir}));
+	lastchar=${apmond_cgi_dir:$strlen -1 :1}
+
+	if [ "$lastchar" != "/" ]; then
+		apmond_cgi_dir="$apmond_cgi_dir/"
+	fi
+
+	syslogmessage="option apmond_cgi_dir [ $apmond_cgi_dir ]"
 	debugtype="info"
 	mute="$mutestate"
 	write_to_syslog
@@ -1186,8 +1235,8 @@ get_portal_state() {
 	write_to_syslog
 	. $tmpdir/devicemac
 
-	if [ "$firstloop" -eq 1 ] && [ "$portal_detect" -eq 1 ]; then
-		# 1 - check if portal
+	if [ "$firstloop" -eq 1 ] && [ "$portal_detect" -ge 1 ]; then
+		# - check if portal
 		local retries=10
 
 		for retry in $(seq $retries); do
@@ -1205,7 +1254,6 @@ get_portal_state() {
 	elif [ "$portal_detect" -eq 2 ] || [ "$portal_detect" -eq 3 ]; then
 		# 2 - force peer mode , 3 - force CPE peer mode
 		uci set dhcp.@dnsmasq[0].authoritative='0'
-		default_gw=""
 
 	elif [ "$portal_detect" -eq 0 ]; then
 		# 0 - force portal mode
@@ -1259,12 +1307,17 @@ get_portal_state() {
 	fi
 
 	# Set detected state
-	if [ -z "$is_portal" ] && [ "$portal_detect" -eq 1 ]; then
+	if [ -z "$is_portal" ] && [ "$portal_detect" -ge 1 ]; then
 		# do portal detect with watchdog:
 		detected_state="peer"
 
 		#Check ipv4 connectivity to portal
 		pingresult=$(ping -q -W 1 -c 2 "$gw_ip" &>/dev/null; echo $?)
+
+		debugtype="debug"
+		syslogmessage="ipV4 gateway status [ $pingresult ]"
+		write_to_syslog
+
 
 		if [ "$pingresult" -eq 1 ]; then
 			ip4pingfailcount=$(($ip4pingfailcount + 1))
@@ -1335,15 +1388,16 @@ get_portal_state() {
 			network_restart=0
 		fi
 
-	elif [ -z "$is_portal" ] && [ "$portal_detect" -eq 3 ]; then
+	else
+		detected_state="portal"
+	fi
+
+	if [ -z "$is_portal" ] && [ "$portal_detect" -eq 3 ]; then
 		# CPE mode required
 		detected_state="cpe_peer"
 		debugtype="debug"
 		syslogmessage="CPE mode..."
 		write_to_syslog
-
-	else
-		detected_state="portal"
 	fi
 
 	debugtype="debug"
@@ -1861,6 +1915,15 @@ auto_config() {
 	fi
 
 	if [ "$autoconfig" -eq 0 ]; then
+
+		# Set the odhcpd loglevel
+		uci set dhcp.odhcpd.loglevel='3'
+
+		# mute dnsmasq logging
+		uci set dhcp.@dnsmasq[0].logfacility='-'
+		uci set dhcp.@dnsmasq[0].quietdhcp='1'
+
+
 		# Add vxlan wireless interface(s)
 		package_list="ip-full vxlan"
 		check_package_list
@@ -2017,20 +2080,27 @@ auto_config() {
 				# get list of access points
 				aplist=$(uci show wireless 2> /dev/null | grep "='ap'" | awk -F "." '{printf "%s.%s ", $1, $2}')
 
-				#Add suffix to ssid
-				if [ "$ssid_suffix_enable" -eq 1 ]; then
-					suffix=$(echo $devicemac | awk -F":" '{printf "%s%s", $5, $6}')
+				#Add ssid and suffix
+				suffix=$(echo $devicemac | awk -F":" '{printf "%s%s", $5, $6}')
 
-					for ap in $aplist; do
-						radio=$(uci get "$ap.device" 2> /dev/null)
-						band=$(uci get "wireless.$radio.band" 2> /dev/null)
-						ssid=$(uci get "$ap.ssid" 2> /dev/null | awk '{printf "%s", $1}')
+				for ap in $aplist; do
+					radio=$(uci get "$ap.device" 2> /dev/null)
+					band=$(uci get "wireless.$radio.band" 2> /dev/null)
+					ssid=$(uci get "$ap.ssid" 2> /dev/null | awk '{printf "%s", $1}')
+
+					if [ "$ssid" != "$vtun_base_ssid" ] && [ ! -z "$default_ssid" ]; then
+						ssid="$default_ssid"
+					fi
+
+					if [ "$ssid_suffix_enable" -eq 1 ]; then
 						echo "set $ap.ssid='$ssid-$band-$suffix'" | uci batch
-					done
+					else
+						echo "set $ap.ssid='$ssid'" | uci batch
+					fi
+				done
 
-					echo "set system.@system[0].hostname='meshnode-$suffix'" | uci batch
-					/sbin/service system restart
-				fi
+				echo "set system.@system[0].hostname='meshnode-$suffix'" | uci batch
+				/sbin/service system restart
 
 				#Configure gate encryption
 				case $mesh_gate_encryption in
@@ -2854,8 +2924,8 @@ write_node_data() {
 setup_apmon_cgi() {
 	apmon_cgi_status=127
 
-	if [ "$(is_installed uhttpd; echo -n $?)" -eq 0 ]; then
-		cgiuhttp="/www/cgi-bin/apmon.cgi"
+	if [ -e "$apmond_cgi_dir" ]; then
+		cgiuhttp="$apmond_cgi_dir""apmon.cgi"
 		cgitmp="$tmpdir/apmon.cgi"
 
 		if [ -f "$cgiuhttp" ]; then
@@ -2894,6 +2964,12 @@ apmon_cgi() {
 }
 
 send_ap_data() {
+
+	if [ "$apmond_enable" -eq 0 ]; then
+		retcode=1
+		return "$retcode"
+	fi
+
 	maxchunksize=4048
 	strindex=0
 	chunkstr=""
@@ -2981,9 +3057,9 @@ get_ap_data() {
 				fi
 
 				if [ "$first_sta" -eq 1 ]; then
-					echo -e "\n  \"$ap_ssid@$ap_ifname\":{"
+					echo -e "\n  \"$ap_ssid@$ap_ifname@$devicemac\":{"
 				else
-					echo
+					echo ","
 				fi
 
 				echo "$line" | awk '{printf "    \"%s\":{", $2}'; echo
@@ -3000,7 +3076,7 @@ get_ap_data() {
 					"rx_bitrate") echo	"      $ap_param_str,";;
 					"avg_ack_signal") echo	"      $ap_param_str,";;
 					"connected_time") echo	"      $ap_param_str,";;
-					"current_time") echo	"      $ap_param_str"; echo -n "    }";;
+					"current_time") ap_param_str=$(echo -n "$ap_param_str" | sed s/current_time/timestamp/g);  echo	"      $ap_param_str"; echo -n "    }";;
 				esac
 
 			fi
@@ -3227,6 +3303,8 @@ elif [ "$1" = "status" ]; then
 	echo "    \"checkinterval\":\"$checkinterval\","
 	echo "    \"interface_timeout\":\"$interface_timeout\","
 	echo "    \"ssid_suffix_enable\":\"$ssid_suffix_enable\","
+	echo "    \"apmond_enable\":\"$apmond_enable\","
+	echo "    \"apmond_cgi_dir\":\"$apmond_cgi_dir\","
 	echo "    \"debuglevel\":\"$debuglevel\""
 	echo "  },"
 	echo "  \"mesh_interfaces\":{"
@@ -3900,6 +3978,29 @@ elif [ "$1" = "show_ap_data" ]; then
 
 	data_nodes=$(ls "$tmpdir/apmond/ap/" | awk '{printf "%s ", $1}')
 
+	if [ "$2" = "all" ]; then
+		all_first=1
+
+		for data_node in $data_nodes; do
+			hex_to_str "$(awk '{printf "%s", $2}'  "$tmpdir/apmond/ap/$data_node" 2>/dev/null)"
+
+			if [ ! -z "$str" ]; then
+				str=$(echo -n "$str" | tail -n +2 | head -n -2)
+
+				if [ "$all_first" -eq 1 ]; then
+					echo "{"
+					echo -n "$str"
+					all_first=0
+				else
+					echo -e -n "\n  },\n$str"
+				fi
+			fi
+
+		done
+
+		echo -e "\n  }\n}"
+	fi
+
 	if [ -z "$2" ]; then
 		echo "==========================================================================="
 
@@ -3915,7 +4016,7 @@ elif [ "$1" = "show_ap_data" ]; then
 			for data_node in $data_nodes; do
 				echo "==========================================================================="
 				echo
-				echo "Acess point ID (ap_mac_id)	$data_node"
+				echo "Access point ID (ap_mac_id)	$data_node"
 			done
 
 			echo "==================================================================================="
@@ -3923,7 +4024,8 @@ elif [ "$1" = "show_ap_data" ]; then
 			echo " If the node you are looking for is not shown - it probably has not had any connections yet - try again later."
 			echo "=============================================================================================================="
 		fi
-	else
+
+	elif [ "$2" != "all" ]; then
 		hex_to_str "$(awk '{printf "%s", $2}'  "$tmpdir/apmond/ap/$2" 2>/dev/null)"
 
 		if [ ! -z "$str" ]; then
@@ -4330,7 +4432,7 @@ elif [ "$1" = "daemon" ]; then
 
 			if [ "$auto_config" -eq 1 ]; then
 
-				if [ "$portal_detect" -eq 1 ]; then
+				if [ "$portal_detect" -ge 1 ]; then
 					check_portal
 
 				elif [ "$portal_detect" -eq 0 ]; then
