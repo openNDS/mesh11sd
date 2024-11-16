@@ -1886,6 +1886,27 @@ ndp_scan_peer() {
 get_wiphys() {
 	# get list of physical wireless interfaces and reverse the list order
 	wiphys=$(iw list | grep -w "Wiphy" | awk -F "Wiphy " '{printf "%s ", $2}' | awk '{ for (i = NF; i > 0; i = i - 1) printf("%s ", $i) }')
+	mkdir -p "$tmpdir/radios"
+
+	for wiphy in $wiphys; do
+		radioindex=${wiphy:3:10}
+		mesh_capable=$(iw phy "$wiphy" info | grep -w -q  "mesh point"; echo -n "$?")
+		total_ifaces=$(iw phy $wiphy info | grep -w "total <=" | awk -F"," '{print $1}' | awk '{print $3}')
+
+		echo "mesh_capable=$mesh_capable; total_ifaces=$total_ifaces" > "$tmpdir/radios/radio$radioindex"
+
+		if [ $mesh_capable -gt 0 ]; then
+			debugtype="info"
+			syslogmessage="WARNING - phy [ $wiphy ] does not support mesh interfaces."
+			write_to_syslog
+		fi
+
+		if [ -z "$total_ifaces" ] || [ $total_ifaces -lt 5 ]; then
+			debugtype="info"
+			syslogmessage="WARNING - phy [ $wiphy ] only supports [ $total_ifaces ] interfaces - possibly some or all configured wireless APs will be missing."
+			write_to_syslog
+		fi
+	done
 }
 
 refresh_bridgemac() {
@@ -2415,6 +2436,7 @@ block_bridge_loops() {
 		# If kernel version is 6 or higher we have to ensure there are no duplicate bridge interface mac addresses
 		# But it is safe to fix up mac addresses for kernel < 6 if we do it correctly:
 		macfixenable=6
+
 		# macfixenable=$kmajor # uncomment to only fixup macs if kernel is version 6 or greater
 
 		if [ "$macfixenable" -ge 6 ]; then
@@ -3171,12 +3193,12 @@ if [ -z "$1" ] || [ "$1" = "-h" ] || [ $1 = "--help" ] || [ $1 = "help" ]; then
   Usage: mesh11sd commit_changes commit
     Commits changes to mesh_leechmode, txpower and rssi_threshold to non volatile configuration (make permanent)
 
-  Option: opkg_force_ipv4
-  Usage: mesh11sd opkg_force_ipv4
+  Option: force_ipv4_download
+  Usage: mesh11sd force_ipv4_download
     Forces opkg to use ipv4 for its downloads
 
-  Option: opkg_revert_to_default
-  Usage: mesh11sd opkg_revert_to_default
+  Option: download_revert_to_default
+  Usage: mesh11sd download_revert_to_default
     Reverts opkg to default for its downloads
 
   Option: dhcp4_renew
@@ -3888,31 +3910,21 @@ elif [ "$1" = "mesh_rssi_threshold" ]; then
 	echo
 	exit 0
 
-elif [ "$1" = "opkg_force_ipv4" ]; then
-	is_opkg=$(type "opkg" &> /dev/null; echo $?)
+elif [ "$1" = "force_ipv4_download" ]; then
 
-	if [ "$is_opkg" -eq 0 ]; then
-
-		if ! grep "#!/bin/sh" /usr/bin/wget; then
-			mv /usr/bin/wget /usr/bin/wget.bak
-			echo -e "#!/bin/sh\n/usr/bin/wget.bak -4 \"\$@\"" > /usr/bin/wget && chmod +x /usr/bin/wget
-		fi
-
+	if ! grep "#!/bin/sh" /usr/bin/wget; then
+		mv /usr/bin/wget /usr/bin/wget.bak
+		echo -e "#!/bin/sh\n/usr/bin/wget.bak -4 \"\$@\"" > /usr/bin/wget && chmod +x /usr/bin/wget
 		exit 0
 	fi
 
 	exit 127
 
-elif [ "$1" = "opkg_revert_to_default" ]; then
-	is_opkg=$(type "opkg" &> /dev/null; echo $?)
+elif [ "$1" = "download_revert_to_default" ]; then
 
-	if [ "$is_opkg" -eq 0 ]; then
-
-		if grep "#!/bin/sh" /usr/bin/wget; then
-			rm /usr/bin/wget
-			mv /usr/bin/wget.bak /usr/bin/wget
-		fi
-
+	if grep "#!/bin/sh" /usr/bin/wget; then
+		rm /usr/bin/wget
+		mv /usr/bin/wget.bak /usr/bin/wget
 		exit 0
 	fi
 
