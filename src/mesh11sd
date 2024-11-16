@@ -2152,10 +2152,12 @@ auto_config() {
 
 					for ap in $aplist; do
 						radio=$(uci get "$ap.device" 2> /dev/null)
+						. "$tmpdir/radios/$radio"
+
 						echo "set $ap.encryption='$encryption_type'" | uci batch
 						echo "set $ap.key='$mesh_gate_key'" | uci batch
 
-						if [ "$encryption_type" = "none" ]; then
+						if [ "$encryption_type" = "none" ] && [ "$total_ifaces" -ge 5 ]; then
 							# setup owe transition if wpad supports it
 
 							if [ "$owe_able" -eq 1 ]; then
