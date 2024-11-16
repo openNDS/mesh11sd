@@ -1886,6 +1886,23 @@ ndp_scan_peer() {
 get_wiphys() {
 	# get list of physical wireless interfaces and reverse the list order
 	wiphys=$(iw list | grep -w "Wiphy" | awk -F "Wiphy " '{printf "%s ", $2}' | awk '{ for (i = NF; i > 0; i = i - 1) printf("%s ", $i) }')
+
+	for wiphy in $wiphys; do
+		mesh_capable=$(iw phy "$wiphy" info | grep -w -q  "mesh point"; echo -n "$?")
+		total_ifaces=$(iw phy $wiphy info | grep -w "total <=" | awk -F"," '{print $1}' | awk '{print $3}')
+
+		if [ $mesh_capable -gt 0 ]; then
+			debugtype="info"
+			syslogmessage="WARNING - phy [ $wiphy ] does not support mesh interfaces."
+			write_to_syslog
+		fi
+
+		if [ -z "$total_ifaces" ] || [ $total_ifaces -lt 5 ]; then
+			debugtype="info"
+			syslogmessage="WARNING - phy [ $wiphy ] only supports [ $total_ifaces ] interfaces - possibly some or all configured wireless APs will be missing."
+			write_to_syslog
+		fi
+	done
 }
 
 refresh_bridgemac() {
