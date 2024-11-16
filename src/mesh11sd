@@ -1886,10 +1886,14 @@ ndp_scan_peer() {
 get_wiphys() {
 	# get list of physical wireless interfaces and reverse the list order
 	wiphys=$(iw list | grep -w "Wiphy" | awk -F "Wiphy " '{printf "%s ", $2}' | awk '{ for (i = NF; i > 0; i = i - 1) printf("%s ", $i) }')
+	mkdir -p "$tmpdir/radios"
 
 	for wiphy in $wiphys; do
+		radioindex=${wiphy:3:10}
 		mesh_capable=$(iw phy "$wiphy" info | grep -w -q  "mesh point"; echo -n "$?")
 		total_ifaces=$(iw phy $wiphy info | grep -w "total <=" | awk -F"," '{print $1}' | awk '{print $3}')
+
+		echo "mesh_capable=$mesh_capable; total_ifaces=$total_ifaces" > "$tmpdir/radios/radio$radioindex"
 
 		if [ $mesh_capable -gt 0 ]; then
 			debugtype="info"
