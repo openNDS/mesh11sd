@@ -2808,7 +2808,18 @@ get_portal_ula() {
 
 	if [ -e "$tmpdir/is_portal" ]; then
 		. $tmpdir/devicemac
-		portal_ula=$(ip -6 addr show dev $device scope global | grep "inet6" | awk '{print $2}' | awk -F "/" '{print $1}')
+		inet6_globals=$(ip -6 addr show dev $device scope global | grep "inet6" | awk '{print $2}' | awk -F "/" '{printf "%s ", $1}')
+
+		for ulaaddr in $inet6_globals; do
+			is_ula=$(echo "$ulaaddr " | grep -q "::1 "; echo -n "$?")
+
+			if [ "$is_ula" -eq 0 ]; then
+				portal_ula="$ulaaddr"
+				break
+			else
+				portal_ula=""
+			fi
+		done
 
 	else
 		portal_ula=$(cat $tmpdir/dhcp6probe | grep -A 2 "Got a valid ADVERTISE" | grep "preferred" | awk '{printf "%s", $2}' | awk -F ":" '{printf "%s:%s:%s::1", $1, $2, $3 }')
