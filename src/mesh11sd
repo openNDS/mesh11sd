@@ -1533,9 +1533,9 @@ check_portal() {
 
 					if [ -z "$default_gw" ]; then
 						debugtype="debug"
-						syslogmessage="Waiting for ipv4 default gateway - iteration [ $retry ] ...."
+						syslogmessage="Mesh startup watchdog - iteration [ $retry ] ...."
 						write_to_syslog
-						sleep 1
+						sleep 3
 						continue
 					else
 						gw_ip=$(echo "$default_gw" | awk -F" " '{printf "%s", $3}')
@@ -2029,7 +2029,10 @@ auto_config() {
 					if [ "$band" = "$mesh_band" ] && [ "$meshifenabled" -eq 0 ]; then
 						echo "set wireless.m11s$phyindex.disabled='0'" | uci batch
 						meshifenabled=1
-						echo "active_mesh_ifname=\"$mesh_basename$phyindex\"" > $tmpdir/active_mesh_ifname
+
+						if [ ! -f "$tmpdir/active_mesh_ifname" ]; then
+							echo "active_mesh_ifname=\"$mesh_basename$phyindex\"" > "$tmpdir/active_mesh_ifname"
+						fi
 					else
 						echo "set wireless.m11s$phyindex.disabled='1'" | uci batch
 					fi
@@ -2808,7 +2811,18 @@ get_portal_ula() {
 
 	if [ -e "$tmpdir/is_portal" ]; then
 		. $tmpdir/devicemac
-		portal_ula=$(ip -6 addr show dev $device scope global | grep "inet6" | awk '{print $2}' | awk -F "/" '{print $1}')
+		inet6_globals=$(ip -6 addr show dev $device scope global | grep "inet6" | awk '{print $2}' | awk -F "/" '{printf "%s ", $1}')
+
+		for ulaaddr in $inet6_globals; do
+			is_ula=$(echo "$ulaaddr " | grep -q "::1 "; echo -n "$?")
+
+			if [ "$is_ula" -eq 0 ]; then
+				portal_ula="$ulaaddr"
+				break
+			else
+				portal_ula=""
+			fi
+		done
 
 	else
 		portal_ula=$(cat $tmpdir/dhcp6probe | grep -A 2 "Got a valid ADVERTISE" | grep "preferred" | awk '{printf "%s", $2}' | awk -F ":" '{printf "%s:%s:%s::1", $1, $2, $3 }')
@@ -2987,6 +3001,96 @@ apmon_cgi() {
 	return $?
 }
 
+restore_luci_cgi() {
+	luci_cgi_status=127
+
+	if [ -e "$apmond_cgi_dir" ]; then
+		cgiuhttp="$apmond_cgi_dir""luci"
+		cgioriginal="$apmond_cgi_dir""luci.original"
+
+		if [ -f "$cgioriginal" ]; then
+			cgiorghash=$(sha256sum "$cgioriginal" | awk '{printf "%s", $1}')
+			cgihash=$(sha256sum "$cgiuhttp" | awk '{printf "%s", $1}')
+
+			if [ "$cgitmphash" != "$cgihash" ]; then
+				cp "$cgioriginal" "$cgiuhttp"
+				chmod 755 "$cgiuhttp"
+				luci_cgi_status=0
+			else
+				luci_cgi_status=1
+			fi
+		fi
+
+	fi
+
+	return $luci_cgi_status
+
+}
+
+setup_luci_cgi() {
+	luci_cgi_status=127
+
+	if [ -e "$apmond_cgi_dir" ]; then
+		cgiuhttp="$apmond_cgi_dir""luci"
+		cgitmp="$tmpdir/luci"
+
+		if [ ! -f "$cgiuhttp.original" ]; then
+			mv "$cgiuhttp" "$cgiuhttp.original"
+			chmod 444 "$cgiuhttp.original"
+		fi
+
+		if [ -f "$cgiuhttp" ]; then
+			luci_cgi_status=$(luci_cgi "$cgitmp"; echo -n $?)
+			cgitmphash=$(sha256sum "$cgitmp" | awk '{printf "%s", $1}')
+			cgihash=$(sha256sum "$cgiuhttp" | awk '{printf "%s", $1}')
+
+			if [ "$cgitmphash" != "$cgihash" ]; then
+				cp "$cgitmp" "$cgiuhttp"
+			fi
+		else
+			luci_cgi_status=$(luci_cgi "$cgiuhttp"; echo -n $?)
+		fi
+	fi
+
+	return $luci_cgi_status
+}
+
+luci_cgi() {
+	local cgi=$1
+
+	if [ -z "$cgi" ]; then
+		return 127
+	fi
+
+	echo "#!/bin/sh" > "$cgi"
+	echo "printf \"%s\n\n\" \"Content-type: text/html\"" >> "$cgi"
+	echo -e "status=\$(mesh11sd -v)" >> "$cgi"
+	echo -e "hostname=\$(uci get system.@system[0].hostname)" >> "$cgi"
+	echo -e "portal_ula=\$(mesh11sd get_portal_ula)" >> "$cgi"
+	echo -e "host=\"\$HTTP_HOST\"" >> "$cgi"
+	echo -e "echo -e \"<!DOCTYPE html>\"" >> "$cgi"
+	echo -e "echo -e \"<html>\"" >> "$cgi"
+	echo -e "echo -e \"<head>\"" >> "$cgi"
+	echo -e "echo -e \"<meta http-equiv=\"Cache-Control\" content=\"no-cache, no-store, must-revalidate\">\"" >> "$cgi"
+	echo -e "echo -e \"<meta http-equiv=\\\"Pragma\\\" content=\\\"no-cache\\\">\"" >> "$cgi"
+	echo -e "echo -e \"<meta http-equiv=\\\"Expires\\\" content=\\\"0\\\">\"" >> "$cgi"
+	echo -e "echo -e \"<meta charset=\\\"utf-8\\\">\"" >> "$cgi"
+	echo -e "echo -e \"<meta name=\\\"viewport\\\" content=\\\"width=device-width, initial-scale=1.0\\\">\"" >> "$cgi"
+	echo -e "echo -e \"<title>\$hostname</title>\"" >> "$cgi"
+	echo -e "echo -e \"</head>\"" >> "$cgi"
+	echo -e "echo -e \"<body>\"" >> "$cgi"
+	echo -e "echo \"<br><hr><b>\"" >> "$cgi"
+	echo -e "echo \"Hostname: [\$hostname] <br><br> \"" >> "$cgi"
+	echo -e "echo \"Host ula: \$host <br><br> \"" >> "$cgi"
+	echo -e "echo \"Portal ula: [\$portal_ula] <br>\"" >> "$cgi"
+	echo -e "echo \"<hr> <br> \$status <br> <hr>\"" >> "$cgi"
+	echo -e "echo \"</b>\"" >> "$cgi"
+	echo -e "echo \"</body>\"" >> "$cgi"
+	echo -e "echo \"</html>\"" >> "$cgi"
+
+	chmod 755 "$cgi"
+}
+
 send_ap_data() {
 
 	if [ "$apmond_enable" -eq 0 ]; then
@@ -3115,6 +3219,77 @@ get_ap_data() {
 
 	if [ "$sta_flag" -eq 1 ]; then
 		echo -e "\n}"
+	fi
+}
+
+is_default() {
+	configs=" mesh11sd wireless dhcp network firewall"
+
+	for config in $configs; do
+
+		if [ -f "/etc/config/$config.mesh11sd.default" ]; then
+			currenthash=$(sha256sum "/etc/config/$config" | awk '{printf "%s", $1}')
+			defaulthash=$(sha256sum "/etc/config/$config.mesh11sd.default" | awk '{printf "%s", $1}')
+
+			if [ "$currenthash" = "$defaulthash" ]; then
+				is_default="$is_default $config"
+			fi
+
+		else
+			return 127
+		fi
+
+	done
+
+	if [ "$configs" = "$is_default" ]; then
+		all_default=1
+	else
+		all_default=0
+	fi
+}
+
+set_led() {
+	leds=$(ls "/sys/class/leds")
+	led_count=0
+
+	if [ -z "$1" ]; then
+		return 127
+	fi
+
+	led_action="$1"
+
+	if [ "$led_action" = "off" ] || [ "$led_action" = "none" ]; then
+		led_action="none"
+	elif [ "$led_action" = "on" ] || [ "$led_action" = "default-on" ]; then
+		led_action="default-on"
+	elif [ "$led_action" = "beat" ] || [ "$led_action" = "heartbeat" ]; then
+		led_action="heartbeat"
+	fi
+
+	for led in $leds; do
+		led_count=$((led_count + 1))
+		last_param=$(echo "$led" | awk -F":" '{printf "%s", $NF}')
+
+		if [ "$last_param" = "power" ] || [ "$last_param" = "system" ] || [ "$last_param" = "status" ]; then
+			echo "$led_action" > "/sys/class/leds/$led/trigger"
+			break
+		fi
+	done
+}
+
+check_mesh_active_led() {
+	. $tmpdir/active_mesh_ifname
+	active_peers=$(iw dev $active_mesh_ifname mpath dump | grep -c -w $active_mesh_ifname)
+
+	if [ "$active_peers" -gt 0 ]; then
+
+		if [ -z "$heartbeatflag" ] || [ "$heartbeatflag" -eq 0 ]; then
+			heartbeatflag=1
+			set_led heartbeat
+		fi
+	else
+		heartbeatflag=0
+		set_led on
 	fi
 }
 
@@ -3832,6 +4007,76 @@ elif [ "$1" = "commit_changes" ]; then
 	echo
 	exit 0
 
+elif [ "$1" = "commit_all" ]; then
+
+
+	echo "=========================================================================================================="
+
+	echo "Commit ***ALL*** changes, including auto_configuration changes, making them non volatile on restart/reboot"
+
+	if [ -z "$2" ] || [ "$2" != "commit" ]; then
+		echo "    Usage: mesh11sd commit_all commit "
+		echo "    Writes changes to configuration file "
+		echo "    Active only when auto_config is enabled "
+
+	elif [ "$2" = "commit" ] && [ "$auto_config" -eq 1 ]; then
+
+		configs="mesh11sd wireless dhcp network firewall"
+
+		for config in $configs; do
+			uci commit "$config"
+		done
+
+		restore_luci_cgi
+	fi
+
+	echo "=========================================================================================================="
+	echo
+	exit 0
+
+elif [ "$1" = "revert_all" ]; then
+
+
+	echo "=========================================================================================================="
+
+	echo "Revert ***ALL*** changes previously committed by a commit_all command"
+
+	if [ -z "$2" ] || [ "$2" != "revert" ]; then
+		echo "    Usage: mesh11sd revert_all revert "
+		echo "    Reverts previously committed changes "
+		echo "    Active only when auto_config is enabled "
+		echo "    Connection will be lost if you proceed as node will restart..... "
+
+	elif [ "$2" = "revert" ] && [ "$auto_config" -eq 1 ]; then
+
+		echo "    Connection will be lost if you proceed as node will restart..... "
+		echo "    Do you want to continue? [yes/no] "
+
+		read reply
+
+		if [ "$reply" = "yes" ]; then
+			configs="mesh11sd wireless dhcp network firewall"
+
+			for config in $configs; do
+
+				if [ -f "/etc/config/$config.mesh11sd.default" ]; then
+					cp "/etc/config/$config.mesh11sd.default" "/etc/config/$config"
+				fi
+
+			done
+
+			setup_luci_cgi
+			echo "Revert complete, auto configuration will rebuild - restarting......"
+			reboot
+		else
+			echo "Aborting revert"
+		fi
+	fi
+
+	echo "=========================================================================================================="
+	echo
+	exit 0
+
 elif [ "$1" = "mesh_rssi_threshold" ]; then
 	# get list of interfaces
 	get_mesh_iflist
@@ -4016,10 +4261,11 @@ elif [ "$1" = "show_ap_data" ]; then
 	fi
 
 	if [ -z "$2" ]; then
-		echo "==========================================================================="
+		echo "===================================================================================================================="
 
 		echo " Show access point usage data"
 		echo "    Usage: mesh11sd show_ap_data [ap_mac_id]"
+		echo "       or: mesh11sd show_ap_data all"
 		echo
 
 		if [ ! -z "$data_nodes" ]; then
@@ -4028,15 +4274,15 @@ elif [ "$1" = "show_ap_data" ]; then
 			echo " The following access points have sent usage data:"
 
 			for data_node in $data_nodes; do
-				echo "==========================================================================="
+				echo "===================================================================================================================="
 				echo
 				echo "Access point ID (ap_mac_id)	$data_node"
 			done
 
-			echo "==================================================================================="
+			echo "===================================================================================================================="
 		else
 			echo " If the node you are looking for is not shown - it probably has not had any connections yet - try again later."
-			echo "=============================================================================================================="
+			echo "===================================================================================================================="
 		fi
 
 	elif [ "$2" != "all" ]; then
@@ -4054,23 +4300,50 @@ elif [ "$1" = "daemon" ]; then
 	syslogmessage="mesh11sd is in startup"
 	write_to_syslog
 
+	set_led on
+
 	get_kernel_version
 	cpe_conf=0
 
+	if [ -f "$tmpdir/active_mesh_ifname" ]; then
+		rm "$tmpdir/active_mesh_ifname"
+	fi
 
 
 	if [ "$auto_config" -gt 0 ]; then
+		# redirect luci web ui
+		setup_luci_cgi
 		# We do not know the current state so reinitialise everything
-
 		debugtype="info"
 		syslogmessage="Initialising state for auto_config"
 		write_to_syslog
 
-		uci revert mesh11sd
-		uci revert wireless
-		uci revert dhcp
-		uci revert network
-		uci revert firewall
+		configs="mesh11sd wireless dhcp network firewall"
+
+		for config in $configs; do
+			uci revert "$config"
+
+			if [ ! -f "/etc/config/$config.mesh11sd.default" ]; then
+				cp "/etc/config/$config" "/etc/config/$config.mesh11sd.default"
+			fi
+
+		done
+
+		# Do we have a previously commited auto_config? If so get the active_mesh_ifname.
+		meshifs=$(uci show wireless | grep "mode='mesh'" | awk -F "." '{printf "%s.%s ", $1, $2}')
+
+		if [ ! -z "$meshifs" ]; then
+
+			for meshif in $meshifs; do
+				disab=$(uci get $meshif.disabled)
+
+				if [ "$disab" -eq 0 ]; then
+					active_mesh_ifname=$(uci get $meshif.ifname)
+					echo "active_mesh_ifname=\"$active_mesh_ifname\"" > "$tmpdir/active_mesh_ifname"
+					break
+				fi
+			done
+		fi
 
 		# Check the configured ipv4 address and change it if left at default of 192.168.1.1
 		# For now, only check in CPE mode.
@@ -4161,6 +4434,8 @@ elif [ "$1" = "daemon" ]; then
 		sleep 5
 
 		probe_interface_mac
+	else
+		restore_luci_cgi
 	fi
 
 	if [ -e "$tmpdir/brmac_la" ]; then
@@ -4351,9 +4626,14 @@ elif [ "$1" = "daemon" ]; then
 					convert_to_la "$devicemac"
 
 					for ap in $aplist; do
-						index=$(($index + 1))
-						make_indexed_mac "$mac_la" "$index"
-						echo "set wireless.$ap.macaddr=$mac_indexed" | uci batch
+
+						uciapconfig=$(uci get wireless.$ap.macaddr 2> /dev/null)
+
+						if [ -z "$uciapconfig" ]; then
+							index=$(($index + 1))
+							make_indexed_mac "$mac_la" "$index"
+							echo "set wireless.$ap.macaddr=$mac_indexed" | uci batch
+						fi
 					done
 
 					macfixup=1
@@ -4365,6 +4645,7 @@ elif [ "$1" = "daemon" ]; then
 			if [ "$firstloop" -eq 1 ] || [ "$changed" -eq 1 ]; then
 				firstloop=0
 				changed=0
+				set_led on
 
 				touch "$tmpdir/meshinterface"
 				all_nodes_rssi_update
@@ -4540,22 +4821,23 @@ elif [ "$1" = "daemon" ]; then
 						cpe_conf=1
 					fi
 				fi
-
-				if [ "$mesh_mac_forced_forwarding" -eq 1 ]; then
-					. $tmpdir/active_mesh_ifname
-					echo 1 > /proc/sys/net/ipv4/conf/$active_mesh_ifname/proxy_arp_pvlan
-				fi
-
-				if [ "$gateway_proxy_arp" -eq 0 ]; then
-					. $tmpdir/devicemac
-					echo 0 > /proc/sys/net/ipv4/conf/$device/proxy_arp
-				fi
 			fi
 
 			check_gate
 			check_mesh_gate_only
 			check_hwmp
 			wait_for_mesh
+
+			if [ "$mesh_mac_forced_forwarding" -eq 1 ]; then
+				. $tmpdir/active_mesh_ifname
+				echo 1 > /proc/sys/net/ipv4/conf/$active_mesh_ifname/proxy_arp_pvlan
+			fi
+
+			if [ "$gateway_proxy_arp" -eq 0 ]; then
+				. $tmpdir/devicemac
+				echo 0 > /proc/sys/net/ipv4/conf/$device/proxy_arp
+			fi
+
 			block_bridge_loops
 			check_path_changes
 
@@ -4577,6 +4859,7 @@ elif [ "$1" = "daemon" ]; then
 		debugtype="debug"
 		syslogmessage="checkinterval $checkinterval seconds"
 		write_to_syslog
+		check_mesh_active_led
 		sleep $checkinterval
 	done
 	exit 0
