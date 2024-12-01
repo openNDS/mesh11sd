@@ -4007,6 +4007,76 @@ elif [ "$1" = "commit_changes" ]; then
 	echo
 	exit 0
 
+elif [ "$1" = "commit_all" ]; then
+
+
+	echo "=========================================================================================================="
+
+	echo "Commit ***ALL*** changes, including auto_configuration changes, making them non volatile on restart/reboot"
+
+	if [ -z "$2" ] || [ "$2" != "commit" ]; then
+		echo "    Usage: mesh11sd commit_all commit "
+		echo "    Writes changes to configuration file "
+		echo "    Active only when auto_config is enabled "
+
+	elif [ "$2" = "commit" ] && [ "$auto_config" -eq 1 ]; then
+
+		configs="mesh11sd wireless dhcp network firewall"
+
+		for config in $configs; do
+			uci commit "$config"
+		done
+
+		restore_luci_cgi
+	fi
+
+	echo "=========================================================================================================="
+	echo
+	exit 0
+
+elif [ "$1" = "revert_all" ]; then
+
+
+	echo "=========================================================================================================="
+
+	echo "Revert ***ALL*** changes previously committed by a commit_all command"
+
+	if [ -z "$2" ] || [ "$2" != "revert" ]; then
+		echo "    Usage: mesh11sd revert_all revert "
+		echo "    Reverts previously committed changes "
+		echo "    Active only when auto_config is enabled "
+		echo "    Connection will be lost if you proceed as node will restart..... "
+
+	elif [ "$2" = "revert" ] && [ "$auto_config" -eq 1 ]; then
+
+		echo "    Connection will be lost if you proceed as node will restart..... "
+		echo "    Do you want to continue? [yes/no] "
+
+		read reply
+
+		if [ "$reply" = "yes" ]; then
+			configs="mesh11sd wireless dhcp network firewall"
+
+			for config in $configs; do
+
+				if [ -f "/etc/config/$config.mesh11sd.default" ]; then
+					cp "/etc/config/$config.mesh11sd.default" "/etc/config/$config"
+				fi
+
+			done
+
+			setup_luci_cgi
+			echo "Revert complete, auto configuration will rebuild - restarting......"
+			reboot
+		else
+			echo "Aborting revert"
+		fi
+	fi
+
+	echo "=========================================================================================================="
+	echo
+	exit 0
+
 elif [ "$1" = "mesh_rssi_threshold" ]; then
 	# get list of interfaces
 	get_mesh_iflist
