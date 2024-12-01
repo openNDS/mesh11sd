@@ -3248,6 +3248,51 @@ is_default() {
 	fi
 }
 
+set_led() {
+	leds=$(ls "/sys/class/leds")
+	led_count=0
+
+	if [ -z "$1" ]; then
+		return 127
+	fi
+
+	led_action="$1"
+
+	if [ "$led_action" = "off" ] || [ "$led_action" = "none" ]; then
+		led_action="none"
+	elif [ "$led_action" = "on" ] || [ "$led_action" = "default-on" ]; then
+		led_action="default-on"
+	elif [ "$led_action" = "beat" ] || [ "$led_action" = "heartbeat" ]; then
+		led_action="heartbeat"
+	fi
+
+	for led in $leds; do
+		led_count=$((led_count + 1))
+		last_param=$(echo "$led" | awk -F":" '{printf "%s", $NF}')
+
+		if [ "$last_param" = "power" ] || [ "$last_param" = "system" ] || [ "$last_param" = "status" ]; then
+			echo "$led_action" > "/sys/class/leds/$led/trigger"
+			break
+		fi
+	done
+}
+
+check_mesh_active_led() {
+	. $tmpdir/active_mesh_ifname
+	active_peers=$(iw dev $active_mesh_ifname mpath dump | grep -c -w $active_mesh_ifname)
+
+	if [ "$active_peers" -gt 0 ]; then
+
+		if [ -z "$heartbeatflag" ] || [ "$heartbeatflag" -eq 0 ]; then
+			heartbeatflag=1
+			set_led heartbeat
+		fi
+	else
+		heartbeatflag=0
+		set_led on
+	fi
+}
+
 ##############
 # Start point
 ##############
@@ -4185,6 +4230,8 @@ elif [ "$1" = "daemon" ]; then
 	syslogmessage="mesh11sd is in startup"
 	write_to_syslog
 
+	set_led on
+
 	get_kernel_version
 	cpe_conf=0
 
@@ -4528,6 +4575,7 @@ elif [ "$1" = "daemon" ]; then
 			if [ "$firstloop" -eq 1 ] || [ "$changed" -eq 1 ]; then
 				firstloop=0
 				changed=0
+				set_led on
 
 				touch "$tmpdir/meshinterface"
 				all_nodes_rssi_update
@@ -4741,6 +4789,7 @@ elif [ "$1" = "daemon" ]; then
 		debugtype="debug"
 		syslogmessage="checkinterval $checkinterval seconds"
 		write_to_syslog
+		check_mesh_active_led
 		sleep $checkinterval
 	done
 	exit 0
