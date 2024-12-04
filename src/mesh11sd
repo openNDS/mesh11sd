@@ -492,6 +492,10 @@ get_current_setup () {
 			vtun_enable=0
 		fi
 
+		if [ "$portal_detect" -eq 2 ]; then
+			vtun_enable=0
+		fi
+
 		syslogmessage="option vtun_enable [ $vtun_enable ]"
 		debugtype="info"
 		mute="$mutestate"
@@ -1251,8 +1255,14 @@ get_portal_state() {
 			fi
 		done
 
-	elif [ "$portal_detect" -eq 2 ] || [ "$portal_detect" -eq 3 ]; then
-		# 2 - force peer mode , 3 - force CPE peer mode
+	elif [ "$portal_detect" -eq 2 ]; then
+		# 2 - force peer mode
+		uci set dhcp.@dnsmasq[0].authoritative='0'
+		non_portal_mesh_hwmp_rootmode="4"
+		echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='$non_portal_mesh_hwmp_rootmode'" | uci batch
+
+	elif [ "$portal_detect" -eq 3 ]; then
+		3 - force CPE peer mode
 		uci set dhcp.@dnsmasq[0].authoritative='0'
 
 	elif [ "$portal_detect" -eq 0 ]; then
@@ -1485,7 +1495,12 @@ check_portal() {
 
 		if [ -z "$is_portal" ]; then
 			# This IS NOT a layer 3 mesh portal
-			uci set mesh11sd.mesh_params.mesh_connected_to_as='0'
+
+			if [ "$portal_detect" -eq 2 ];then
+				uci set mesh11sd.mesh_params.mesh_connected_to_as='1'
+			else
+				uci set mesh11sd.mesh_params.mesh_connected_to_as='0'
+			fi
 
 			if [ "$detected_state" = "peer" ] && [ "$last_state" = "initial" ]; then
 				last_state="portal"
@@ -2670,10 +2685,11 @@ check_vtunnel() {
 			. $tmpdir/active_mesh_ifname
 			. $tmpdir/devicemac
 
-			if [ -z "$is_portal" ]; then
+			if [ -z "$is_portal" ] || [ "$portal_detect" -gt 1 ]; then
 				proto="none"
 			else
 				proto="static"
+
 			fi
 
 			uci set network.vtunnel=device
@@ -2755,7 +2771,7 @@ check_vtunnel() {
 		if [ "$ip_full" ] && [ "$vxlan" ]; then
 			device="br-tun$tun_id"
 
-			if [ "$portal_detect" -gt 1 ] || [ -z "$is_portal" ]; then
+			if [ "$portal_detect" -ne 2 ] && [ -z "$is_portal" ]; then
 				uci set dhcp.vtunlan.dhcpv4='disabled'
 				uci set dhcp.vtunlan.dhcpv6='disabled'
 				uci set dhcp.vtunlan.ra='disabled'
