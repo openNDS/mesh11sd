@@ -2122,10 +2122,20 @@ auto_config() {
 				#Add ssid and suffix
 				suffix=$(echo $devicemac | awk -F":" '{printf "%s%s", $5, $6}')
 
+				ifindex=0
+
 				for ap in $aplist; do
 					radio=$(uci get "$ap.device" 2> /dev/null)
+					radioindex=$(echo "$radio" | awk -F "radio" '{printf "%s", $2}')
 					band=$(uci get "wireless.$radio.band" 2> /dev/null)
 					ssid=$(uci get "$ap.ssid" 2> /dev/null | awk '{printf "%s", $1}')
+					ifname=$(uci get "$ap.ifname" 2> /dev/null | awk '{printf "%s", $1}')
+
+					if [ -z "$ifname" ]; then
+						ifname="phy$radioindex-ap$ifindex"
+						ifindex=$((ifindex+1))
+						echo "set $ap.ifname='$ifname'" | uci batch
+					fi
 
 					if [ "$ssid" != "$vtun_base_ssid" ] && [ ! -z "$default_ssid" ]; then
 						ssid="$default_ssid"
