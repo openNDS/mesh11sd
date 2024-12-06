@@ -1258,8 +1258,7 @@ get_portal_state() {
 	elif [ "$portal_detect" -eq 2 ]; then
 		# 2 - force peer mode
 		uci set dhcp.@dnsmasq[0].authoritative='0'
-		non_portal_mesh_hwmp_rootmode="4"
-		echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='$non_portal_mesh_hwmp_rootmode'" | uci batch
+		echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='4'" | uci batch
 
 	elif [ "$portal_detect" -eq 3 ]; then
 		3 - force CPE peer mode
@@ -2571,6 +2570,10 @@ probe_interface_mac() {
 check_mesh_gate_only() {
 	current_mgo_option=$(uci get mesh11sd.setup.mesh_leechmode_enable 2> /dev/null | awk '{printf "%s", $1}')
 
+	if [ -z "$current_mgo_option" ]; then
+		current_mgo_option="$mesh_gate_only"
+	fi
+
 	if [ "$current_mgo_option" -ne "$mesh_gate_only" ]; then
 		#option has changed
 
@@ -2598,6 +2601,20 @@ check_mesh_gate_only() {
 		fi
 
 		mesh_gate_only=$current_mgo_option
+
+	elif [ "$current_mgo_option" -eq 1 ]; then
+		echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='0'" | uci batch
+
+	elif [ "$current_mgo_option" -eq 0 ]; then
+
+		if [ -z "$is_portal" ]; then
+			# This IS NOT a layer 3 mesh portal
+			rootmode=2
+		else
+			rootmode=4
+		fi
+
+		echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='$rootmode'" | uci batch
 	fi
 }
 
@@ -3456,6 +3473,60 @@ elif [ "$1" = "disable" ]; then
 		ucibatch="set mesh11sd.setup.enabled='0'"
 		echo "$ucibatch" | uci batch
 		echo "0"
+		exit 0
+	fi
+
+elif [ "$1" = "auto_config" ]; then
+
+	if [ "$auto_config" -eq 1 ];  then
+		echo "auto_config is already configured"
+		exit 0
+	fi
+
+	if [ -z "$2" ]; then
+		exit 1
+	fi
+
+	if [ "$2" = "test" ]; then
+
+		if [ -e "$tmpdir/auto_config_test" ]; then
+			echo "Auto config test mode is already running!"
+			exit 1
+		fi
+
+		echo "This will test autoconfiguration."
+		echo "Rebooting will revert the test autoconfiguration."
+		echo "    Do you want to continue? [yes/no] "
+
+		read reply
+
+		if [ "$reply" = "yes" ]; then
+			touch "$tmpdir/auto_config_test"
+		fi
+
+		exit 0
+
+	elif [ "$2" = "enable" ]; then
+		echo "This will enable and start autoconfiguration."
+		echo "Autoconfiguration will start immediately and again on every restart."
+		echo "    Do you want to continue? [yes/no] "
+
+		read reply
+
+		if [ "$reply" = "yes" ]; then
+			touch "$tmpdir/auto_config_test"
+			changes=$(uci changes mesh11sd)
+			changelist=$(echo "$changes" | awk '{printf "%s ", $1}')
+
+			uci revert mesh11sd
+			uci set mesh11sd.setup.auto_config='1'
+			uci commit mesh11sd
+
+			for change in $changes; do
+				echo "set $change" | uci batch
+			done
+		fi
+
 		exit 0
 	fi
 
@@ -4583,7 +4654,7 @@ elif [ "$1" = "daemon" ]; then
 
 				############# Autoconfig
 
-				if [ "$auto_config" -eq 1 ]; then
+				if [ "$auto_config" -eq 1 ] || [ -e "$tmpdir/auto_config_test" ]; then
 					auto_config
 				else
 					debugtype="err"
@@ -4880,6 +4951,12 @@ elif [ "$1" = "daemon" ]; then
 				apmondloopcount=0
 				apmondloopstart=3
 			fi
+		fi
+
+		if [ -e "$tmpdir/auto_config_test" ]; then
+			debugtype="warn"
+			syslogmessage="Auto Config is in TEST mode"
+			write_to_syslog
 		fi
 
 		debugtype="debug"
