@@ -643,7 +643,7 @@ get_current_setup () {
 	fi
 
 	if [ -z "$mesh_gate_only" ]; then
-		mesh_gate_only="1"
+		mesh_gate_only="0"
 	fi
 
 	if [ "$mesh_gate_only" -eq 1 ] && [ "$mesh_gate_enable" -eq 0 ]; then
@@ -703,6 +703,19 @@ get_current_setup () {
 	write_to_syslog
 
 	#####
+	reactive_path_stabilisation_threshold=$(uci get mesh11sd.setup.reactive_path_stabilisation_threshold 2> /dev/null)
+
+	if [ -z "$reactive_path_stabilisation_threshold" ] || [ "$reactive_path_stabilisation_threshold" -eq 0 ]; then
+		reactive_path_stabilisation_threshold="10"
+	fi
+
+	syslogmessage="option mesh_path_stabilisation [ $mesh_path_stabilisation ]"
+	debugtype="info"
+	mute="$mutestate"
+	write_to_syslog
+
+	#####
+
 	mesh_mac_forced_forwarding=$(uci get mesh11sd.setup.mesh_mac_forced_forwarding 2> /dev/null)
 
 	if [ -z "$mesh_mac_forced_forwarding" ]; then
@@ -2387,16 +2400,32 @@ check_path_changes() {
 								write_to_syslog
 
 								if [ -z "$is_portal" ]; then
-									syslogmessage=" ..... or consider enabling mesh_leechmode on this node"
+									syslogmessage=" ..... or, if not already enabled, consider enabling mesh_leechmode on this node"
 									write_to_syslog
 								fi
 
+								# Reactive path stabilisation:
+
 								if [ "$mesh_path_stabilisation" -eq 1 ]; then
-									# If we want reactive path stabilisation:
-									debugtype="notice"
-									syslogmessage="Stabilsing path to node [ $peermac ]"
-									write_to_syslog
-									iw dev $iface station del $peermac
+									mrstloopcount=$(eval echo "\$node$peermac_id")
+
+									if [ -z "$mrstloopcount"]; then
+										mrstloopcount=0
+									fi
+
+									if [ "$mrstloopcount" -ge "$reactive_path_stabilisation_threshold" ]; then
+										debugtype="notice"
+										syslogmessage="Stabilsing path to node [ $peermac ]"
+										write_to_syslog
+										iw dev $iface station del $peermac
+										eval "node$peermac_id"="0"
+									else
+										debugtype="notice"
+										syslogmessage="Mesh Reactive Stabilisation Threshold counter [ $mrstloopcount/$reactive_path_stabilisation_threshold ]"
+										write_to_syslog
+										mrstloopcount="$((mrstloopcount + 1))"
+										eval "node$peermac_id"="$mrstloopcount"
+									fi
 								fi
 							fi
 
@@ -2409,7 +2438,7 @@ check_path_changes() {
 							write_to_syslog
 
 							if [ -z "$is_portal" ]; then
-								syslogmessage=" ..... or consider enabling mesh_leechmode on this node"
+								syslogmessage=" ..... or, if not already enabled, consider enabling mesh_leechmode on this node"
 								write_to_syslog
 							fi
 						fi
@@ -3478,12 +3507,22 @@ elif [ "$1" = "disable" ]; then
 
 elif [ "$1" = "auto_config" ]; then
 
+	if [ -z "$2" ]; then
+		echo
+		echo "Usage:"
+		echo "mesh11sd auto_config test - turn on auto config test mode "
+		echo "mesh11sd auto_config enable - configure auto config mode "
+		echo
+		exit 1
+	fi
+
 	if [ "$auto_config" -eq 1 ];  then
 		echo "auto_config is already configured"
 		exit 0
 	fi
 
-	if [ -z "$2" ]; then
+	if [ -e "$tmpdir/auto_config_test" ] && [ "$auto_config" -eq 0 ] && [ "$2" != "enable" ]; then
+		echo "Auto config is already running in test mode!"
 		exit 1
 	fi
 
@@ -3494,9 +3533,12 @@ elif [ "$1" = "auto_config" ]; then
 			exit 1
 		fi
 
+		echo
 		echo "This will test autoconfiguration."
 		echo "Rebooting will revert the test autoconfiguration."
+		echo
 		echo "    Do you want to continue? [yes/no] "
+		echo
 
 		read reply
 
@@ -3507,9 +3549,12 @@ elif [ "$1" = "auto_config" ]; then
 		exit 0
 
 	elif [ "$2" = "enable" ]; then
+		echo
 		echo "This will enable and start autoconfiguration."
 		echo "Autoconfiguration will start immediately and again on every restart."
+		echo
 		echo "    Do you want to continue? [yes/no] "
+		echo
 
 		read reply
 
@@ -3528,6 +3573,9 @@ elif [ "$1" = "auto_config" ]; then
 		fi
 
 		exit 0
+	else
+		echo "Invalid option...."
+		exit 1
 	fi
 
 elif [ "$1" = "status" ]; then
@@ -3596,6 +3644,7 @@ elif [ "$1" = "status" ]; then
 	echo "    \"txpower\":\"$txpower\","
 	echo "    \"mesh_path_cost\":\"$mesh_path_cost\","
 	echo "    \"mesh_path_stabilisation\":\"$mesh_path_stabilisation\","
+	echo "    \"reactive_path_stabilisation_threshold\":\"$reactive_path_stabilisation_threshold\","
 	echo "    \"checkinterval\":\"$checkinterval\","
 	echo "    \"interface_timeout\":\"$interface_timeout\","
 	echo "    \"ssid_suffix_enable\":\"$ssid_suffix_enable\","
@@ -4106,6 +4155,10 @@ elif [ "$1" = "commit_changes" ]; then
 
 elif [ "$1" = "commit_all" ]; then
 
+	if [ "$auto_config" -eq 0 ]; then
+		echo "Auto config is not enabled - aborting..."
+		exit 1
+	fi
 
 	echo "=========================================================================================================="
 
@@ -4133,6 +4186,10 @@ elif [ "$1" = "commit_all" ]; then
 
 elif [ "$1" = "revert_all" ]; then
 
+	if [ "$auto_config" -eq 0 ]; then
+		echo "Auto config is not enabled - aborting..."
+		exit 1
+	fi
 
 	echo "=========================================================================================================="
 
@@ -4325,7 +4382,7 @@ elif [ "$1" = "get_ap_data" ]; then
 
 elif [ "$1" = "show_ap_data" ]; then
 
-	if [ "$auto_config" -eq 0 ]; then
+	if [ "$auto_config" -eq 0 ] && [ ! -e "$tmpdir/auto_config_test" ]; then
 		echo "================================================================================"
 		echo "Unable to collect access point data -  enable auto_config for this functionality"
 		echo "================================================================================"
@@ -4333,6 +4390,10 @@ elif [ "$1" = "show_ap_data" ]; then
 	fi
 
 	data_nodes=$(ls "$tmpdir/apmond/ap/" | awk '{printf "%s ", $1}')
+
+	if [ -z "$data_nodes" ]; then
+		exit 0
+	fi
 
 	if [ "$2" = "all" ]; then
 		all_first=1
@@ -4381,6 +4442,8 @@ elif [ "$1" = "show_ap_data" ]; then
 			echo " If the node you are looking for is not shown - it probably has not had any connections yet - try again later."
 			echo "===================================================================================================================="
 		fi
+
+		exit 1
 
 	elif [ "$2" != "all" ]; then
 		hex_to_str "$(awk '{printf "%s", $2}'  "$tmpdir/apmond/ap/$2" 2>/dev/null)"
@@ -4566,6 +4629,9 @@ elif [ "$1" = "daemon" ]; then
 	vtunnel=""
 	apmondloopcount=0
 	apmondloopstart=6
+
+	#loop counter for Mesh Reactive Stabilsation Threshold:
+	mrstloopcount=0
 
 	# Clear the dhcp authoritative flag
 	uci delete dhcp.@dnsmasq[0].authoritative 2>/dev/null
@@ -4822,7 +4888,7 @@ elif [ "$1" = "daemon" ]; then
 				check_mesh_phantom
 			done
 
-			if [ "$auto_config" -eq 1 ]; then
+			if [ "$auto_config" -eq 1 ] || [ -e "$tmpdir/auto_config_test" ]; then
 
 				if [ "$portal_detect" -ge 1 ]; then
 					check_portal
@@ -4953,7 +5019,7 @@ elif [ "$1" = "daemon" ]; then
 			fi
 		fi
 
-		if [ -e "$tmpdir/auto_config_test" ]; then
+		if [ -e "$tmpdir/auto_config_test" ] && [ "$auto_config" -eq 0 ]; then
 			debugtype="warn"
 			syslogmessage="Auto Config is in TEST mode"
 			write_to_syslog
