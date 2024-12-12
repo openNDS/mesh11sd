@@ -643,7 +643,7 @@ get_current_setup () {
 	fi
 
 	if [ -z "$mesh_gate_only" ]; then
-		mesh_gate_only="1"
+		mesh_gate_only="0"
 	fi
 
 	if [ "$mesh_gate_only" -eq 1 ] && [ "$mesh_gate_enable" -eq 0 ]; then
@@ -703,6 +703,19 @@ get_current_setup () {
 	write_to_syslog
 
 	#####
+	reactive_path_stabilisation_threshold=$(uci get mesh11sd.setup.reactive_path_stabilisation_threshold 2> /dev/null)
+
+	if [ -z "$reactive_path_stabilisation_threshold" ] || [ "$reactive_path_stabilisation_threshold" -eq 0 ]; then
+		reactive_path_stabilisation_threshold="10"
+	fi
+
+	syslogmessage="option mesh_path_stabilisation [ $mesh_path_stabilisation ]"
+	debugtype="info"
+	mute="$mutestate"
+	write_to_syslog
+
+	#####
+
 	mesh_mac_forced_forwarding=$(uci get mesh11sd.setup.mesh_mac_forced_forwarding 2> /dev/null)
 
 	if [ -z "$mesh_mac_forced_forwarding" ]; then
@@ -796,6 +809,13 @@ get_current_setup () {
 	debugtype="info"
 	mute="$mutestate"
 	write_to_syslog
+
+	#####
+	mesh_backhaul_led=$(uci get mesh11sd.setup.mesh_backhaul_led 2> /dev/null)
+
+	if [ -z "$mesh_backhaul_led" ]; then
+		mesh_backhaul_led="auto"
+	fi
 }
 
 check_config_params() {
@@ -1258,8 +1278,7 @@ get_portal_state() {
 	elif [ "$portal_detect" -eq 2 ]; then
 		# 2 - force peer mode
 		uci set dhcp.@dnsmasq[0].authoritative='0'
-		non_portal_mesh_hwmp_rootmode="4"
-		echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='$non_portal_mesh_hwmp_rootmode'" | uci batch
+		echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='4'" | uci batch
 
 	elif [ "$portal_detect" -eq 3 ]; then
 		3 - force CPE peer mode
@@ -1507,6 +1526,7 @@ check_portal() {
 			fi
 
 			if [ "$detected_state" = "peer" ] && [ "$last_state" = "portal" ]; then
+				# We have become a peer
 				last_state="peer"
 				debugtype="debug"
 				syslogmessage="This meshnode is NOT a portal"
@@ -1520,6 +1540,7 @@ check_portal() {
 				hostname=$(uci get system.@system[0].hostname 2>/dev/null)
 
 				uci set network.lan.proto='dhcp'
+				set_ula_prefix "revert"
 				/sbin/service network reload
 				uci set dhcp.@dnsmasq[0].authoritative='0'
 				echo "set dhcp.$auto_mesh_network.ignore='1'" | uci batch
@@ -1589,6 +1610,7 @@ check_portal() {
 				write_to_syslog
 
 				uci set network.lan.proto='static'
+				set_ula_prefix "set"
 				/sbin/service network reload
 
 				uci set dhcp.@dnsmasq[0].authoritative='1'
@@ -1951,7 +1973,6 @@ auto_config() {
 	fi
 
 	if [ "$autoconfig" -eq 0 ]; then
-
 		# Set the odhcpd loglevel
 		uci set dhcp.odhcpd.loglevel='3'
 
@@ -2388,16 +2409,32 @@ check_path_changes() {
 								write_to_syslog
 
 								if [ -z "$is_portal" ]; then
-									syslogmessage=" ..... or consider enabling mesh_leechmode on this node"
+									syslogmessage=" ..... or, if not already enabled, consider enabling mesh_leechmode on this node"
 									write_to_syslog
 								fi
 
+								# Reactive path stabilisation:
+
 								if [ "$mesh_path_stabilisation" -eq 1 ]; then
-									# If we want reactive path stabilisation:
-									debugtype="notice"
-									syslogmessage="Stabilsing path to node [ $peermac ]"
-									write_to_syslog
-									iw dev $iface station del $peermac
+									mrstloopcount=$(eval echo "\$node$peermac_id")
+
+									if [ -z "$mrstloopcount"]; then
+										mrstloopcount=0
+									fi
+
+									if [ "$mrstloopcount" -ge "$reactive_path_stabilisation_threshold" ]; then
+										debugtype="notice"
+										syslogmessage="Stabilsing path to node [ $peermac ]"
+										write_to_syslog
+										iw dev $iface station del $peermac
+										eval "node$peermac_id"="0"
+									else
+										debugtype="notice"
+										syslogmessage="Mesh Reactive Stabilisation Threshold counter [ $mrstloopcount/$reactive_path_stabilisation_threshold ]"
+										write_to_syslog
+										mrstloopcount="$((mrstloopcount + 1))"
+										eval "node$peermac_id"="$mrstloopcount"
+									fi
 								fi
 							fi
 
@@ -2410,7 +2447,7 @@ check_path_changes() {
 							write_to_syslog
 
 							if [ -z "$is_portal" ]; then
-								syslogmessage=" ..... or consider enabling mesh_leechmode on this node"
+								syslogmessage=" ..... or, if not already enabled, consider enabling mesh_leechmode on this node"
 								write_to_syslog
 							fi
 						fi
@@ -2571,6 +2608,10 @@ probe_interface_mac() {
 check_mesh_gate_only() {
 	current_mgo_option=$(uci get mesh11sd.setup.mesh_leechmode_enable 2> /dev/null | awk '{printf "%s", $1}')
 
+	if [ -z "$current_mgo_option" ]; then
+		current_mgo_option="$mesh_gate_only"
+	fi
+
 	if [ "$current_mgo_option" -ne "$mesh_gate_only" ]; then
 		#option has changed
 
@@ -2598,6 +2639,20 @@ check_mesh_gate_only() {
 		fi
 
 		mesh_gate_only=$current_mgo_option
+
+	elif [ "$current_mgo_option" -eq 1 ]; then
+		echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='0'" | uci batch
+
+	elif [ "$current_mgo_option" -eq 0 ]; then
+
+		if [ -z "$is_portal" ]; then
+			# This IS NOT a layer 3 mesh portal
+			rootmode=2
+		else
+			rootmode=4
+		fi
+
+		echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='$rootmode'" | uci batch
 	fi
 }
 
@@ -2833,26 +2888,37 @@ is_ipv4mask_valid() {
 	fi
 }
 
-get_portal_ula() {
+set_ula_prefix() {
 
-	if [ -e "$tmpdir/is_portal" ]; then
-		. $tmpdir/devicemac
-		inet6_globals=$(ip -6 addr show dev $device scope global | grep "inet6" | awk '{print $2}' | awk -F "/" '{printf "%s ", $1}')
-
-		for ulaaddr in $inet6_globals; do
-			is_ula=$(echo "$ulaaddr " | grep -q "::1 "; echo -n "$?")
-
-			if [ "$is_ula" -eq 0 ]; then
-				portal_ula="$ulaaddr"
-				break
-			else
-				portal_ula=""
-			fi
-		done
-
-	else
-		portal_ula=$(cat $tmpdir/dhcp6probe | grep -A 2 "Got a valid ADVERTISE" | grep "preferred" | awk '{printf "%s", $2}' | awk -F ":" '{printf "%s:%s:%s::1", $1, $2, $3 }')
+	if [ -z "$1" ]; then
+		return 1
 	fi
+
+	current_prefix="$(uci get network.globals.ula_prefix)"
+
+	if [ "$1" = "revert" ]; then
+		ula_prefix=$(cat /etc/config/network | grep "ula_prefix" | awk -F "'" '{printf "%s", $2}')
+
+	elif [ "$1" = "set" ] || [ "$1" = "get" ]; then
+		first=${auto_mesh_id:9:2}
+		second=${auto_mesh_id:11:4}
+		third=${auto_mesh_id:15:4}
+		ula_prefix="fd$first:$second:$third::/48"
+	else
+		return 1
+	fi
+
+	if [ -z "$current_prefix" ] || [ "$current_prefix" != "$ula_prefix" ]; then
+
+		if [ "$1" != "get" ]; then
+			echo "set network.globals.ula_prefix='$ula_prefix'" | uci batch
+		fi
+	fi
+}
+
+get_portal_ula() {
+	set_ula_prefix "get"
+	portal_ula="$(echo "$ula_prefix" | awk -F "/" '{printf "%s", $1}')""1"
 }
 
 str_to_hex() {
@@ -3275,14 +3341,26 @@ is_default() {
 }
 
 set_led() {
-	leds=$(ls "/sys/class/leds")
-	led_count=0
+
+	if [ "$mesh_backhaul_led" = "none" ]; then
+		return 0
+	fi
 
 	if [ -z "$1" ]; then
 		return 127
 	fi
 
 	led_action="$1"
+	leds=$(ls "/sys/class/leds")
+
+	for led in $leds; do
+		#initialise led
+		ledaction=$(cat "/sys/class/leds/$led/trigger" | awk -F "[" '{printf "%s", $2}' | awk -F "]" '{printf "%s", $1}')
+
+		if [ "$ledaction" = "none" ] || [ "$ledaction" = "heartbeat" ]; then
+			echo "none" > "/sys/class/leds/$led/trigger"
+		fi
+	done
 
 	if [ "$led_action" = "off" ] || [ "$led_action" = "none" ]; then
 		led_action="none"
@@ -3292,11 +3370,15 @@ set_led() {
 		led_action="heartbeat"
 	fi
 
+	if [ "$mesh_backhaul_led" != "auto" ] && [ -e "/sys/class/leds/$mesh_backhaul_led/" ]; then
+		echo "$led_action" > "/sys/class/leds/$mesh_backhaul_led/trigger"
+		return 0
+	fi
+
 	for led in $leds; do
-		led_count=$((led_count + 1))
 		last_param=$(echo "$led" | awk -F":" '{printf "%s", $NF}')
 
-		if [ "$last_param" = "power" ] || [ "$last_param" = "system" ] || [ "$last_param" = "status" ]; then
+		if [ "$last_param" = "power" ] || [ "$last_param" = "system" ] || [ "$last_param" = "status" ] || [ "$last_param" = "run" ]; then
 			echo "$led_action" > "/sys/class/leds/$led/trigger"
 			break
 		fi
@@ -3459,6 +3541,79 @@ elif [ "$1" = "disable" ]; then
 		exit 0
 	fi
 
+elif [ "$1" = "auto_config" ]; then
+
+	if [ -z "$2" ]; then
+		echo
+		echo "Usage:"
+		echo "mesh11sd auto_config test - turn on auto config test mode "
+		echo "mesh11sd auto_config enable - configure auto config mode "
+		echo
+		exit 1
+	fi
+
+	if [ "$auto_config" -eq 1 ];  then
+		echo "auto_config is already configured"
+		exit 0
+	fi
+
+	if [ -e "$tmpdir/auto_config_test" ] && [ "$auto_config" -eq 0 ] && [ "$2" != "enable" ]; then
+		echo "Auto config is already running in test mode!"
+		exit 1
+	fi
+
+	if [ "$2" = "test" ]; then
+
+		if [ -e "$tmpdir/auto_config_test" ]; then
+			echo "Auto config test mode is already running!"
+			exit 1
+		fi
+
+		echo
+		echo "This will test autoconfiguration."
+		echo "Rebooting will revert the test autoconfiguration."
+		echo
+		echo "    Do you want to continue? [yes/no] "
+		echo
+
+		read reply
+
+		if [ "$reply" = "yes" ]; then
+			touch "$tmpdir/auto_config_test"
+		fi
+
+		exit 0
+
+	elif [ "$2" = "enable" ]; then
+		echo
+		echo "This will enable and start autoconfiguration."
+		echo "Autoconfiguration will start immediately and again on every restart."
+		echo
+		echo "    Do you want to continue? [yes/no] "
+		echo
+
+		read reply
+
+		if [ "$reply" = "yes" ]; then
+			touch "$tmpdir/auto_config_test"
+			changes=$(uci changes mesh11sd)
+			changelist=$(echo "$changes" | awk '{printf "%s ", $1}')
+
+			uci revert mesh11sd
+			uci set mesh11sd.setup.auto_config='1'
+			uci commit mesh11sd
+
+			for change in $changes; do
+				echo "set $change" | uci batch
+			done
+		fi
+
+		exit 0
+	else
+		echo "Invalid option...."
+		exit 1
+	fi
+
 elif [ "$1" = "status" ]; then
 	# get list of interfaces
 	get_mesh_iflist
@@ -3491,6 +3646,7 @@ elif [ "$1" = "status" ]; then
 	echo "    \"mesh_gate_enable\":\"$mesh_gate_enable\","
 	echo "    \"mesh_leechmode_enable\":\"$mesh_gate_only\","
 	echo "    \"mesh_gate_encryption\":\"$mesh_gate_encryption\","
+	echo "    \"mesh_backhaul_led\":\"$mesh_backhaul_led\","
 
 
 	# vxlan configs
@@ -3525,6 +3681,7 @@ elif [ "$1" = "status" ]; then
 	echo "    \"txpower\":\"$txpower\","
 	echo "    \"mesh_path_cost\":\"$mesh_path_cost\","
 	echo "    \"mesh_path_stabilisation\":\"$mesh_path_stabilisation\","
+	echo "    \"reactive_path_stabilisation_threshold\":\"$reactive_path_stabilisation_threshold\","
 	echo "    \"checkinterval\":\"$checkinterval\","
 	echo "    \"interface_timeout\":\"$interface_timeout\","
 	echo "    \"ssid_suffix_enable\":\"$ssid_suffix_enable\","
@@ -4035,6 +4192,10 @@ elif [ "$1" = "commit_changes" ]; then
 
 elif [ "$1" = "commit_all" ]; then
 
+	if [ "$auto_config" -eq 0 ]; then
+		echo "Auto config is not enabled - aborting..."
+		exit 1
+	fi
 
 	echo "=========================================================================================================="
 
@@ -4062,6 +4223,10 @@ elif [ "$1" = "commit_all" ]; then
 
 elif [ "$1" = "revert_all" ]; then
 
+	if [ "$auto_config" -eq 0 ]; then
+		echo "Auto config is not enabled - aborting..."
+		exit 1
+	fi
 
 	echo "=========================================================================================================="
 
@@ -4213,6 +4378,12 @@ elif [ "$1" = "get_portal_ula" ]; then
 	echo -n "$portal_ula"
 	exit 0
 
+elif [ "$1" = "set_ula_prefix" ]; then
+	set_ula_prefix "$2"
+	retval=$?
+	echo -n "$ula_prefix"
+	exit $retval
+
 elif [ "$1" = "str_to_hex" ]; then
 	str_to_hex "$2"
 
@@ -4254,7 +4425,7 @@ elif [ "$1" = "get_ap_data" ]; then
 
 elif [ "$1" = "show_ap_data" ]; then
 
-	if [ "$auto_config" -eq 0 ]; then
+	if [ "$auto_config" -eq 0 ] && [ ! -e "$tmpdir/auto_config_test" ]; then
 		echo "================================================================================"
 		echo "Unable to collect access point data -  enable auto_config for this functionality"
 		echo "================================================================================"
@@ -4262,6 +4433,10 @@ elif [ "$1" = "show_ap_data" ]; then
 	fi
 
 	data_nodes=$(ls "$tmpdir/apmond/ap/" | awk '{printf "%s ", $1}')
+
+	if [ -z "$data_nodes" ]; then
+		exit 0
+	fi
 
 	if [ "$2" = "all" ]; then
 		all_first=1
@@ -4310,6 +4485,8 @@ elif [ "$1" = "show_ap_data" ]; then
 			echo " If the node you are looking for is not shown - it probably has not had any connections yet - try again later."
 			echo "===================================================================================================================="
 		fi
+
+		exit 1
 
 	elif [ "$2" != "all" ]; then
 		hex_to_str "$(awk '{printf "%s", $2}'  "$tmpdir/apmond/ap/$2" 2>/dev/null)"
@@ -4496,6 +4673,9 @@ elif [ "$1" = "daemon" ]; then
 	apmondloopcount=0
 	apmondloopstart=6
 
+	#loop counter for Mesh Reactive Stabilsation Threshold:
+	mrstloopcount=0
+
 	# Clear the dhcp authoritative flag
 	uci delete dhcp.@dnsmasq[0].authoritative 2>/dev/null
 
@@ -4583,7 +4763,7 @@ elif [ "$1" = "daemon" ]; then
 
 				############# Autoconfig
 
-				if [ "$auto_config" -eq 1 ]; then
+				if [ "$auto_config" -eq 1 ] || [ -e "$tmpdir/auto_config_test" ]; then
 					auto_config
 				else
 					debugtype="err"
@@ -4751,7 +4931,7 @@ elif [ "$1" = "daemon" ]; then
 				check_mesh_phantom
 			done
 
-			if [ "$auto_config" -eq 1 ]; then
+			if [ "$auto_config" -eq 1 ] || [ -e "$tmpdir/auto_config_test" ]; then
 
 				if [ "$portal_detect" -ge 1 ]; then
 					check_portal
@@ -4880,6 +5060,12 @@ elif [ "$1" = "daemon" ]; then
 				apmondloopcount=0
 				apmondloopstart=3
 			fi
+		fi
+
+		if [ -e "$tmpdir/auto_config_test" ] && [ "$auto_config" -eq 0 ]; then
+			debugtype="warn"
+			syslogmessage="Auto Config is in TEST mode"
+			write_to_syslog
 		fi
 
 		debugtype="debug"
