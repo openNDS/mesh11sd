@@ -1519,6 +1519,7 @@ check_portal() {
 			fi
 
 			if [ "$detected_state" = "peer" ] && [ "$last_state" = "portal" ]; then
+				# We have become a peer
 				last_state="peer"
 				debugtype="debug"
 				syslogmessage="This meshnode is NOT a portal"
@@ -1532,6 +1533,7 @@ check_portal() {
 				hostname=$(uci get system.@system[0].hostname 2>/dev/null)
 
 				uci set network.lan.proto='dhcp'
+				set_ula_prefix "revert"
 				/sbin/service network reload
 				uci set dhcp.@dnsmasq[0].authoritative='0'
 				echo "set dhcp.$auto_mesh_network.ignore='1'" | uci batch
@@ -1601,6 +1603,7 @@ check_portal() {
 				write_to_syslog
 
 				uci set network.lan.proto='static'
+				set_ula_prefix "set"
 				/sbin/service network reload
 
 				uci set dhcp.@dnsmasq[0].authoritative='1'
@@ -1963,7 +1966,6 @@ auto_config() {
 	fi
 
 	if [ "$autoconfig" -eq 0 ]; then
-
 		# Set the odhcpd loglevel
 		uci set dhcp.odhcpd.loglevel='3'
 
@@ -2879,26 +2881,37 @@ is_ipv4mask_valid() {
 	fi
 }
 
-get_portal_ula() {
+set_ula_prefix() {
 
-	if [ -e "$tmpdir/is_portal" ]; then
-		. $tmpdir/devicemac
-		inet6_globals=$(ip -6 addr show dev $device scope global | grep "inet6" | awk '{print $2}' | awk -F "/" '{printf "%s ", $1}')
-
-		for ulaaddr in $inet6_globals; do
-			is_ula=$(echo "$ulaaddr " | grep -q "::1 "; echo -n "$?")
-
-			if [ "$is_ula" -eq 0 ]; then
-				portal_ula="$ulaaddr"
-				break
-			else
-				portal_ula=""
-			fi
-		done
-
-	else
-		portal_ula=$(cat $tmpdir/dhcp6probe | grep -A 2 "Got a valid ADVERTISE" | grep "preferred" | awk '{printf "%s", $2}' | awk -F ":" '{printf "%s:%s:%s::1", $1, $2, $3 }')
+	if [ -z "$1" ]; then
+		return 1
 	fi
+
+	current_prefix="$(uci get network.globals.ula_prefix)"
+
+	if [ "$1" = "revert" ]; then
+		ula_prefix=$(cat /etc/config/network | grep "ula_prefix" | awk -F "'" '{printf "%s", $2}')
+
+	elif [ "$1" = "set" ] || [ "$1" = "get" ]; then
+		first=${auto_mesh_id:9:2}
+		second=${auto_mesh_id:11:4}
+		third=${auto_mesh_id:15:4}
+		ula_prefix="fd$first:$second:$third::/48"
+	else
+		return 1
+	fi
+
+	if [ -z "$current_prefix" ] || [ "$current_prefix" != "$ula_prefix" ]; then
+
+		if [ "$1" != "get" ]; then
+			echo "set network.globals.ula_prefix='$ula_prefix'" | uci batch
+		fi
+	fi
+}
+
+get_portal_ula() {
+	set_ula_prefix "get"
+	portal_ula="$(echo "$ula_prefix" | awk -F "/" '{printf "%s", $1}')""1"
 }
 
 str_to_hex() {
@@ -4340,6 +4353,12 @@ elif [ "$1" = "get_portal_ula" ]; then
 	get_portal_ula
 	echo -n "$portal_ula"
 	exit 0
+
+elif [ "$1" = "set_ula_prefix" ]; then
+	set_ula_prefix "$2"
+	retval=$?
+	echo -n "$ula_prefix"
+	exit $retval
 
 elif [ "$1" = "str_to_hex" ]; then
 	str_to_hex "$2"
