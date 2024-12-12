@@ -809,6 +809,13 @@ get_current_setup () {
 	debugtype="info"
 	mute="$mutestate"
 	write_to_syslog
+
+	#####
+	mesh_backhaul_led=$(uci get mesh11sd.setup.mesh_backhaul_led 2> /dev/null)
+
+	if [ -z "$mesh_backhaul_led" ]; then
+		mesh_backhaul_led="auto"
+	fi
 }
 
 check_config_params() {
@@ -3334,14 +3341,26 @@ is_default() {
 }
 
 set_led() {
-	leds=$(ls "/sys/class/leds")
-	led_count=0
+
+	if [ "$mesh_backhaul_led" = "none" ]; then
+		return 0
+	fi
 
 	if [ -z "$1" ]; then
 		return 127
 	fi
 
 	led_action="$1"
+	leds=$(ls "/sys/class/leds")
+
+	for led in $leds; do
+		#initialise led
+		ledaction=$(cat "/sys/class/leds/$led/trigger" | awk -F "[" '{printf "%s", $2}' | awk -F "]" '{printf "%s", $1}')
+
+		if [ "$ledaction" = "none" ] || [ "$ledaction" = "heartbeat" ]; then
+			echo "none" > "/sys/class/leds/$led/trigger"
+		fi
+	done
 
 	if [ "$led_action" = "off" ] || [ "$led_action" = "none" ]; then
 		led_action="none"
@@ -3351,11 +3370,15 @@ set_led() {
 		led_action="heartbeat"
 	fi
 
+	if [ "$mesh_backhaul_led" != "auto" ] && [ -e "/sys/class/leds/$mesh_backhaul_led/" ]; then
+		echo "$led_action" > "/sys/class/leds/$mesh_backhaul_led/trigger"
+		return 0
+	fi
+
 	for led in $leds; do
-		led_count=$((led_count + 1))
 		last_param=$(echo "$led" | awk -F":" '{printf "%s", $NF}')
 
-		if [ "$last_param" = "power" ] || [ "$last_param" = "system" ] || [ "$last_param" = "status" ]; then
+		if [ "$last_param" = "power" ] || [ "$last_param" = "system" ] || [ "$last_param" = "status" ] || [ "$last_param" = "run" ]; then
 			echo "$led_action" > "/sys/class/leds/$led/trigger"
 			break
 		fi
@@ -3623,6 +3646,7 @@ elif [ "$1" = "status" ]; then
 	echo "    \"mesh_gate_enable\":\"$mesh_gate_enable\","
 	echo "    \"mesh_leechmode_enable\":\"$mesh_gate_only\","
 	echo "    \"mesh_gate_encryption\":\"$mesh_gate_encryption\","
+	echo "    \"mesh_backhaul_led\":\"$mesh_backhaul_led\","
 
 
 	# vxlan configs
