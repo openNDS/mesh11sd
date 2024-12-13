@@ -3190,7 +3190,7 @@ send_ap_data() {
 		return "$retcode"
 	fi
 
-	maxchunksize=4048
+	maxchunksize=4096
 	strindex=0
 	chunkstr=""
 	hostname=$(uci get system.@system[0].hostname 2> /dev/null | awk '{printf "%s", $1}')
@@ -3296,9 +3296,14 @@ get_ap_data() {
 					"rx_bitrate") echo	"      $ap_param_str,";;
 					"avg_ack_signal") echo	"      $ap_param_str,";;
 					"connected_time") echo	"      $ap_param_str,";;
-					"current_time") ap_param_str=$(echo -n "$ap_param_str" | sed s/current_time/timestamp/g);  echo	"      $ap_param_str"; echo -n "    }";;
+					"current_time") \
+						ap_param_str=$(echo -n "$ap_param_str" | sed s/current_time/timestamp/g);\
+						echo "      $ap_param_str,";\
+						ms_to_dt "$ap_param_str"
+						echo "      \"date_time\":\"$date_time\"";\
+						echo -n "    }"\
+					;;
 				esac
-
 			fi
 
 			first_sta=0
@@ -3399,6 +3404,15 @@ check_mesh_active_led() {
 		heartbeatflag=0
 		set_led on
 	fi
+}
+
+ms_to_dt() {
+	local time_stamp="$1"
+	local ms=$(echo "$time_stamp" | awk -F "\"" '{printf "%s", $4}')
+	local secs=$(echo "$ms" | head -c 10)
+	date_time="$(date -d "@$secs")"
+	# translate any spaces to underscores
+	date_time=$(echo ${date_time// /_})
 }
 
 ##############
