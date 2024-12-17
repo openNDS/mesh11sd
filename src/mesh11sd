@@ -3358,14 +3358,22 @@ set_led() {
 	led_action="$1"
 	leds=$(ls "/sys/class/leds")
 
-	for led in $leds; do
-		#initialise led
-		ledaction=$(cat "/sys/class/leds/$led/trigger" | awk -F "[" '{printf "%s", $2}' | awk -F "]" '{printf "%s", $1}')
+	#initialise leds
+	if [ "$led_action" = "init" ]; then
 
-		if [ "$ledaction" = "none" ] || [ "$ledaction" = "heartbeat" ]; then
-			echo "none" > "/sys/class/leds/$led/trigger"
-		fi
-	done
+		for led in $leds; do
+			ledaction=$(cat "/sys/class/leds/$led/trigger" | awk -F "[" '{printf "%s", $2}' | awk -F "]" '{printf "%s", $1}')
+
+			if [ "$ledaction" = "none" ] || [ "$ledaction" = "heartbeat" ]; then
+				echo "default-on" > "/sys/class/leds/$led/trigger"
+				sleep 1
+				echo "none" > "/sys/class/leds/$led/trigger"
+			fi
+		done
+
+		sleep 1
+	fi
+
 
 	if [ "$led_action" = "off" ] || [ "$led_action" = "none" ]; then
 		led_action="none"
@@ -3453,6 +3461,15 @@ if [ -z "$1" ] || [ "$1" = "-h" ] || [ $1 = "--help" ] || [ $1 = "help" ]; then
   Option: disable
   Returns: \"0\" and exit code 0 if successful, exit code 1 if was already disabled
 
+  Option: auto_config
+  Connect a remote terminal session on a remote meshnode
+  Usage:
+    mesh11sd auto_config test | enable
+      Takes immediate effect, any current connection is likely to be lost, requiring re-connection on possibly a different ipv4 address 
+      test - turn on auto config test mode. A reboot will revert the auto configuration.
+      enable - configure auto config mode.
+    Valid only when auto_config is disabled (default)
+
   Option: status
   Returns: the mesh status in json format
 
@@ -3492,6 +3509,16 @@ if [ -z "$1" ] || [ "$1" = "-h" ] || [ $1 = "--help" ] || [ $1 = "help" ]; then
   Usage: mesh11sd commit_changes commit
     Commits changes to mesh_leechmode, txpower and rssi_threshold to non volatile configuration (make permanent)
 
+  Option: commit_all
+  Usage: mesh11sd commit_all commit
+    Writes all changes made by auto_config to configuration file
+    Active only when auto_config is enabled
+
+  Option: revert_all
+  Usage: mesh11sd revert_all revert
+    Reverts all changes made by commit_all
+    Active only when auto_config is enabled
+
   Option: force_ipv4_download
   Usage: mesh11sd force_ipv4_download
     Forces opkg to use ipv4 for its downloads
@@ -3508,6 +3535,40 @@ if [ -z "$1" ] || [ "$1" = "-h" ] || [ $1 = "--help" ] || [ $1 = "help" ]; then
   Usage: mesh11sd is_installed [packagename]
     Checks if \"packagename\" is installed
     Returns the installation status of the package and exit code 0 if installed
+
+  Option: get_portal_ula
+  Usage: mesh11sd get_portal_ula
+    Gets the portal unique local ipv6 address (ula)
+
+  Option: set_ula_prefix
+  Usage: mesh11sd set_ula_prefix [ ula_prefix ]
+    Overrides the default ula_prefix (must be valid format eg fdxx:xxxx:xxxx::/48)
+    Warning - for advanced users only
+
+  Option: str_to_hex
+  Usage: mesh11sd str_to_hex [access_point_data_string]
+    Run length hex encodes access_point_data from apmond format
+
+  Option: hex_to_str
+  Usage: mesh11sd hex_to_str [hex encoded_access_point_data_string]
+    Decode run length hex encoded access_point_data to apmond format
+
+  Option: write_node_data
+  Usage: mesh11sd write_node_data [node_id] [querystring]
+    Called from apmond cgi script. Writes node data received by web server
+
+  Option: send_ap_data
+  Usage: mesh11sd send_ap_data
+    Sends hex encoded apmon data to portal/apmond web server
+
+  Option: get_ap_data
+  Usage: mesh11sd get_ap_data
+    Get json format access point data for this node
+
+  Option: show_ap_data
+  Usage: mesh11sd show_ap_data [node_id | all]
+    Shows json format access point data for requested node | all nodes
+    Valid on portal/apmond node
 
   For further documentation, see: https://github.com/openNDS/mesh11sd#readme
 
@@ -4517,6 +4578,7 @@ elif [ "$1" = "daemon" ]; then
 	syslogmessage="mesh11sd is in startup"
 	write_to_syslog
 
+	set_led init
 	set_led on
 
 	get_kernel_version
