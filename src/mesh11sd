@@ -1281,7 +1281,7 @@ get_portal_state() {
 		echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='4'" | uci batch
 
 	elif [ "$portal_detect" -eq 3 ]; then
-		3 - force CPE peer mode
+		# 3 - force CPE peer mode
 		uci set dhcp.@dnsmasq[0].authoritative='0'
 
 	elif [ "$portal_detect" -eq 0 ]; then
@@ -2922,45 +2922,47 @@ get_portal_ula() {
 }
 
 str_to_hex() {
-	echo -n "$1" | hexdump -v -e "\"%08x\"" > "$tmpdir/apmond/hexencoded"
+	local input="$1"
+	local i=0
+	local char=""
+	local hex=""
+	local hexstr=""
+	local inputlen=$((${#input}))
+
+	while true; do
+		char=${input:$i:1}
+
+		if [ -z "$char" ]; then
+			break
+		fi
+
+		hex=$(printf "%02x" "'$char")
+		hexstr="$hexstr$hex"
+		i=$((i+1))
+
+		if [ "$i" -ge "$inputlen" ]; then
+			break
+		fi
+	done
+
+	echo -n "$hexstr" > "$tmpdir/apmond/hexencoded"
 }
 
 hex_to_str() {
 	local input="$1"
-	maxwordsize=8
-	i=0
-	hexstr=""
-	inputlen=$((${#input}))
+	local i=0
+	local hex=""
+	local hexstr=""
+	local inputlen=$((${#input}))
 
 	while true; do
-		# get a word
-		word=${input:$i:$maxwordsize}
+		hex="\x${input:$i:2}"
+		hexstr="$hexstr$hex"
+		i=$((i+2))
 
-		if [ -z "$word" ]; then
+		if [ "$i" -ge "$inputlen" ]; then
 			break
 		fi
-
-		wordsize=$((${#word}))
-		j=2
-
-		while true; do
-			hexchar=${word:$((wordsize-$j)):2}
-
-			if [ -z "$hexchar" ]; then
-				break
-			fi
-
-			hexstr="$hexstr\x$hexchar"
-
-			j=$((j+2))
-
-			if [ "$j" -gt "$wordsize" ]; then
-				break
-			fi
-
-		done
-		# Increment the pointer
-		i=$((i+$maxwordsize))
 	done
 
 	str=$(printf "$hexstr")
@@ -3201,7 +3203,7 @@ send_ap_data() {
 	hexencoded=$(cat "$tmpdir/apmond/hexencoded")
 	hexencoded_len=$((${#hexencoded}))
 
-	if [ "$hexencoded_len" -eq 0 ]; then
+	if [ "$hexencoded_len" -le 10 ]; then
 		retcode=0
 		return 0
 	fi
