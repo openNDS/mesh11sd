@@ -183,7 +183,7 @@ get_current_setup () {
 	#####
 	portal_detect=$(uci get mesh11sd.setup.portal_detect 2> /dev/null)
 
-	if [ -z "$portal_detect" ]; then
+	if [ -z "$portal_detect" ] || [ "$portal_detect" -eq 2 ]; then
 		portal_detect=1
 	fi
 
@@ -334,13 +334,13 @@ get_current_setup () {
 
 	# Block wan and wan6 as valid network zones for mesh unless portal_detect - 3 (CPE mode)
 
-	if [ "$portal_detect"  -ne 3 ]; then
+	if [ "$portal_detect" -ne 3 ]; then
 
 		if [ "$auto_mesh_network" = "wan" ] || [ "$auto_mesh_network" = "wan6" ]; then
 			auto_mesh_network="lan"
 		fi
 
-	elif [ "$portal_detect"  -eq 3 ] && [ "$auto_mesh_network" = "lan" ]; then
+	elif [ "$portal_detect" -eq 3 ] && [ "$auto_mesh_network" = "lan" ]; then
 		auto_mesh_network="wan"
 	fi
 
