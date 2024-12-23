@@ -19,6 +19,7 @@ stop_service() {
 	/sbin/uci revert mesh11sd
 	/sbin/uci revert wireless
 	/sbin/uci revert dhcp
+	/sbin/uci revert network
 	nft delete table bridge mesh11s 2> /dev/null
 }
 
