@@ -525,13 +525,11 @@ get_current_setup () {
 
 		if [ -z "$vtun_ip" ]; then
 			vtun_ip=".1"
-
-
 		fi
 
 		is_ipv4addr_valid
 
-		if [ "$?" -gt 0 ]; then
+		if [ "$vtun_ip" != "$checkip" ]; then
 			vtun_ip="192.168.168.1"
 		fi
 
@@ -2768,7 +2766,7 @@ check_vtunnel() {
 			uci set network.vtunnel=device
 			echo "set network.vtunnel.name='br-tun$tun_id'" | uci batch
 			uci set network.vtunnel.type='bridge'
-			echo "set network.vtunnel.ports='vxlan$tun_id'" | uci batch
+			echo "add_list network.vtunnel.ports='vxlan$tun_id'" | uci batch
 			uci set network.vtunlan=interface
 			echo "set network.vtunlan.device='br-tun$tun_id'" | uci batch
 			echo "set network.vtunlan.ipaddr='$vtun_ip'" | uci batch
@@ -4483,6 +4481,12 @@ elif [ "$1" = "hex_to_str" ]; then
 	hex_to_str "$2"
 	echo -n "$str"
 	exit 0
+
+elif [ "$1" = "is_ipv4addr_valid" ]; then
+	is_ipv4addr_valid "$2"
+	retval=$?
+	echo -n "$checkip"
+	exit $retval
 
 elif [ "$1" = "is_installed" ]; then
 	is_installed "$2"
