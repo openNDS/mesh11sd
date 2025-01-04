@@ -624,6 +624,7 @@ get_current_setup () {
 
 		syslogmessage="option vtun_path_cost [ $vtun_path_cost ]"
 		debugtype="info"
+		mute="$mutestate"
 		write_to_syslog
 
 	else
