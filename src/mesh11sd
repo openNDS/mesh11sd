@@ -492,10 +492,6 @@ get_current_setup () {
 			vtun_enable=0
 		fi
 
-		if [ "$portal_detect" -eq 2 ]; then
-			vtun_enable=0
-		fi
-
 		syslogmessage="option vtun_enable [ $vtun_enable ]"
 		debugtype="info"
 		mute="$mutestate"
@@ -617,10 +613,21 @@ get_current_setup () {
 		debugtype="info"
 		mute="$mutestate"
 		write_to_syslog
+
+		#####
+		vtun_path_cost=$(uci get mesh11sd.setup.vtun_path_cost 2> /dev/null)
+
+		if [ -z "$vtun_path_cost" ]; then
+			vtun_path_cost="10"
+		fi
+
+		syslogmessage="option vtun_path_cost [ $vtun_path_cost ]"
+		debugtype="info"
+		write_to_syslog
+
 	else
 		vtun_enable=0
 	fi
-
 
 	#####
 	mesh_gate_enable=$(uci get mesh11sd.setup.mesh_gate_enable 2> /dev/null)
@@ -997,7 +1004,6 @@ check_config_params() {
 	syslogmessage="option mesh_plink_timeout [ $mesh_plink_timeout ]"
 	debugtype="info"
 	write_to_syslog
-
 }
 
 get_mesh_path_cost () {
@@ -1275,11 +1281,6 @@ get_portal_state() {
 			fi
 		done
 
-	elif [ "$portal_detect" -eq 2 ]; then
-		# 2 - force peer mode
-		uci set dhcp.@dnsmasq[0].authoritative='0'
-		echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='4'" | uci batch
-
 	elif [ "$portal_detect" -eq 3 ]; then
 		# 3 - force CPE peer mode
 		uci set dhcp.@dnsmasq[0].authoritative='0'
@@ -1521,12 +1522,6 @@ check_portal() {
 
 		if [ -z "$is_portal" ]; then
 			# This IS NOT a layer 3 mesh portal
-
-			if [ "$portal_detect" -eq 2 ];then
-				uci set mesh11sd.mesh_params.mesh_connected_to_as='1'
-			else
-				uci set mesh11sd.mesh_params.mesh_connected_to_as='0'
-			fi
 
 			if [ "$detected_state" = "peer" ] && [ "$last_state" = "initial" ]; then
 				last_state="portal"
@@ -2483,55 +2478,59 @@ block_bridge_loops() {
 		nft add chain bridge mesh11s mesh_PRE { type filter hook prerouting priority -350\; }
 	fi
 
-	. $tmpdir/devicemac
-	local mac_changed=0
-	local br_iface
-	local br_ifaces=$(brctl showstp "$device" | grep -B 1 -w "port id" | grep "(" | awk '{printf "%s ", $1}')
+	local bridgelist=$(brctl show | awk 'NF==4 {printf "%s ", $1}')
 
-	if [ ! -e "$tmpdir/mesh11sd/brmac_la" ]; then
-		touch "$tmpdir/mesh11sd/brmac_la"
-	fi
+	for device in $bridgelist; do
+		local devicemac=$(ip link show dev "$device" | grep "link/ether" | awk '{printf "%s", $2}')
+		local mac_changed=0
+		local br_iface
+		local br_ifaces=$(brctl showstp "$device" | grep -B 1 -w "port id" | grep "(" | awk '{printf "%s ", $1}')
 
-	get_mesh_iflist
-
-	br_mac_list=""
-
-	for br_iface in $br_ifaces; do
-		rulecount=$(nft -a list table bridge mesh11s 2> /dev/null | grep -w -c "$br_iface" | awk '{printf "%s", $1}')
-
-		if [ "$rulecount" -lt 2 ]; then
-			rule_status=$(nft add rule bridge mesh11s mesh_PRE meta iifname { "\"$br_iface\"" } ether saddr "\"$devicemac\"" counter drop 2> /dev/null; echo -n $?)
-			rule_status=$(nft add rule bridge mesh11s mesh_PRE meta iifname { "\"$br_iface\"" } counter accept 2> /dev/null; echo -n $?)
+		if [ ! -e "$tmpdir/mesh11sd/brmac_la" ]; then
+			touch "$tmpdir/mesh11sd/brmac_la"
 		fi
 
-		convert_to_la "$devicemac"
-		is_meshif=$(echo "$iflist" | grep -q "$br_iface"; echo -n $?)
+		get_mesh_iflist
 
-		# If kernel version is 6 or higher we have to ensure there are no duplicate bridge interface mac addresses
-		# But it is safe to fix up mac addresses for kernel < 6 if we do it correctly:
-		macfixenable=6
+		br_mac_list=""
 
-		# macfixenable=$kmajor # uncomment to only fixup macs if kernel is version 6 or greater
+		for br_iface in $br_ifaces; do
+			rulecount=$(nft -a list table bridge mesh11s 2> /dev/null | grep -w -c "$br_iface" | awk '{printf "%s", $1}')
 
-		if [ "$macfixenable" -ge 6 ]; then
-			if [ $is_meshif -ne 0 ]; then
-				# This is not a mesh interface
-				local br_iface_mac=$(ip link | grep -A 1 "$br_iface" | grep "link/ether" | awk 'NR==1 {printf "%s", $2}')
-				is_same=$(echo "$br_mac_list" | grep -q "$br_iface_mac"; echo -n $?)
+			if [ "$rulecount" -lt 2 ]; then
+				rule_status=$(nft add rule bridge mesh11s mesh_PRE meta iifname { "\"$br_iface\"" } ether saddr "\"$devicemac\"" counter drop 2> /dev/null; echo -n $?)
+				rule_status=$(nft add rule bridge mesh11s mesh_PRE meta iifname { "\"$br_iface\"" } counter accept 2> /dev/null; echo -n $?)
+			fi
 
-				if [ "$is_same" -eq 0 ]; then
-					#This is a duplicate mac address so change it
-					index=$(($index + 1))
-					make_indexed_mac "$mac_la" "$index"
+			convert_to_la "$devicemac"
+			is_meshif=$(echo "$iflist" | grep -q "$br_iface"; echo -n $?)
 
-					ip link set $br_iface down; ip link set $br_iface up address $mac_indexed
-					mac_changed=1
-				else
-					#Not a duplicate so save it in the list
-					br_mac_list="$br_mac_list $br_iface_mac"
+			# If kernel version is 6 or higher we have to ensure there are no duplicate bridge interface mac addresses
+			# But it is safe to fix up mac addresses for kernel < 6 if we do it correctly:
+			macfixenable=6
+
+			# macfixenable=$kmajor # uncomment to only fixup macs if kernel is version 6 or greater
+
+			if [ "$macfixenable" -ge 6 ]; then
+				if [ $is_meshif -ne 0 ]; then
+					# This is not a mesh interface
+					local br_iface_mac=$(ip link | grep -A 1 "$br_iface" | grep "link/ether" | awk 'NR==1 {printf "%s", $2}')
+					is_same=$(echo "$br_mac_list" | grep -q "$br_iface_mac"; echo -n $?)
+
+					if [ "$is_same" -eq 0 ]; then
+						#This is a duplicate mac address so change it
+						index=$(($index + 1))
+						make_indexed_mac "$mac_la" "$index"
+
+						ip link set $br_iface down; ip link set $br_iface up address $mac_indexed
+						mac_changed=1
+					else
+						#Not a duplicate so save it in the list
+						br_mac_list="$br_mac_list $br_iface_mac"
+					fi
 				fi
 			fi
-		fi
+		done
 	done
 
 	check_rule_status
@@ -2819,6 +2818,22 @@ check_vtunnel() {
 			uci set firewall.vxlan_fwd.src='vtunlan'
 			uci set firewall.vxlan_fwd.dest='wan'
 
+			if [ "$portal_detect" -eq 4 ]; then
+				echo "set network.wan.disabled='1'" | uci batch
+				echo "set network.wan6.disabled='1'" | uci batch
+				wanif=$(uci get network.wan.device)
+				echo "add_list network.vtunnel.ports='$wanif'" | uci batch
+				echo "set network.vtunlan.proto='dhcp'" | uci batch
+				uci set firewall.vtunlan.forward='ACCEPT'
+			fi
+
+			if [ "$portal_detect" -eq 5 ]; then
+				echo "set network.wan.disabled='1'" | uci batch
+				echo "set network.wan6.disabled='1'" | uci batch
+				wanif=$(uci get network.wan.device)
+				echo "add_list network.vtunnel.ports='$wanif'" | uci batch
+			fi
+
 			vtunnel="configured"
 			/sbin/service firewall restart
 			/sbin/service network reload
@@ -2865,6 +2880,8 @@ check_vtunnel() {
 				vxifname=$(echo "get $vxif.ifname" | uci batch | awk '{printf "%s", $1}')
 				brctl addif "$device" "$vxifname"
 			done
+
+			set_iface_path_cost "$vtun_path_cost" "$device" "vxlan$tun_id"
 
 			. $tmpdir/devicemac
 		fi
@@ -3432,6 +3449,39 @@ ms_to_dt() {
 	date_time=$(echo ${date_time// /_})
 }
 
+set_iface_path_cost() {
+	local path_cost="$1"
+	local device="$2"
+	local iface="$3"
+
+	if [ "$path_cost" -gt 0 ] && [ "$path_cost" -lt 65535 ]; then
+	# Make sure STP is on
+		stpstatus=$(brctl show $device | grep "yes" | awk '{printf "%s", $3}')
+
+		if [ -z "$stpstatus" ] || [ "$stpstatus" != "yes" ]; then
+			brctl stp "$device" yes
+		fi
+
+		brctl setpathcost "$device" "$iface" "$path_cost"
+
+		br_ifaces=$(brctl showstp "$device" | grep -B 1 -w "port id" | grep "(" | awk '{printf "%s ", $1}')
+
+		for br_iface in $br_ifaces; do
+
+			if [ "$br_iface" = "$iface" ]; then
+				continue
+			fi
+
+			other_path_cost=$(( 65535 - $path_cost))
+			brctl setpathcost "$device" "$br_iface" "$other_path_cost"
+
+		done
+
+	elif [ "$path_cost" -eq 0 ]; then
+		brctl stp "$device" no
+	fi
+}
+
 ##############
 # Start point
 ##############
@@ -3744,6 +3794,7 @@ elif [ "$1" = "status" ]; then
 		echo "    \"vtun_mask\":\"$vtun_mask\","
 		echo "    \"vtun_gate_encryption\":\"$vtun_gate_encryption\","
 		echo "    \"vtun_base_ssid\":\"$vtun_base_ssid\","
+		echo "    \"vtun_path_cost\":\"$vtun_path_cost\","
 	fi
 
 
@@ -4987,35 +5038,8 @@ elif [ "$1" = "daemon" ]; then
 				mute=1
 				get_mesh_path_cost
 
-				if [ "$mesh_path_cost" -gt 0 ] && [ "$mesh_path_cost" -lt 65535 ]; then
-					# Make sure STP is on
-					stpstatus=$(brctl show $device | grep "yes" | awk '{printf "%s", $3}')
+				set_iface_path_cost "$mesh_path_cost" "$device" "$iface"
 
-					if [ -z "$stpstatus" ] || [ "$stpstatus" != "yes" ]; then
-						brctl stp "$device" yes
-					fi
-
-					brctl setpathcost "$device" "$iface" "$mesh_path_cost"
-
-					br_ifaces=$(brctl showstp "$device" | grep -B 1 -w "port id" | grep "(" | awk '{printf "%s ", $1}')
-
-					for br_iface in $br_ifaces; do
-
-						if [ "$br_iface" = "$iface" ]; then
-							continue
-						fi
-
-						other_path_cost=$(( 65535 - $mesh_path_cost))
-						brctl setpathcost "$device" "$br_iface" "$other_path_cost"
-
-					done
-				elif [ "$mesh_path_cost" -eq 0 ]; then
-					brctl stp "$device" no
-				fi
-
-				#Do NOT configure parameters found in wireless config
-				# so change the value of uciname before calling check_mesh_params.
-				#
 				#Override wireless config and/or set parameters to those found in mesh11sd config
 				uciname="mesh11sd.mesh_params"
 				check_mesh_params
