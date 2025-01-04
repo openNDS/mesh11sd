@@ -314,12 +314,13 @@ get_current_setup () {
 	write_to_syslog
 
 	#####
+	auto_mesh_network=$(uci get mesh11sd.setup.auto_mesh_network 2> /dev/null)
+
 	# Get the default lan mac address
 	auto_mesh_network=lan
 	refresh_bridgemac
 	. $tmpdir/devicemac
 
-	auto_mesh_network=$(uci get mesh11sd.setup.auto_mesh_network 2> /dev/null)
 
 	if [ -z "$auto_mesh_network" ]; then
 		auto_mesh_network="lan"
@@ -716,7 +717,7 @@ get_current_setup () {
 		reactive_path_stabilisation_threshold="10"
 	fi
 
-	syslogmessage="option mesh_path_stabilisation [ $mesh_path_stabilisation ]"
+	syslogmessage="option reactive_path_stabilisation_threshold [ $reactive_path_stabilisation_threshold ]"
 	debugtype="info"
 	mute="$mutestate"
 	write_to_syslog
