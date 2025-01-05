@@ -414,7 +414,7 @@ get_current_setup () {
 		mute="$mutestate"
 		write_to_syslog
 	else
-		syslogmessage="option mesh_gate_encryption must be 0 (none), 1 (sae, aka wpa3), 2 (sae-mixed, aka wpa2/wpa3), 3 (psk2, aka wpa2) or 4 (owe)"
+		syslogmessage="option mesh_gate_encryption must be 0 (none/owe_transition), 1 (sae, aka wpa3), 2 (sae-mixed, aka wpa2/wpa3), 3 (psk2, aka wpa2) or 4 (owe)"
 		debugtype="err"
 		mute="$mutestate"
 		write_to_syslog
@@ -570,7 +570,7 @@ get_current_setup () {
 			mute="$mutestate"
 			write_to_syslog
 		else
-			syslogmessage="option vtun_gate_encryption must be 0 (none), 1 (sae, aka wpa3), 2 (sae-mixed, aka wpa2/wpa3), 3 (psk2, aka wpa2) or 4 (owe)"
+			syslogmessage="option vtun_gate_encryption must be 0 (none/owe_transition), 1 (sae, aka wpa3), 2 (sae-mixed, aka wpa2/wpa3), 3 (psk2, aka wpa2) or 4 (owe)"
 			debugtype="err"
 			mute="$mutestate"
 			write_to_syslog
