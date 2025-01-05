@@ -609,6 +609,12 @@ get_current_setup () {
 			vtun_base_ssid="Guest"
 		fi
 
+		if [ "$ssid_suffix_enable" -eq 1 ]; then
+			maxlen=22
+		else
+			maxlen=30
+		fi
+
 		vtun_base_ssid=$(echo -n "$vtun_base_ssid" | tr -d " " | head -c "$maxlen")
 		syslogmessage="option vtun_base_ssid [ $vtun_base_ssid ]"
 		debugtype="info"
