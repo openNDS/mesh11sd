@@ -183,7 +183,7 @@ get_current_setup () {
 	#####
 	portal_detect=$(uci get mesh11sd.setup.portal_detect 2> /dev/null)
 
-	if [ -z "$portal_detect" ]; then
+	if [ -z "$portal_detect" ] || [ "$portal_detect" -eq 2 ]; then
 		portal_detect=1
 	fi
 
@@ -314,12 +314,13 @@ get_current_setup () {
 	write_to_syslog
 
 	#####
+	auto_mesh_network=$(uci get mesh11sd.setup.auto_mesh_network 2> /dev/null)
+
 	# Get the default lan mac address
 	auto_mesh_network=lan
 	refresh_bridgemac
 	. $tmpdir/devicemac
 
-	auto_mesh_network=$(uci get mesh11sd.setup.auto_mesh_network 2> /dev/null)
 
 	if [ -z "$auto_mesh_network" ]; then
 		auto_mesh_network="lan"
@@ -334,13 +335,13 @@ get_current_setup () {
 
 	# Block wan and wan6 as valid network zones for mesh unless portal_detect - 3 (CPE mode)
 
-	if [ "$portal_detect"  -ne 3 ]; then
+	if [ "$portal_detect" -ne 3 ]; then
 
 		if [ "$auto_mesh_network" = "wan" ] || [ "$auto_mesh_network" = "wan6" ]; then
 			auto_mesh_network="lan"
 		fi
 
-	elif [ "$portal_detect"  -eq 3 ] && [ "$auto_mesh_network" = "lan" ]; then
+	elif [ "$portal_detect" -eq 3 ] && [ "$auto_mesh_network" = "lan" ]; then
 		auto_mesh_network="wan"
 	fi
 
@@ -413,7 +414,7 @@ get_current_setup () {
 		mute="$mutestate"
 		write_to_syslog
 	else
-		syslogmessage="option mesh_gate_encryption must be 0 (none), 1 (sae, aka wpa3), 2 (sae-mixed, aka wpa2/wpa3), 3 (psk2, aka wpa2) or 4 (owe)"
+		syslogmessage="option mesh_gate_encryption must be 0 (none/owe_transition), 1 (sae, aka wpa3), 2 (sae-mixed, aka wpa2/wpa3), 3 (psk2, aka wpa2) or 4 (owe)"
 		debugtype="err"
 		mute="$mutestate"
 		write_to_syslog
@@ -492,10 +493,6 @@ get_current_setup () {
 			vtun_enable=0
 		fi
 
-		if [ "$portal_detect" -eq 2 ]; then
-			vtun_enable=0
-		fi
-
 		syslogmessage="option vtun_enable [ $vtun_enable ]"
 		debugtype="info"
 		mute="$mutestate"
@@ -524,12 +521,12 @@ get_current_setup () {
 		vtun_ip=$(uci get mesh11sd.setup.vtun_ip 2> /dev/null)
 
 		if [ -z "$vtun_ip" ]; then
-			vtun_ip="192.168.168.1"
+			vtun_ip=".1"
 		fi
 
 		is_ipv4addr_valid
 
-		if [ "$?" -gt 0 ]; then
+		if [ "$vtun_ip" != "$checkip" ]; then
 			vtun_ip="192.168.168.1"
 		fi
 
@@ -573,7 +570,7 @@ get_current_setup () {
 			mute="$mutestate"
 			write_to_syslog
 		else
-			syslogmessage="option vtun_gate_encryption must be 0 (none), 1 (sae, aka wpa3), 2 (sae-mixed, aka wpa2/wpa3), 3 (psk2, aka wpa2) or 4 (owe)"
+			syslogmessage="option vtun_gate_encryption must be 0 (none/owe_transition), 1 (sae, aka wpa3), 2 (sae-mixed, aka wpa2/wpa3), 3 (psk2, aka wpa2) or 4 (owe)"
 			debugtype="err"
 			mute="$mutestate"
 			write_to_syslog
@@ -612,15 +609,33 @@ get_current_setup () {
 			vtun_base_ssid="Guest"
 		fi
 
+		if [ "$ssid_suffix_enable" -eq 1 ]; then
+			maxlen=22
+		else
+			maxlen=30
+		fi
+
 		vtun_base_ssid=$(echo -n "$vtun_base_ssid" | tr -d " " | head -c "$maxlen")
 		syslogmessage="option vtun_base_ssid [ $vtun_base_ssid ]"
 		debugtype="info"
 		mute="$mutestate"
 		write_to_syslog
+
+		#####
+		vtun_path_cost=$(uci get mesh11sd.setup.vtun_path_cost 2> /dev/null)
+
+		if [ -z "$vtun_path_cost" ]; then
+			vtun_path_cost="10"
+		fi
+
+		syslogmessage="option vtun_path_cost [ $vtun_path_cost ]"
+		debugtype="info"
+		mute="$mutestate"
+		write_to_syslog
+
 	else
 		vtun_enable=0
 	fi
-
 
 	#####
 	mesh_gate_enable=$(uci get mesh11sd.setup.mesh_gate_enable 2> /dev/null)
@@ -709,7 +724,7 @@ get_current_setup () {
 		reactive_path_stabilisation_threshold="10"
 	fi
 
-	syslogmessage="option mesh_path_stabilisation [ $mesh_path_stabilisation ]"
+	syslogmessage="option reactive_path_stabilisation_threshold [ $reactive_path_stabilisation_threshold ]"
 	debugtype="info"
 	mute="$mutestate"
 	write_to_syslog
@@ -997,7 +1012,6 @@ check_config_params() {
 	syslogmessage="option mesh_plink_timeout [ $mesh_plink_timeout ]"
 	debugtype="info"
 	write_to_syslog
-
 }
 
 get_mesh_path_cost () {
@@ -1275,21 +1289,23 @@ get_portal_state() {
 			fi
 		done
 
-	elif [ "$portal_detect" -eq 2 ]; then
-		# 2 - force peer mode
-		uci set dhcp.@dnsmasq[0].authoritative='0'
-		echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='4'" | uci batch
-
 	elif [ "$portal_detect" -eq 3 ]; then
-		3 - force CPE peer mode
+		# 3 - force CPE peer mode
 		uci set dhcp.@dnsmasq[0].authoritative='0'
 
-	elif [ "$portal_detect" -eq 0 ]; then
-		# 0 - force portal mode
+	elif [ "$portal_detect" -eq 0 ] || [ "$portal_detect" -eq 4 ]; then
+		# 0 - force portal mode, 4 - force portal bridge mode
+
+		if [ "$portal_detect" -eq 0 ]; then
+			zone="wan"
+		elif [ "$portal_detect" -eq 4 ]; then
+			zone="lan"
+		fi
+
 		default_gw=$(ip route | grep "default via")
 
 		if [ -z "$default_gw" ]; then
-			dhcpdevice=$(uci get network.wan.device | awk '{printf "%s", $1}')
+			dhcpdevice=$(uci get network."$zone".device | awk '{printf "%s", $1}')
 			dhcp4_renew
 		fi
 
@@ -1515,12 +1531,6 @@ check_portal() {
 		if [ -z "$is_portal" ]; then
 			# This IS NOT a layer 3 mesh portal
 
-			if [ "$portal_detect" -eq 2 ];then
-				uci set mesh11sd.mesh_params.mesh_connected_to_as='1'
-			else
-				uci set mesh11sd.mesh_params.mesh_connected_to_as='0'
-			fi
-
 			if [ "$detected_state" = "peer" ] && [ "$last_state" = "initial" ]; then
 				last_state="portal"
 			fi
@@ -1539,7 +1549,7 @@ check_portal() {
 				ip route flush default
 				hostname=$(uci get system.@system[0].hostname 2>/dev/null)
 
-				uci set network.lan.proto='dhcp'
+				echo "set network.$auto_mesh_network.proto='dhcp'" | uci batch
 				set_ula_prefix "revert"
 				/sbin/service network reload
 				uci set dhcp.@dnsmasq[0].authoritative='0'
@@ -1609,7 +1619,7 @@ check_portal() {
 				syslogmessage="This meshnode is an upstream portal"
 				write_to_syslog
 
-				uci set network.lan.proto='static'
+				echo "set network.$auto_mesh_network.proto='static'" | uci batch
 				set_ula_prefix "set"
 				/sbin/service network reload
 
@@ -2476,55 +2486,59 @@ block_bridge_loops() {
 		nft add chain bridge mesh11s mesh_PRE { type filter hook prerouting priority -350\; }
 	fi
 
-	. $tmpdir/devicemac
-	local mac_changed=0
-	local br_iface
-	local br_ifaces=$(brctl showstp "$device" | grep -B 1 -w "port id" | grep "(" | awk '{printf "%s ", $1}')
+	local bridgelist=$(brctl show | awk 'NF==4 {printf "%s ", $1}')
 
-	if [ ! -e "$tmpdir/mesh11sd/brmac_la" ]; then
-		touch "$tmpdir/mesh11sd/brmac_la"
-	fi
+	for device in $bridgelist; do
+		local devicemac=$(ip link show dev "$device" | grep "link/ether" | awk '{printf "%s", $2}')
+		local mac_changed=0
+		local br_iface
+		local br_ifaces=$(brctl showstp "$device" | grep -B 1 -w "port id" | grep "(" | awk '{printf "%s ", $1}')
 
-	get_mesh_iflist
-
-	br_mac_list=""
-
-	for br_iface in $br_ifaces; do
-		rulecount=$(nft -a list table bridge mesh11s 2> /dev/null | grep -w -c "$br_iface" | awk '{printf "%s", $1}')
-
-		if [ "$rulecount" -lt 2 ]; then
-			rule_status=$(nft add rule bridge mesh11s mesh_PRE meta iifname { "\"$br_iface\"" } ether saddr "\"$devicemac\"" counter drop 2> /dev/null; echo -n $?)
-			rule_status=$(nft add rule bridge mesh11s mesh_PRE meta iifname { "\"$br_iface\"" } counter accept 2> /dev/null; echo -n $?)
+		if [ ! -e "$tmpdir/mesh11sd/brmac_la" ]; then
+			touch "$tmpdir/mesh11sd/brmac_la"
 		fi
 
-		convert_to_la "$devicemac"
-		is_meshif=$(echo "$iflist" | grep -q "$br_iface"; echo -n $?)
+		get_mesh_iflist
 
-		# If kernel version is 6 or higher we have to ensure there are no duplicate bridge interface mac addresses
-		# But it is safe to fix up mac addresses for kernel < 6 if we do it correctly:
-		macfixenable=6
+		br_mac_list=""
 
-		# macfixenable=$kmajor # uncomment to only fixup macs if kernel is version 6 or greater
+		for br_iface in $br_ifaces; do
+			rulecount=$(nft -a list table bridge mesh11s 2> /dev/null | grep -w -c "$br_iface" | awk '{printf "%s", $1}')
 
-		if [ "$macfixenable" -ge 6 ]; then
-			if [ $is_meshif -ne 0 ]; then
-				# This is not a mesh interface
-				local br_iface_mac=$(ip link | grep -A 1 "$br_iface" | grep "link/ether" | awk 'NR==1 {printf "%s", $2}')
-				is_same=$(echo "$br_mac_list" | grep -q "$br_iface_mac"; echo -n $?)
+			if [ "$rulecount" -lt 2 ]; then
+				rule_status=$(nft add rule bridge mesh11s mesh_PRE meta iifname { "\"$br_iface\"" } ether saddr "\"$devicemac\"" counter drop 2> /dev/null; echo -n $?)
+				rule_status=$(nft add rule bridge mesh11s mesh_PRE meta iifname { "\"$br_iface\"" } counter accept 2> /dev/null; echo -n $?)
+			fi
 
-				if [ "$is_same" -eq 0 ]; then
-					#This is a duplicate mac address so change it
-					index=$(($index + 1))
-					make_indexed_mac "$mac_la" "$index"
+			convert_to_la "$devicemac"
+			is_meshif=$(echo "$iflist" | grep -q "$br_iface"; echo -n $?)
 
-					ip link set $br_iface down; ip link set $br_iface up address $mac_indexed
-					mac_changed=1
-				else
-					#Not a duplicate so save it in the list
-					br_mac_list="$br_mac_list $br_iface_mac"
+			# If kernel version is 6 or higher we have to ensure there are no duplicate bridge interface mac addresses
+			# But it is safe to fix up mac addresses for kernel < 6 if we do it correctly:
+			macfixenable=6
+
+			# macfixenable=$kmajor # uncomment to only fixup macs if kernel is version 6 or greater
+
+			if [ "$macfixenable" -ge 6 ]; then
+				if [ $is_meshif -ne 0 ]; then
+					# This is not a mesh interface
+					local br_iface_mac=$(ip link | grep -A 1 "$br_iface" | grep "link/ether" | awk 'NR==1 {printf "%s", $2}')
+					is_same=$(echo "$br_mac_list" | grep -q "$br_iface_mac"; echo -n $?)
+
+					if [ "$is_same" -eq 0 ]; then
+						#This is a duplicate mac address so change it
+						index=$(($index + 1))
+						make_indexed_mac "$mac_la" "$index"
+
+						ip link set $br_iface down; ip link set $br_iface up address $mac_indexed
+						mac_changed=1
+					else
+						#Not a duplicate so save it in the list
+						br_mac_list="$br_mac_list $br_iface_mac"
+					fi
 				fi
 			fi
-		fi
+		done
 	done
 
 	check_rule_status
@@ -2750,17 +2764,16 @@ check_vtunnel() {
 			. $tmpdir/active_mesh_ifname
 			. $tmpdir/devicemac
 
-			if [ -z "$is_portal" ] || [ "$portal_detect" -gt 1 ]; then
-				proto="none"
-			else
+			if [ "$portal_detect" -eq 0 ] || [ "$portal_detect" -eq 4 ] || [ ! -z "$is_portal" ]; then
 				proto="static"
-
+			else
+				proto="none"
 			fi
 
 			uci set network.vtunnel=device
 			echo "set network.vtunnel.name='br-tun$tun_id'" | uci batch
 			uci set network.vtunnel.type='bridge'
-			echo "set network.vtunnel.ports='vxlan$tun_id'" | uci batch
+			echo "add_list network.vtunnel.ports='vxlan$tun_id'" | uci batch
 			uci set network.vtunlan=interface
 			echo "set network.vtunlan.device='br-tun$tun_id'" | uci batch
 			echo "set network.vtunlan.ipaddr='$vtun_ip'" | uci batch
@@ -2813,6 +2826,22 @@ check_vtunnel() {
 			uci set firewall.vxlan_fwd.src='vtunlan'
 			uci set firewall.vxlan_fwd.dest='wan'
 
+			if [ "$portal_detect" -eq 4 ]; then
+				echo "set network.wan.disabled='1'" | uci batch
+				echo "set network.wan6.disabled='1'" | uci batch
+				wanif=$(uci get network.wan.device)
+				echo "add_list network.vtunnel.ports='$wanif'" | uci batch
+				echo "set network.vtunlan.proto='dhcp'" | uci batch
+				uci set firewall.vtunlan.forward='ACCEPT'
+			fi
+
+			if [ "$portal_detect" -eq 5 ]; then
+				echo "set network.wan.disabled='1'" | uci batch
+				echo "set network.wan6.disabled='1'" | uci batch
+				wanif=$(uci get network.wan.device)
+				echo "add_list network.vtunnel.ports='$wanif'" | uci batch
+			fi
+
 			vtunnel="configured"
 			/sbin/service firewall restart
 			/sbin/service network reload
@@ -2836,16 +2865,17 @@ check_vtunnel() {
 		if [ "$ip_full" ] && [ "$vxlan" ]; then
 			device="br-tun$tun_id"
 
-			if [ "$portal_detect" -ne 2 ] && [ -z "$is_portal" ]; then
-				uci set dhcp.vtunlan.dhcpv4='disabled'
-				uci set dhcp.vtunlan.dhcpv6='disabled'
-				uci set dhcp.vtunlan.ra='disabled'
-				uci set dhcp.vtunlan.ignore='1'
-			else
+			if [ "$portal_detect" -eq 0 ] || [ "$portal_detect" -eq 4 ] || [ ! -z "$is_portal" ]; then
 				uci set dhcp.vtunlan.dhcpv4='server'
 				uci set dhcp.vtunlan.dhcpv6='server'
 				uci set dhcp.vtunlan.ra='server'
 				uci set dhcp.vtunlan.ignore='0'
+			else
+				uci set dhcp.vtunlan.dhcpv4='disabled'
+				uci set dhcp.vtunlan.dhcpv6='disabled'
+				uci set dhcp.vtunlan.ra='disabled'
+				uci set dhcp.vtunlan.ignore='1'
+
 			fi
 
 			echo 1 > /proc/sys/net/ipv4/conf/$device/proxy_arp
@@ -2858,6 +2888,8 @@ check_vtunnel() {
 				vxifname=$(echo "get $vxif.ifname" | uci batch | awk '{printf "%s", $1}')
 				brctl addif "$device" "$vxifname"
 			done
+
+			set_iface_path_cost "$vtun_path_cost" "$device" "vxlan$tun_id"
 
 			. $tmpdir/devicemac
 		fi
@@ -2922,45 +2954,47 @@ get_portal_ula() {
 }
 
 str_to_hex() {
-	echo -n "$1" | hexdump -v -e "\"%08x\"" > "$tmpdir/apmond/hexencoded"
+	local input="$1"
+	local i=0
+	local char=""
+	local hex=""
+	local hexstr=""
+	local inputlen=$((${#input}))
+
+	while true; do
+		char=${input:$i:1}
+
+		if [ -z "$char" ]; then
+			break
+		fi
+
+		hex=$(printf "%02x" "'$char")
+		hexstr="$hexstr$hex"
+		i=$((i+1))
+
+		if [ "$i" -ge "$inputlen" ]; then
+			break
+		fi
+	done
+
+	echo -n "$hexstr" > "$tmpdir/apmond/hexencoded"
 }
 
 hex_to_str() {
 	local input="$1"
-	maxwordsize=8
-	i=0
-	hexstr=""
-	inputlen=$((${#input}))
+	local i=0
+	local hex=""
+	local hexstr=""
+	local inputlen=$((${#input}))
 
 	while true; do
-		# get a word
-		word=${input:$i:$maxwordsize}
+		hex="\x${input:$i:2}"
+		hexstr="$hexstr$hex"
+		i=$((i+2))
 
-		if [ -z "$word" ]; then
+		if [ "$i" -ge "$inputlen" ]; then
 			break
 		fi
-
-		wordsize=$((${#word}))
-		j=2
-
-		while true; do
-			hexchar=${word:$((wordsize-$j)):2}
-
-			if [ -z "$hexchar" ]; then
-				break
-			fi
-
-			hexstr="$hexstr\x$hexchar"
-
-			j=$((j+2))
-
-			if [ "$j" -gt "$wordsize" ]; then
-				break
-			fi
-
-		done
-		# Increment the pointer
-		i=$((i+$maxwordsize))
 	done
 
 	str=$(printf "$hexstr")
@@ -3201,7 +3235,7 @@ send_ap_data() {
 	hexencoded=$(cat "$tmpdir/apmond/hexencoded")
 	hexencoded_len=$((${#hexencoded}))
 
-	if [ "$hexencoded_len" -eq 0 ]; then
+	if [ "$hexencoded_len" -le 10 ]; then
 		retcode=0
 		return 0
 	fi
@@ -3358,14 +3392,22 @@ set_led() {
 	led_action="$1"
 	leds=$(ls "/sys/class/leds")
 
-	for led in $leds; do
-		#initialise led
-		ledaction=$(cat "/sys/class/leds/$led/trigger" | awk -F "[" '{printf "%s", $2}' | awk -F "]" '{printf "%s", $1}')
+	#initialise leds
+	if [ "$led_action" = "init" ]; then
 
-		if [ "$ledaction" = "none" ] || [ "$ledaction" = "heartbeat" ]; then
-			echo "none" > "/sys/class/leds/$led/trigger"
-		fi
-	done
+		for led in $leds; do
+			ledaction=$(cat "/sys/class/leds/$led/trigger" | awk -F "[" '{printf "%s", $2}' | awk -F "]" '{printf "%s", $1}')
+
+			if [ "$ledaction" = "none" ] || [ "$ledaction" = "heartbeat" ]; then
+				echo "default-on" > "/sys/class/leds/$led/trigger"
+				sleep 1
+				echo "none" > "/sys/class/leds/$led/trigger"
+			fi
+		done
+
+		sleep 1
+	fi
+
 
 	if [ "$led_action" = "off" ] || [ "$led_action" = "none" ]; then
 		led_action="none"
@@ -3415,6 +3457,39 @@ ms_to_dt() {
 	date_time=$(echo ${date_time// /_})
 }
 
+set_iface_path_cost() {
+	local path_cost="$1"
+	local device="$2"
+	local iface="$3"
+
+	if [ "$path_cost" -gt 0 ] && [ "$path_cost" -lt 65535 ]; then
+	# Make sure STP is on
+		stpstatus=$(brctl show $device | grep "yes" | awk '{printf "%s", $3}')
+
+		if [ -z "$stpstatus" ] || [ "$stpstatus" != "yes" ]; then
+			brctl stp "$device" yes
+		fi
+
+		brctl setpathcost "$device" "$iface" "$path_cost"
+
+		br_ifaces=$(brctl showstp "$device" | grep -B 1 -w "port id" | grep "(" | awk '{printf "%s ", $1}')
+
+		for br_iface in $br_ifaces; do
+
+			if [ "$br_iface" = "$iface" ]; then
+				continue
+			fi
+
+			other_path_cost=$(( 65535 - $path_cost))
+			brctl setpathcost "$device" "$br_iface" "$other_path_cost"
+
+		done
+
+	elif [ "$path_cost" -eq 0 ]; then
+		brctl stp "$device" no
+	fi
+}
+
 ##############
 # Start point
 ##############
@@ -3452,6 +3527,15 @@ if [ -z "$1" ] || [ "$1" = "-h" ] || [ $1 = "--help" ] || [ $1 = "help" ]; then
 
   Option: disable
   Returns: \"0\" and exit code 0 if successful, exit code 1 if was already disabled
+
+  Option: auto_config
+  Connect a remote terminal session on a remote meshnode
+  Usage:
+    mesh11sd auto_config test | enable
+      Takes immediate effect, any current connection is likely to be lost, requiring re-connection on possibly a different ipv4 address 
+      test - turn on auto config test mode. A reboot will revert the auto configuration.
+      enable - configure auto config mode.
+    Valid only when auto_config is disabled (default)
 
   Option: status
   Returns: the mesh status in json format
@@ -3492,6 +3576,16 @@ if [ -z "$1" ] || [ "$1" = "-h" ] || [ $1 = "--help" ] || [ $1 = "help" ]; then
   Usage: mesh11sd commit_changes commit
     Commits changes to mesh_leechmode, txpower and rssi_threshold to non volatile configuration (make permanent)
 
+  Option: commit_all
+  Usage: mesh11sd commit_all commit
+    Writes all changes made by auto_config to configuration file
+    Active only when auto_config is enabled
+
+  Option: revert_all
+  Usage: mesh11sd revert_all revert
+    Reverts all changes made by commit_all
+    Active only when auto_config is enabled
+
   Option: force_ipv4_download
   Usage: mesh11sd force_ipv4_download
     Forces opkg to use ipv4 for its downloads
@@ -3508,6 +3602,40 @@ if [ -z "$1" ] || [ "$1" = "-h" ] || [ $1 = "--help" ] || [ $1 = "help" ]; then
   Usage: mesh11sd is_installed [packagename]
     Checks if \"packagename\" is installed
     Returns the installation status of the package and exit code 0 if installed
+
+  Option: get_portal_ula
+  Usage: mesh11sd get_portal_ula
+    Gets the portal unique local ipv6 address (ula)
+
+  Option: set_ula_prefix
+  Usage: mesh11sd set_ula_prefix [ ula_prefix ]
+    Overrides the default ula_prefix (must be valid format eg fdxx:xxxx:xxxx::/48)
+    Warning - for advanced users only
+
+  Option: str_to_hex
+  Usage: mesh11sd str_to_hex [access_point_data_string]
+    Run length hex encodes access_point_data from apmond format
+
+  Option: hex_to_str
+  Usage: mesh11sd hex_to_str [hex encoded_access_point_data_string]
+    Decode run length hex encoded access_point_data to apmond format
+
+  Option: write_node_data
+  Usage: mesh11sd write_node_data [node_id] [querystring]
+    Called from apmond cgi script. Writes node data received by web server
+
+  Option: send_ap_data
+  Usage: mesh11sd send_ap_data
+    Sends hex encoded apmon data to portal/apmond web server
+
+  Option: get_ap_data
+  Usage: mesh11sd get_ap_data
+    Get json format access point data for this node
+
+  Option: show_ap_data
+  Usage: mesh11sd show_ap_data [node_id | all]
+    Shows json format access point data for requested node | all nodes
+    Valid on portal/apmond node
 
   For further documentation, see: https://github.com/openNDS/mesh11sd#readme
 
@@ -3674,6 +3802,7 @@ elif [ "$1" = "status" ]; then
 		echo "    \"vtun_mask\":\"$vtun_mask\","
 		echo "    \"vtun_gate_encryption\":\"$vtun_gate_encryption\","
 		echo "    \"vtun_base_ssid\":\"$vtun_base_ssid\","
+		echo "    \"vtun_path_cost\":\"$vtun_path_cost\","
 	fi
 
 
@@ -4412,6 +4541,12 @@ elif [ "$1" = "hex_to_str" ]; then
 	echo -n "$str"
 	exit 0
 
+elif [ "$1" = "is_ipv4addr_valid" ]; then
+	is_ipv4addr_valid "$2"
+	retval=$?
+	echo -n "$checkip"
+	exit $retval
+
 elif [ "$1" = "is_installed" ]; then
 	is_installed "$2"
 
@@ -4517,6 +4652,7 @@ elif [ "$1" = "daemon" ]; then
 	syslogmessage="mesh11sd is in startup"
 	write_to_syslog
 
+	set_led init
 	set_led on
 
 	get_kernel_version
@@ -4588,7 +4724,7 @@ elif [ "$1" = "daemon" ]; then
 			done
 
 			newipaddr="192.168.$cpipsubnet.1"
-			echo "set network.lan.ipaddr='$newipaddr'" | uci batch
+			echo "set network.$auto_mesh_network.ipaddr='$newipaddr'" | uci batch
 		fi
 
 
@@ -4910,35 +5046,8 @@ elif [ "$1" = "daemon" ]; then
 				mute=1
 				get_mesh_path_cost
 
-				if [ "$mesh_path_cost" -gt 0 ] && [ "$mesh_path_cost" -lt 65535 ]; then
-					# Make sure STP is on
-					stpstatus=$(brctl show $device | grep "yes" | awk '{printf "%s", $3}')
+				set_iface_path_cost "$mesh_path_cost" "$device" "$iface"
 
-					if [ -z "$stpstatus" ] || [ "$stpstatus" != "yes" ]; then
-						brctl stp "$device" yes
-					fi
-
-					brctl setpathcost "$device" "$iface" "$mesh_path_cost"
-
-					br_ifaces=$(brctl showstp "$device" | grep -B 1 -w "port id" | grep "(" | awk '{printf "%s ", $1}')
-
-					for br_iface in $br_ifaces; do
-
-						if [ "$br_iface" = "$iface" ]; then
-							continue
-						fi
-
-						other_path_cost=$(( 65535 - $mesh_path_cost))
-						brctl setpathcost "$device" "$br_iface" "$other_path_cost"
-
-					done
-				elif [ "$mesh_path_cost" -eq 0 ]; then
-					brctl stp "$device" no
-				fi
-
-				#Do NOT configure parameters found in wireless config
-				# so change the value of uciname before calling check_mesh_params.
-				#
 				#Override wireless config and/or set parameters to those found in mesh11sd config
 				uciname="mesh11sd.mesh_params"
 				check_mesh_params
@@ -4947,11 +5056,11 @@ elif [ "$1" = "daemon" ]; then
 
 			if [ "$auto_config" -eq 1 ] || [ -e "$tmpdir/auto_config_test" ]; then
 
-				if [ "$portal_detect" -ge 1 ]; then
+				if [ "$portal_detect" -ge 1 ] && [ "$portal_detect" -lt 4 ]; then
 					check_portal
 
-				elif [ "$portal_detect" -eq 0 ]; then
-					# portal_detect is not enabled - force portal mode:
+				elif [ "$portal_detect" -eq 0 ] || [ "$portal_detect" -eq 4 ]; then
+					# portal_detect is not enabled - 0 force portal mode, 4 force portal bridge mode:
 					authoritative=$(uci get dhcp.@dnsmasq[0].authoritative 2>/dev/null | awk '{printf "%d", $1}')
 
 					if [ -z "$authoritative" ]; then
@@ -4961,20 +5070,35 @@ elif [ "$1" = "daemon" ]; then
 					uci set mesh11sd.mesh_params.mesh_connected_to_as='1'
 
 					if [ -z "$authoritative" ] || [ "$authoritative" -eq 0 ]; then
-						debugtype="notice"
-						syslogmessage="Portal detection is disabled, forcing portal mode"
-						write_to_syslog
 
-						if [ -f "/var/run/udhcpc-$device.pid" ]; then
-							kill $(cat /var/run/udhcpc-$device.pid)
+						if [ "$portal_detect" -eq 0 ]; then
+							debugtype="notice"
+							syslogmessage="Portal detection is disabled, forcing portal mode"
+							write_to_syslog
+
+							if [ -f "/var/run/udhcpc-$device.pid" ]; then
+								kill $(cat /var/run/udhcpc-$device.pid)
+							fi
+
+							echo "set dhcp.$auto_mesh_network.dhcpv4='server'" | uci batch
+							echo "set dhcp.$auto_mesh_network.dhcpv6='server'" | uci batch
+							echo "set dhcp.$auto_mesh_network.ignore='0'" | uci batch
+							restore_ipv4
+
+						elif [ "$portal_detect" -eq 4 ]; then
+							debugtype="notice"
+							syslogmessage="Portal detection is disabled, forcing portal bridge mode"
+							write_to_syslog
+							echo "set dhcp.$auto_mesh_network.dhcpv4='disabled'" | uci batch
+							echo "set dhcp.$auto_mesh_network.dhcpv6='disabled'" | uci batch
+							echo "set dhcp.$auto_mesh_network.ignore='1'" | uci batch
+							echo "set network.$auto_mesh_network.proto='dhcp'" | uci batch
+							set_ula_prefix "set"
+							/sbin/service network reload
 						fi
 
-						restore_ipv4
-
 						uci set dhcp.@dnsmasq[0].authoritative='1'
-						echo "set dhcp.$auto_mesh_network.ignore='0'" | uci batch
 						echo "set dhcp.$auto_mesh_network.ra_default='2'" | uci batch
-						echo "set dhcp.$auto_mesh_network.dhcpv6='server'" | uci batch
 						echo "set dhcp.$auto_mesh_network.ra='server'" | uci batch
 						uci set dhcp.@dnsmasq[0].logfacility='-'
 						uci set dhcp.@dnsmasq[0].quietdhcp='1'
