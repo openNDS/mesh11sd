@@ -4781,6 +4781,12 @@ elif [ "$1" = "daemon" ]; then
 
 		fi
 
+		br_tun=$(brctl show | grep br-tun | awk '{printf "%s", $1}')
+
+		if [ ! -z "$br_tun" ]; then
+			ip link delete dev "$br_tun"
+		fi
+
 		/sbin/service network reload
 		/sbin/service dnsmasq restart
 		/sbin/service firewall restart
