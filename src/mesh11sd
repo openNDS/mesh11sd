@@ -3608,9 +3608,10 @@ if [ -z "$1" ] || [ "$1" = "-h" ] || [ $1 = "--help" ] || [ $1 = "help" ]; then
     Gets the portal unique local ipv6 address (ula)
 
   Option: set_ula_prefix
-  Usage: mesh11sd set_ula_prefix [ ula_prefix ]
-    Overrides the default ula_prefix (must be valid format eg fdxx:xxxx:xxxx::/48)
-    Warning - for advanced users only
+  Usage: mesh11sd set_ula_prefix [get|set|revert]
+    get - gets the current ula prefix
+    set - sets the ula prefix for the mesh backhaul based on the mesh id
+    revert - reverts a previously set ula prefix
 
   Option: str_to_hex
   Usage: mesh11sd str_to_hex [access_point_data_string]
