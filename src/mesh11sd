@@ -3529,7 +3529,7 @@ if [ -z "$1" ] || [ "$1" = "-h" ] || [ $1 = "--help" ] || [ $1 = "help" ]; then
   Returns: \"0\" and exit code 0 if successful, exit code 1 if was already disabled
 
   Option: auto_config
-  Connect a remote terminal session on a remote meshnode
+  Configure auto config mode
   Usage:
     mesh11sd auto_config test | enable
       Takes immediate effect, any current connection is likely to be lost, requiring re-connection on possibly a different ipv4 address 
