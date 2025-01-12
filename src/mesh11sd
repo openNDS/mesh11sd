@@ -3529,7 +3529,7 @@ if [ -z "$1" ] || [ "$1" = "-h" ] || [ $1 = "--help" ] || [ $1 = "help" ]; then
   Returns: \"0\" and exit code 0 if successful, exit code 1 if was already disabled
 
   Option: auto_config
-  Connect a remote terminal session on a remote meshnode
+  Configure auto config mode
   Usage:
     mesh11sd auto_config test | enable
       Takes immediate effect, any current connection is likely to be lost, requiring re-connection on possibly a different ipv4 address 
@@ -3608,9 +3608,10 @@ if [ -z "$1" ] || [ "$1" = "-h" ] || [ $1 = "--help" ] || [ $1 = "help" ]; then
     Gets the portal unique local ipv6 address (ula)
 
   Option: set_ula_prefix
-  Usage: mesh11sd set_ula_prefix [ ula_prefix ]
-    Overrides the default ula_prefix (must be valid format eg fdxx:xxxx:xxxx::/48)
-    Warning - for advanced users only
+  Usage: mesh11sd set_ula_prefix [get|set|revert]
+    get - gets the current ula prefix
+    set - sets the ula prefix for the mesh backhaul based on the mesh id
+    revert - reverts a previously set ula prefix
 
   Option: str_to_hex
   Usage: mesh11sd str_to_hex [access_point_data_string]
@@ -4779,6 +4780,12 @@ elif [ "$1" = "daemon" ]; then
 			echo "set network.wan6.hostname='meshnode-$suffix'" | uci batch
 
 
+		fi
+
+		br_tun=$(brctl show | grep br-tun | awk '{printf "%s", $1}')
+
+		if [ ! -z "$br_tun" ]; then
+			ip link delete dev "$br_tun"
 		fi
 
 		/sbin/service network reload
