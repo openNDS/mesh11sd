@@ -12,130 +12,87 @@
 
 **What is a Mesh?**
 
-
 A mesh network is a multi point to multi point layer 2 mac-routing backhaul used to interconnect mesh peers. Mesh peers are generally non-user devices, such as routers, access points, CPEs etc..
 
 A normal user device, such as a phone, tablet, laptop etc., cannot connect to a mesh network. Instead, connection is achieved via a mesh gateway, a special type of mesh peer.
 
-**WARNING Are you sure you want a mesh?**
+**Are you sure you want a mesh?**
 
-If you are looking for a solution to enable your user devices to seamlessly roam from one access point to another in your home, YOU ARE NOT LOOKING FOR A MESH.
+A mesh has nothing to do with a solution to enable your user devices to seamlessly roam from one access point to another. If this is what you want, **YOU ARE NOT LOOKING FOR A MESH**.
 
-It is unfortunate that some manufacturers have used the word “Mesh” for marketing purposes to describe their non-standard, closed source, proprietary “roaming” functionality and this causes great confusion to many people when they enter the world of international standards and open source firmware for their network infrastructure.
+*It is unfortunate that some manufacturers have used the word “Mesh” for marketing purposes to describe their non-standard, closed source, proprietary “roaming” functionality and this causes great confusion to many people when they enter the world of international standards and open source firmware for their network infrastructure.*
 
     The accepted standard for mesh networks is ieee802.11s.
     The accepted standard for fast roaming of user devices is ieee802.11r.
 
-These are two completely unrelated standards.
+***These are two completely unrelated standards.***
 
 ## 3. Major Features:
  1. Auto configuration of 802.11s mesh backhaul
- 2. Optional Customer/Client Premises Mode (CPE)
- 3. Default support for Opportunistic Wireless Encryption (OWE), with OWE Transition.
- 4. Optional multi point to multi point vxlan group support, enabling "guest" networking over mesh backhaul.
+ 2. Optional Bridge Portal mode supporting VLAN trunking over the mesh backhaul.
+ 3. Optional Trunk Peer Mode providing ethernet downstream VLAN support.
+ 4. Optional Customer/Client Premises Mode (CPE)
+ 5. Default support for Opportunistic Wireless Encryption (OWE), with OWE Transition.
+ 6. Optional portal node to multi point peer group, enabling "guest" networking over mesh backhaul without the need for setting up a VLAN.
+
+## 4. Getting Started:
+To get started, you will need at least two mesh capable devices to use as meshnodes.
+
+Reflash the first one of these with the standard OpenWrt image and allow it to boot up making sure it is connected to your upstream Internet feed **using its wan port** and that you get Internet access when connected to (one of) its lan ports.
+
+**Note**: The OpenWrt default is for all wireless interfaces to be disabled. You do not have to enable them here as the mesh11sd daemon will do it for you.
+
+**Note**: If you cannot get Internet access you may need to change the ipv4 subnet of either this meshnode or your isp router.
+
+You are now ready to install mesh11sd and its supporting packages. None of these support packages are essential, but without them there will be much reduced functionality in the resulting mesh network. For example, the mesh backhaul will NOT be encrypted.
+
+Log in to a terminal session on the meshnode using ssh.
+Using the normal OpenWrt method (opkg or apk), update the repository databases (``opkg update`` or ``apk update``).
+
+Now do the following:
+
+ 1. Remove the wpad-basic-mbedtls package.
+ 2. Install the wpad-mbedtls package.
+ 3. Install the ip-full package.
+ 4. Install the kmod-nft-bridge package.
+ 5. Install the vxlan package
+ 6. Install the uhttpd and px5g-mbedtls packages (may already be installed along with the LuCi UI).
+ 7. Finally - Install the mesh11sd package.
+
+The mesh11sd daemon should now be running in a "safe" state (aka "manual mode").
+
+To continue we now need to activate the new wpad daemon we installed at point 2 above.
+
+Use the command:
 
 
-## 4. Manual or Auto Configuration:
+``service wpad restart``
 
-The default mode after install is "manual configuration".
+Before activating the mesh11sd daemon, there are a few important considerations to bare in mind.
 
-***Manual (default) - If you have not done any manual mesh configuration, mesh11sd will do nothing and wait in the background for you to do so.***
-
-***Auto - You can quickly and simply enable auto config mode:***
-
-Switching on Auto Configuration is a simple task and is recommended if you are starting from a basic OpenWrt reflash.
-
-**WARNING: If you have done ANY mesh configuration manually, you might cause a soft-brick condition.**
-
-**Pre-configuring before enabling auto_config is for advanced users only. Make sure you know what you are doing!**
-
-**If the mesh network interface is defined in the wireless configuration file, mesh11sd will attempt to use it, but be warned, this may have very unpredictable results and is not normally recommended.**
-
-First, make sure your freshly flashed router (with mesh11sd installed) is connected to your upstream Internet feed using its wan port and that you get Internet access when connected to (one of) its lan ports.
-
-Now, execute the following commands:
-
-```
-  service mesh11sd stop
-  uci set mesh11sd.setup.auto_config='1'
-  uci commit mesh11sd
-  service mesh11sd start; logread -f
-```
-You will now see the syslog as mesh11sd starts up (you can press ctrl/c to stop the syslog output).
-
-It checks for a mesh capable wireless driver, a mesh capable wpad package and the presence of nftables bridge support.
-
-If a suitable version of wpad is installed (eg wpad-mesh-mbedtls), mesh11sd adds options to the wireless configuration to bring up 802.11s mesh interfaces, if they are not already present.
-
-**Note**: Mesh11sd uses the uci utility to manage dynamic configuration changes, both autoconfig and run time.
-
-**Note**: Autoconfiguration is done on every startup and is not a one off process.
-
-In normal operation, config changes are not written to the config files in /etc/config but are kept in volatile storage by way of the uci utility.
-
-**Note**: Directly editing a config file might possibly break something, all changes should be done with the uci utility.
-
-**Note**: The OpenWrt Luci web interface does not support mesh11sd configuration and will probably not even show its effects. This is normal.
+ 1. Mesh11sd uses the uci utility to manage dynamic configuration changes, moreover autoconfiguration is done on every startup and is not a one off process.
+ 2. In normal operation, configuration changes are not written to the config files in /etc/config but are kept in volatile storage by way of the uci utility.
+ 3. Directly editing a config file will very likely break something, all changes should be done with the uci utility.
+ 4. The OpenWrt Luci web interface does not support mesh11sd configuration and will probably not even show its effects. To this end, Luci is by default disabled by the mesh11sd daemon. Advanced users can re-enable it later if required (See the mesh11sd command line (CLI) reference later in this document).
 
 
-**Meshnode Types:**
+## 5. Meshnode Types:
 
-The mesh can have four types of meshnodes.
+The mesh can have numerous types of meshnodes.
 
   1. **Peer Node** - the basic mesh peer - capable of mac-routing layer 2 packets in the mesh network.
   2. **Gateway Node** - a peer node that also hosts an access point (AP) radio for normal client devices to connect to. Also known as a gate. A gate can also function as a CPE (Customer [or Client] Premises Equipment), hosting a downstream layer 3 network with its own unique ipv4 subnet.
   3. **Gateway Leech Node** - a special type of Gateway Node that connects to the mesh backhaul but neither contributes to it nor advertises itself on it.
   4. **Portal Node** - a peer node that also hosts a layer 3 routed upstream connection (eg an Internet feed)
+  5. **CPE Gateway Node**
+  6. **Portal Bridge Node**
+  7. **Trunk Node**
 
-It is possible for a Portal node to also be a Gateway node (ie it hosts an AP as well as an upstream connection.
+It is possible for a Portal node to also be a Gateway node (ie it hosts an AP as well as an upstream connection) as well as other combinations.
 
 **Auto Channel Tracking:**
 
 All Peer and Gateway nodes will track the wireless channel that the Portal node is using. If the Portal node changes its working channel, this will be detected and tracked autonomously by downstream meshnodes.
-
-## 5. Installation
-
-It is assumed that the additional dependencies for encrypted mesh and opportunistic wireless encryption (owe) are pre-installed, ie:
-
-    Remove - wpad-basic-mbedtls (or wpad-basic or wpad-basic-wolfssl)
-
-    Install - wpad-mbedtls
-         or - wpad-wolfssl
-         or - wpad-openssl
-
-If the meshnode device is severely resource limited, support for owe can be dropped by instead installing the size reduced wpad versions, ie:
-
-    Install - wpad-mesh-mbedtls
-         or - wpad-mesh-wolfssl
-         or - wpad-mesh-openssl
-
-For support of non-mesh segments of backhaul and prevention of bridge loop storms, install the package:
-
-		 kmod-nft-bridge
-
-If this package is not installed, mesh11sd will issue warnings but still function. Omitting this package is not recommended unless node resources are severely restricted.
-
-Installation is achieved in the usual way for OpenWrt, either using the Luci UI, or the opkg command line utility.
-
-**Note**: The OpenWrt Luci web interface does not support mesh11sd configuration and will probably not even show its effects. This is normal.
-
-Example:
-```
-    opkg update
-    opkg install mesh11sd
-```
-
-## 6. Configuration
-Mesh11sd supports two types of configuration, automatic and manual.
-
-**Manual Configuration (default)**
-
-The default after installation is manual configuration mode. If left in manual mode, all the mesh interface configurations must be done manually in the traditional way using the normal OpenWrt tools. In manual mode, mesh11sd will pick up existing mesh interface configuration from the wireless configuration file and then manage mesh parameter values as required.
-If no mesh configuration is found, mesh11sd will do nothing and wait for a configuration to appear.
-
-**Automatic Configuration**
-
-Once auto_config is enabled, the mesh11sd package will autoconfigure mesh interfaces for all radios, leaving only one enabled at ant time.
 
 The default radio will be on 2.4 GHz but can be changed by means of a simple config option.
 
@@ -897,6 +854,15 @@ Mesh11sd is an OpenWrt service daemon and runs continuously in the background. I
         Option: disable
           Returns: "0" and exit code 0 if successful, exit code 1 if was already disabled
 
+        Option: auto_config
+          Configure auto config mode
+          Usage:
+            mesh11sd auto_config test | enable
+              Takes immediate effect, any current connection is likely to be lost, requiring re-connection on possibly a different ipv4 address
+              test - turn on auto config test mode. A reboot will revert the auto configuration.
+              enable - configure auto config mode.
+            Valid only when auto_config is disabled (default)
+
         Option: status
           Returns: the mesh status in json format
 
@@ -937,30 +903,85 @@ Mesh11sd is an OpenWrt service daemon and runs continuously in the background. I
           Usage: mesh11sd commit_changes
           Commits changes to mesh_leechmode, txpower and rssi_threshold to non volatile configuration (make permanent)
 
-        Option: opkg_force_ipv4
-          Usage: mesh11sd opkg_force_ipv4
+        Option: commit_all
+          Usage: mesh11sd commit_all commit
+          Writes all changes made by auto_config to configuration file
+          Active only when auto_config is enabled
+
+        Option: revert_all
+          Usage: mesh11sd revert_all revert
+          Reverts all changes made by commit_all
+          Active only when auto_config is enabled
+
+        Option: force_ipv4_download
+          Usage: mesh11sd force_ipv4_download
           Forces opkg to use ipv4 for its downloads
 
-        Option: opkg_revert_to_default
-          Usage: mesh11sd opkg_revert_to_default
+        Option: download_revert_to_default
+          Usage: mesh11sd download_revert_to_default
           Reverts opkg to default for its downloads
 
         Option: dhcp4_renew
           Usage: mesh11sd dhcp4_renew
           Renews the current dhcp4 lease
 
+       Option: is_installed
+         Usage: mesh11sd is_installed [packagename]
+         Checks if \"packagename\" is installed
+         Returns the installation status of the package and exit code 0 if installed
+
+       Option: get_portal_ula
+         Usage: mesh11sd get_portal_ula
+         Gets the portal unique local ipv6 address (ula)
+
+       Option: set_ula_prefix
+         Usage: mesh11sd set_ula_prefix [get|set|revert]
+         get - gets the current ula prefix
+         set - sets the ula prefix for the mesh backhaul based on the mesh id
+         revert - reverts a previously set ula prefix
+
+       Option: str_to_hex
+         Usage: mesh11sd str_to_hex [access_point_data_string]
+         Run length hex encodes access_point_data from apmond format
+
+       Option: hex_to_str
+         Usage: mesh11sd hex_to_str [hex encoded_access_point_data_string]
+         Decode run length hex encoded access_point_data to apmond format
+
+       Option: write_node_data
+         Usage: mesh11sd write_node_data [node_id] [querystring]
+         Called from apmond cgi script. Writes node data received by web server
+
+       Option: send_ap_data
+         Usage: mesh11sd send_ap_data
+         Sends hex encoded apmon data to portal/apmond web server
+
+       Option: get_ap_data
+         Usage: mesh11sd get_ap_data
+         Get json format access point data for this node
+
+       Option: show_ap_data
+         Usage: mesh11sd show_ap_data [node_id | all]
+         Shows json format access point data for requested node | all nodes
+         Valid on portal/apmond node
+
 **Example status output:**
 
 ```
 {
   "setup":{
-    "version":"4.0.0",
+    "version":"5.0.0",
     "enabled":"1",
     "procd_status":"running",
     "portal_detect":"1",
-    "portal_detect_threshold":"0",
+    "portal_detect_threshold":"10",
     "portal_channel":"default",
     "channel_tracking_checkinterval":"30",
+    "mesh_mac_forced_forwarding":"1",
+    "gateway_proxy_arp":"1",
+    "reboot_on_error":"1",
+    "stop_on_error":"0",
+    "watchdog_nonvolatile_log":"0",
     "mesh_basename":"m-11s-",
     "auto_config":"1",
     "auto_mesh_network":"lan",
@@ -968,20 +989,31 @@ Mesh11sd is an OpenWrt service daemon and runs continuously in the background. I
     "auto_mesh_id":"92d490daf46cfe534c56ddd669297e",
     "mesh_gate_enable":"1",
     "mesh_leechmode_enable":"0",
-    "mesh_gate_encryption":"3",
+    "mesh_gate_encryption":"0",
+    "mesh_backhaul_led":"auto",
+    "vtun_enable":"1",
+    "tun_id":"69",
+    "vtun_ip":"192.168.168.1",
+    "vtun_mask":"255.255.255.0",
+    "vtun_gate_encryption":"0",
+    "vtun_base_ssid":"Guest",
+    "vtun_path_cost":"10",
     "txpower":"20",
     "mesh_path_cost":"10",
     "mesh_path_stabilisation":"1",
+    "reactive_path_stabilisation_threshold":"10",
     "checkinterval":"10",
     "interface_timeout":"10",
     "ssid_suffix_enable":"1",
+    "apmond_enable":"1",
+    "apmond_cgi_dir":"/www/cgi-bin/",
     "debuglevel":"3"
-  }
-  "interfaces":{
+  },
+  "mesh_interfaces":{
     "m-11s-0":{
-      "mesh_retry_timeout":"100",
-      "mesh_confirm_timeout":"100",
-      "mesh_holding_timeout":"100",
+      "mesh_retry_timeout":"255",
+      "mesh_confirm_timeout":"255",
+      "mesh_holding_timeout":"255",
       "mesh_max_peer_links":"16",
       "mesh_max_retries":"3",
       "mesh_ttl":"31",
@@ -1004,43 +1036,97 @@ Mesh11sd is an OpenWrt service daemon and runs continuously in the background. I
       "mesh_hwmp_confirmation_interval":"2000",
       "mesh_power_mode":"active",
       "mesh_awake_window":"10",
-      "mesh_plink_timeout":"0",
+      "mesh_plink_timeout":"10",
       "mesh_connected_to_gate":"1",
       "mesh_nolearn":"0",
       "mesh_connected_to_as":"1",
       "mesh_id":"92d490daf46cfe534c56ddd669297e",
       "device":"radio0",
       "channel":"1",
-      "tx_packets":"1659061",
-      "tx_bytes":"2097020097",
-      "rx_packets":"960176",
-      "rx_bytes":"107095864",
-      "this_node":"94:83:c4:08:14:83",
+      "tx_packets":"1545600",
+      "tx_bytes":"1963833436",
+      "rx_packets":"1341979",
+      "rx_bytes":"179684310",
+      "this_node":"94:83:c4:a2:8e:cb",
       "active_peers":"2",
       "peers":{
-        "94:83:c4:29:f5:a4":{
-          "next_hop":"e4:95:6e:44:60:2e"
-          "hop_count":"2"
-          "path_change_count":"3"
-          "metric":"623"
+        "96:83:c4:30:12:8d":{
+          "next_hop":"96:83:c4:30:12:8d",
+          "hop_count":"1",
+          "path_change_count":"1",
+          "metric":"50"
         },
-        "e4:95:6e:44:60:2e":{
-          "next_hop":"e4:95:6e:44:60:2e"
-          "hop_count":"1"
-          "path_change_count":"1"
-          "metric":"255"
+        "96:83:c4:24:1a:a5":{
+          "next_hop":"96:83:c4:24:1a:a5",
+          "hop_count":"1",
+          "path_change_count":"5",
+          "metric":"1051"
         }
-      }
-      "active_stations":"1",
+      },
+      "active_stations":"3",
       "stations":{
-        "ea:7f:79:4d:96:55":{
-          "proxy_node":"94:83:c4:08:14:83"
+        "ce:fe:af:7f:3b:e1":{
+          "proxy_node":"94:83:c4:a2:8e:cb"
+        },
+        "94:83:c4:30:12:8d":{
+          "proxy_node":"96:83:c4:30:12:8d"
+        },
+        "94:83:c4:24:1a:a5":{
+          "proxy_node":"96:83:c4:24:1a:a5"
         }
       }
+    }
+  },
+  "layer2_connections":{
+    "br-lan":{
+      "94:83:c4:24:1a:a5":"m-11s-0",
+      "94:83:c4:30:12:8d":"m-11s-0",
+      "96:83:c4:24:1a:a5":"m-11s-0",
+      "00:e0:4c:68:08:a2":"lan3"
+    },
+    "br-tun69":{
+      "ce:fe:af:7f:3b:e1":"owe2-0",
+      "96:83:c4:2d:1a:a5":"vxlan69"
     }
   }
 }
 
+```
+
+**Example of using "show_ap_data all" on a portal node:**
+
+```
+root@meshnode-8ecb:~# mesh11sd show_ap_data all
+{
+  "Guest-2g-128d@owe2-0@94:83:c4:30:12:8d":{
+    "ba:54:32:31:32:bb":{
+      "rx_bytes":"41924",
+      "tx_bytes":"140877",
+      "tx_retries":"205",
+      "signal_avg":"-72_[-74,_-76]_dBm",
+      "tx_bitrate":"39.0_MBit/s_MCS_4",
+      "rx_bitrate":"13.0_MBit/s_MCS_1",
+      "connected_time":"14_seconds",
+      "timestamp":"1736663326462_ms",
+      "date_time":"Sun_Jan_12_06:28:46_UTC_2025"
+    }
+  },
+  "Guest-2g-8ecb@owe2-0@94:83:c4:a2:8e:cb":{
+    "ce:fe:af:7f:3b:e1":{
+      "rx_bytes":"522776",
+      "tx_bytes":"2831390",
+      "tx_retries":"449",
+      "signal_avg":"-22_[-28,_-23,_-33,_-29]_dBm",
+      "tx_bitrate":"6.0_MBit/s",
+      "rx_bitrate":"65.0_MBit/s_MCS_7",
+      "avg_ack_signal":"-21_dBm",
+      "connected_time":"5836_seconds",
+      "timestamp":"1736671236495_ms",
+      "date_time":"Sun_Jan_12_08:40:36_GMT_2025"
+    }
+  }
+}
+root@meshnode-8ecb:~#
 ```
 
 **Example of using copy and connect:**
