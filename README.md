@@ -1,12 +1,12 @@
 ## 1. The mesh11sd project
 
-  Mesh11sd is a dynamic parameter configuration daemon for 802.11s mesh networks.
+  Mesh11sd is a dynamic management and parameter configuration daemon for 802.11s mesh networks.
 
   It was originally designed to leverage 802.11s mesh networking at Captive Portal venues.
 
   This is the open source version and it enables easy and automated mesh network operation with multiple mesh nodes.
 
-  This version does not require a Captive Portal to be running.
+  It has a comprehensive CLI based API allowing it to be integrated into typical Captive Portal operations but does not require a Captive Portal to be running.
 
 ## 2. Overview
 
@@ -14,7 +14,7 @@
 
 A mesh network is a multi point to multi point layer 2 mac-routing backhaul used to interconnect mesh peers. Mesh peers are generally non-user devices, such as routers, access points, CPEs etc..
 
-A normal user device, such as a phone, tablet, laptop etc., cannot connect to a mesh network. Instead, connection is achieved via a mesh gateway, a special type of mesh peer.
+A normally configured user device, such as a phone, tablet, laptop etc., cannot connect to a mesh network. Instead, connection is achieved via a mesh gateway, a special type of mesh peer.
 
 **Are you sure you want a mesh?**
 
@@ -68,45 +68,16 @@ Use the command:
 
 ``service wpad restart``
 
-Before activating the mesh11sd daemon, there are a few important considerations to bare in mind.
+## 5. Important Considerations
+
+Before activating the mesh11sd service daemon, there are a few important considerations to bare in mind.
 
  1. Mesh11sd uses the uci utility to manage dynamic configuration changes, moreover autoconfiguration is done on every startup and is not a one off process.
  2. In normal operation, configuration changes are not written to the config files in /etc/config but are kept in volatile storage by way of the uci utility.
  3. Directly editing a config file will very likely break something, all changes should be done with the uci utility.
  4. The OpenWrt Luci web interface does not support mesh11sd configuration and will probably not even show its effects. To this end, Luci is by default disabled by the mesh11sd daemon. Advanced users can re-enable it later if required (See the mesh11sd command line (CLI) reference later in this document).
 
-
-## 5. Meshnode Types:
-
-The mesh can have numerous types of meshnodes.
-
-  1. **Peer Node** - the basic mesh peer - capable of mac-routing layer 2 packets in the mesh network.
-  2. **Gateway Node** - a peer node that also hosts an access point (AP) radio for normal client devices to connect to. Also known as a gate. A gate can also function as a CPE (Customer [or Client] Premises Equipment), hosting a downstream layer 3 network with its own unique ipv4 subnet.
-  3. **Gateway Leech Node** - a special type of Gateway Node that connects to the mesh backhaul but neither contributes to it nor advertises itself on it.
-  4. **Portal Node** - a peer node that also hosts a layer 3 routed upstream connection (eg an Internet feed)
-  5. **CPE Gateway Node**
-  6. **Portal Bridge Node**
-  7. **Trunk Node**
-
-It is possible for a Portal node to also be a Gateway node (ie it hosts an AP as well as an upstream connection) as well as other combinations.
-
-**Auto Channel Tracking:**
-
-All Peer and Gateway nodes will track the wireless channel that the Portal node is using. If the Portal node changes its working channel, this will be detected and tracked autonomously by downstream meshnodes.
-
-The default radio will be on 2.4 GHz but can be changed by means of a simple config option.
-
-2.4 GHz is chosen as it gives the most reliable mesh backhaul due to the range and penetration of the 2.4 GHz spectrum and the fact that it is not effected by the DFS restrictions of other bands. It can also be used unlicensed almost everywhere in outdoor venues. This comes of course with a likely bandwidth compromise, but in practice is often acceptable, particularly in a normal domestic or public environment.
-
-Mesh11sd will add required wireless mesh configuration autonomously and it can be viewed using the uci utility but will not be present in the /etc/config/wireless file.
-
-If the mesh network interface is defined in the wireless configuration file, mesh11sd will attempt to use it, but be warned, this may have very unpredictable results and is not normally recommended.
-
-**NOTE:** ***Mesh11sd cannot be configured using the OpenWrt Luci UI, and its configuration will not appear in the Luci wireless pages, even when mesh11sd is active.***
-
-**NOTE:** It is essential that all meshnodes are configured to use the same radio channel, the same key and the same mesh_id. By default, Mesh11sd will do this for you.
-
-###Autoconfig Essentials
+## 6. Autoconfig Essentials
 
 ***Note: Use the same configuration for all nodes, including the base ipv4 address.***
 
@@ -189,11 +160,40 @@ The node can now be moved to the desired location and the next one configured.
 
 Power up all nodes in any order, having one only connected to your isp router as the portal node.
 
-### Default configuration file (/etc/config/mesh11sd):
+
+## 7. Meshnode Types:
+
+The mesh can have numerous types of meshnodes.
+
+  1. **Peer Node** - the basic mesh peer - capable of mac-routing layer 2 packets in the mesh network.
+  2. **Gateway Node** - a peer node that also hosts an access point (AP) radio for normal client devices to connect to. Also known as a gate. A gate can also function as a CPE (Customer [or Client] Premises Equipment), hosting a downstream layer 3 network with its own unique ipv4 subnet.
+  3. **Gateway Leech Node** - a special type of Gateway Node that connects to the mesh backhaul but neither contributes to it nor advertises itself on it.
+  4. **Portal Node** - a peer node that also hosts a layer 3 routed upstream connection (eg an Internet feed)
+  5. **CPE Gateway Node**
+  6. **Portal Bridge Node**
+  7. **Trunk Node**
+
+It is possible for a Portal node to also be a Gateway node (ie it hosts an AP as well as an upstream connection) as well as other combinations.
+
+## 8. Auto Channel Tracking:
+
+All Peer and Gateway nodes will track the wireless channel that the Portal node is using. If the Portal node changes its working channel, this will be detected and tracked autonomously by downstream meshnodes.
+
+The default radio will be on 2.4 GHz but can be changed by means of a simple config option.
+
+2.4 GHz is chosen as it gives the most reliable mesh backhaul due to the range and penetration of the 2.4 GHz spectrum and the fact that it is not effected by the DFS restrictions of other bands. It can also be used unlicensed almost everywhere in outdoor venues. This comes of course with a likely bandwidth compromise, but in practice is often acceptable, particularly in a normal domestic or public environment.
+
+Mesh11sd will add required wireless mesh configuration autonomously and it can be viewed using the uci utility but will not be present in the /etc/config/wireless file.
+
+If the mesh network interface is defined in the wireless configuration file, mesh11sd will attempt to use it, but be warned, this may have very unpredictable results and is not normally recommended.
+
+**NOTE:** ***Mesh11sd cannot be configured using the OpenWrt Luci UI, and its configuration will not appear in the Luci wireless pages, even when mesh11sd is active.***
+
+**NOTE:** It is essential that all meshnodes are configured to use the same radio channel, the same key and the same mesh_id. By default, Mesh11sd will do this for you.
+
+## 9. Default configuration file (/etc/config/mesh11sd):
 
 ```
-
-
 config mesh11sd 'setup'
 	###########################################################################################
 	# debuglevel (optional)
@@ -357,6 +357,17 @@ config mesh11sd 'setup'
 	# regardless of the configured auto_mesh_band
 	#
 	#option auto_mesh_band '5g'
+
+	###########################################################################################
+	# country (optional)
+	#
+	# Set a valid country code for all radios
+	# Defaults to DFS-ETSI if not explicitly set in wireless config
+	#
+	# If set here, will overide any setting in wireless config
+	#
+	# Example set to country code US:
+	#option country 'US'
 
 	###########################################################################################
 	# auto_mesh_key (optional)
@@ -698,7 +709,7 @@ This means that all meshnodes can be the same basic router configuration and onc
 Access to the remote meshnode peers will not be possible using the default ipv4 address as this will be disabled. Remote management can be achieved by using the `mesh11sd connect` and `mesh11sd copy` commands, or alternatively by reconnecting the wan port to an upstream feed.
 
 
-## 7. Setup Options
+## 10. Setup Options
 * enabled - 0=disabled, 1=enabled. Default 1
 
 * debuglevel - 0=silent, 1=notice, 2=info, 3=debug. Default 1
@@ -753,7 +764,7 @@ Changes can be made permanent with the following command:
 
         uci commit mesh11sd
 
-## 8. Mesh Parameter Options
+## 11. Mesh Parameter Options
 
 
 Mesh parameters can be changed only while the mesh is active.
@@ -833,7 +844,7 @@ RANN - Root ANNouncement
 RSSI - Received Signal Strength Indication
 
 
-## 9. Command Line Interface
+## 12. Command Line Interface
 Mesh11sd is an OpenWrt service daemon and runs continuously in the background. It does however also have a CLI interface:
 
       Usage: mesh11sd [option] [argument...]]
@@ -1183,14 +1194,11 @@ Disconnected from meshnode "94-83-c4-08-14-83"
 
 root@meshnode-c525:~#
 
-
-
 ```
 
 ***Connect to the selected node and check the file was transferred:***
 
 ```
-
 root@meshnode-c525:~# mesh11sd connect 94-83-c4-08-14-83
 ===========================================================================
  Connect a remote terminal session on a remote meshnode
@@ -1242,9 +1250,4 @@ drwxr-xr-x    2 root     root            80 Jan  1  1970 sysinfo/
 drwxr-xr-x    2 root     root            40 Jan 19 18:54 tmp/
 drwxr-xr-x    3 root     root            60 Jan 19 18:54 usr/
 root@meshnode-1483:~#
-
-root@meshnode-1483:~#
-
-
-
 ```
