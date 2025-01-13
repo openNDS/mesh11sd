@@ -300,6 +300,16 @@ get_current_setup () {
 	write_to_syslog
 
 	#####
+	country=$(uci get mesh11sd.setup.country 2> /dev/null)
+
+	if [ ! -z "$country" ]; then
+		syslogmessage="option country [ $country ]"
+		debugtype="info"
+		mute="$mutestate"
+		write_to_syslog
+	fi
+
+	#####
 	auto_mesh_key=$(uci get mesh11sd.setup.auto_mesh_key 2> /dev/null | awk '{printf "%s", $1}')
 
 	if [ -z "$auto_mesh_key" ]; then
@@ -2050,9 +2060,9 @@ auto_config() {
 					echo "set wireless.radio$phyindex.disabled='0'" | uci batch
 					echo "set wireless.radio$phyindex.log_level='0'" | uci batch
 
-					country=$(uci get wireless.radio$phyindex.country 2> /dev/null | awk '{printf "%s", $1}')
+					ucicountry=$(uci get wireless.radio$phyindex.country 2> /dev/null | awk '{printf "%s", $1}')
 
-					if [ -z "$country" ]; then
+					if [ -z "$country" ] && [ -z "$ucicountry" ]; then
 						echo "set wireless.radio$phyindex.country='$dfs_etsi'" | uci batch
 						syslogmessage="WARNING - country code not set - interoperability with other mesh nodes may be compromised or fail altogether...."
 						debugtype="warn"
@@ -2063,6 +2073,9 @@ auto_config() {
 						country="$dfs_etsi"
 					fi
 
+					if [ ! -z "$country" ]; then
+						echo "set wireless.radio$phyindex.country='$country'" | uci batch
+					fi
 
 					band=$(uci get wireless.radio$phyindex.band 2> /dev/null | awk '{printf "%s", $1}')
 
