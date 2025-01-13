@@ -164,6 +164,17 @@ config mesh11sd 'setup'
 	#option auto_mesh_band '5g'
 
 	###########################################################################################
+	# country (optional)
+	#
+	# Set a valid country code for all radios
+	# Defaults to DFS-ETSI if not explicitly set in wireless config
+	#
+	# If set here, will overide any setting in wireless config
+	#
+	# Example set to country code US:
+	#option country 'US'
+
+	###########################################################################################
 	# auto_mesh_key (optional)
 	#
 	# Defaults to a sha256 key to be automatically used on all members of this mesh when auto_config is enabled
