@@ -484,7 +484,6 @@ get_current_setup () {
 	mute="$mutestate"
 	write_to_syslog
 
-
 	####
 	# vxlan configs
 	package_list="ip-full vxlan"
@@ -534,7 +533,7 @@ get_current_setup () {
 			vtun_ip=".1"
 		fi
 
-		is_ipv4addr_valid
+		is_ipv4addr_valid "$vtun_ip"
 
 		if [ "$vtun_ip" != "$checkip" ]; then
 			vtun_ip="192.168.168.1"
@@ -552,7 +551,7 @@ get_current_setup () {
 			vtun_mask="255.255.255.0"
 		fi
 
-		is_ipv4mask_valid
+		is_ipv4mask_valid "$vtun_mask"
 
 		if [ "$?" -gt 0 ]; then
 			vtun_mask="255.255.255.0"
@@ -4257,7 +4256,6 @@ elif [ "$1" = "mesh_leechmode" ]; then
 	echo "==========================================================================="
 	echo
 	exit 0
-
 
 elif [ "$1" = "commit_changes" ]; then
 
