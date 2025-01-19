@@ -205,6 +205,18 @@ get_current_setup () {
 	write_to_syslog
 
 	#####
+	portal_use_default_ipv4=$(uci get mesh11sd.setup.portal_use_default_ipv4 2> /dev/null)
+
+	if [ -z "$portal_use_default_ipv4" ]; then
+		portal_use_default_ipv4="0"
+	fi
+
+	syslogmessage="option portal_use_default_ipv4 [ $portal_use_default_ipv4 ]"
+	debugtype="info"
+	mute="$mutestate"
+	write_to_syslog
+
+	#####
 	channel_tracking_checkinterval=$(uci get mesh11sd.setup.channel_tracking_checkinterval 2> /dev/null)
 
 	if [ -z "$channel_tracking_checkinterval" ]; then
@@ -528,15 +540,23 @@ get_current_setup () {
 
 		#####
 		vtun_ip=$(uci get mesh11sd.setup.vtun_ip 2> /dev/null)
+		vtun_ip_net=$(uci get network.vtunlan.ipaddr 2> /dev/null)
 
-		if [ -z "$vtun_ip" ]; then
-			vtun_ip=".1"
-		fi
+		if [ -z "$vtun_ip_net" ] && [ -z "$vtun_ip" ]; then
 
-		is_ipv4addr_valid "$vtun_ip"
+			if [ -z "$vtun_ip" ]; then
+				vtun_ip=".1"
+			fi
 
-		if [ "$vtun_ip" != "$checkip" ]; then
-			vtun_ip="192.168.168.1"
+			is_ipv4addr_valid "$vtun_ip"
+
+			if [ -z "$checkip" ]; then
+				generate_ipv4_base "$auto_mesh_key"
+				vtun_ip="$newipaddr"
+			fi
+
+		elif [ -z "$vtun_ip" ]; then
+			vtun_ip="$vtun_ip_net"
 		fi
 
 		syslogmessage="option vtun_ip [ $vtun_ip ]"
@@ -2123,7 +2143,7 @@ auto_config() {
 							if [ "$portal_channel" = "auto" ] && [ "$band" = "2g" ]; then
 
 								for i in $(seq 9 1 64); do
-									#choose start point of sequence away from end eg "9"
+									#Generate a channel, choosing start point of sequence away from end eg "9"
 									chan=$((0x$(printf "$devicemac" | sha256sum | awk '{printf "%s", $1}' | tail -c$i | head -c1)))
 
 									#Check for max
@@ -3502,6 +3522,50 @@ set_iface_path_cost() {
 	fi
 }
 
+generate_ipv4_base() {
+	local seed="$1"
+
+	for i in $(seq 9 1 64); do
+		#choose start point of sequence away from end eg "9"
+		cpipsubnet=$((0x$(printf "$seed" | sha256sum | awk '{printf "%s", $1}' | tail -c$i | head -c2)))
+
+		#Check for max
+		if [ $cpipsubnet -ge 255 ];then
+			continue
+		fi
+
+		#Skip 168, 167, 1, 0
+		skiplist="168 167 8 1 0"
+
+		for skip in $skiplist; do
+
+			if [ $cpipsubnet -eq $skip ];then
+				cpipsubnet=0
+				break
+			fi
+		done
+
+		if [ $cpipsubnet -eq 0 ];then
+			continue
+		fi
+
+		newipaddr="192.168.$cpipsubnet.1"
+
+		# is newipaddr configured elsewhere?
+		is_used=$(uci show network | grep -c "$newipaddr")
+
+		if [ "$is_used" -gt 0 ]; then
+			continue
+		fi
+
+		break
+	done
+
+	syslogmessage="Validated ipv4 address [ $newipaddr ] using seed value [ $seed ]"
+	debugtype="debug"
+	write_to_syslog
+}
+
 ##############
 # Start point
 ##############
@@ -3787,6 +3851,7 @@ elif [ "$1" = "status" ]; then
 	echo "    \"portal_detect\":\"$portal_detect\","
 	echo "    \"portal_detect_threshold\":\"$portal_detect_threshold\","
 	echo "    \"portal_channel\":\"$portal_channel\","
+	echo "    \"portal_use_default_ipv4\":\"$portal_use_default_ipv4\","
 	echo "    \"channel_tracking_checkinterval\":\"$channel_tracking_checkinterval\","
 	echo "    \"mesh_mac_forced_forwarding\":\"$mesh_mac_forced_forwarding\","
 	echo "    \"gateway_proxy_arp\":\"$gateway_proxy_arp\","
@@ -4664,6 +4729,7 @@ elif [ "$1" = "daemon" ]; then
 	syslogmessage="mesh11sd is in startup"
 	write_to_syslog
 
+	/sbin/service network reload
 	set_led init
 	set_led on
 
@@ -4710,32 +4776,18 @@ elif [ "$1" = "daemon" ]; then
 			done
 		fi
 
-		# Check the configured ipv4 address and change it if left at default of 192.168.1.1
-		# For now, only check in CPE mode.
-		# Possibly make this active for portal devices (via config option?)
-		setipaddr=$(uci get network.lan.ipaddr)
+		if [ "$portal_use_default_ipv4" -eq 0 ]; then
 
-		if [ "$setipaddr"  = "192.168.1.1" ] && [ "$portal_detect" -eq 3 ]; then
-			. $tmpdir/devicemac
+			if [ "$portal_detect" -eq 3 ]; then
+				# Set the cpe gateway ipv4 address based in mac address
+				. $tmpdir/devicemac
 
-			for i in $(seq 9 1 64); do
-				#choose start point of sequence away from end eg "9"
-				cpipsubnet=$((0x$(printf "$devicemac" | sha256sum | awk '{printf "%s", $1}' | tail -c$i | head -c2)))
+				seedvalue="$devicemac"
+			else
+				seedvalue="$auto_mesh_id"
+			fi
 
-				#Check for max
-				if [ $cpipsubnet -ge 255 ];then
-					continue
-				fi
-
-				#Skip 168, 167, 0
-				if [ $cpipsubnet -eq 168 ] || [ $cpipsubnet -eq 167 ] || [ $cpipsubnet -eq 0 ];then
-					continue
-				fi
-
-				break
-			done
-
-			newipaddr="192.168.$cpipsubnet.1"
+			generate_ipv4_base "$seedvalue"
 			echo "set network.$auto_mesh_network.ipaddr='$newipaddr'" | uci batch
 		fi
 
