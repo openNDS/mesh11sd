@@ -1998,7 +1998,10 @@ auto_config() {
 	syslogmessage="Entering auto config...."
 	write_to_syslog
 	autoconfig=0
-	dfs_etsi="GB"
+
+	# Set the default region to DFS-ETSI (safer than DFS-UNSET for a mesh)
+	# Code EU is not recognised in current OpenWrt releases, so use first alphabetically valid code ie Andorra
+	dfs_etsi="AD"
 	meshifenabled=0
 
 	# Are we using ath10k drivers?
