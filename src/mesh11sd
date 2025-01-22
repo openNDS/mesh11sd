@@ -2086,10 +2086,10 @@ auto_config() {
 
 					if [ -z "$country" ] && [ -z "$ucicountry" ]; then
 						echo "set wireless.radio$phyindex.country='$dfs_etsi'" | uci batch
-						syslogmessage="WARNING - country code not set - interoperability with other mesh nodes may be compromised or fail altogether...."
+						syslogmessage="WARNING - country code - interoperability with other mesh nodes would be compromised or fail altogether if not set, so setting to safe default...."
 						debugtype="warn"
 						write_to_syslog
-						syslogmessage="WARNING - country code defaulting to [ DFS-ETSI ]...."
+						syslogmessage="Country code defaulting to [ DFS-ETSI ]...."
 						debugtype="warn"
 						write_to_syslog
 						country="$dfs_etsi"
