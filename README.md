@@ -72,24 +72,31 @@ Use the command:
 
 Before activating the mesh11sd service daemon, there are a few important considerations to bare in mind.
 
- 1. Mesh11sd uses the uci utility to manage dynamic configuration changes, moreover autoconfiguration is done on every startup and is not a one off process.
- 2. In normal operation, configuration changes are not written to the config files in /etc/config but are kept in volatile storage by way of the uci utility.
- 3. Directly editing a config file will very likely break something, all changes should be done with the uci utility.
- 4. The OpenWrt Luci web interface does not support mesh11sd configuration and will probably not even show its effects. To this end, Luci is by default disabled by the mesh11sd daemon. Advanced users can re-enable it later if required (See the mesh11sd command line (CLI) reference later in this document).
+ 1. **Mesh11sd uses the uci utility** to manage dynamic configuration changes, moreover autoconfiguration is done on every startup and is not a one off process.
+ 2. In normal operation, **configuration changes are not written to the config files in /etc/config** but are kept in volatile storage by way of the uci utility.
+ 3. **Directly editing a config file will very likely break something**, all manual changes should be done with the uci utility and then only by expert users.
+ 4. The OpenWrt Luci web interface does not support mesh11sd configuration and will probably not even show its effects. To this end, **Luci is by default disabled by the mesh11sd daemon.** Advanced users can re-enable it later if required (See the mesh11sd command line (CLI) reference later in this document).
 
 ## 6. Autoconfig Essentials
 
-***Note: Use the same configuration for all nodes, including the base ipv4 address.***
+We are now ready to start the mesh on our first meshnode and will do so in the mesh11sd safe test mode. If all is well we will commit mesh11sd to auto config on every restart.
 
-By simply enabling auto_config, mesh11sd will bring up a working meshnode, but there are several essentials that should be configured as the defaults may not be appropriate.
+We can then move on to configuring the other meshnodes in the same way before placing them in their required locations.
+
+We will do this by making a temporary connection for each node in turn to an upstream Internet connection, connecting its "wan" port to a "lan" port of your isp router.
+
+
+***Note: Use the same configuration for all nodes, INCLUDING the base ipv4 address (see later).***
+
+By simply enabling auto_config, mesh11sd will attempt to bring up a working meshnode, but there are several essentials that should be configured as the defaults may not be appropriate.
+In the worst case this can result in a soft brick condition.
+To prevent this, mesh11sd provides an auto config test command.
 
  1. The country code default setting is DFS-ETSI as it is the "safest", but of course you are legally obliged to set the country code for your locality.
  2. Set the base ipv4 address of the meshnode, defining the subnet to be used on the mesh.
  3. Mesh11sd sets a hashed meshID and meshKey to encrypt the mesh backhaul, but you should set your own seed values to be used, to ensure only your meshnodes can join your mesh. This must be the same on every meshnode.
  4. You should set a WiFi access code and if desired, your own ssid on each gateway node.
 
-
-Before proceeding to set these essentials, you must first connect each node in turn to an upstream Internet connection, connecting its "wan" port to a "lan" port of your isp router.
 
 Connect your computer by ethernet to a "lan" port of the meshnode you are configuring.
 
