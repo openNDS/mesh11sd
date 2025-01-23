@@ -413,7 +413,7 @@ get_current_setup () {
 	installed_wpad=$?
 
 	if [ "$installed_wpad" -gt 0 ]; then
-		package_list="wpad-mesh-mbedtls wpad-mesh-wolfssl wpad-mesh-openssl"
+		package_list="wpad-mesh-mbedtls wpad-mesh-wolfssl wpad-mesh-openssl wpad-mbedtls wpad-wolfssl wpad-openssl"
 		check_package_list
 		installed_mesh_wpad=$?
 
@@ -2245,6 +2245,7 @@ auto_config() {
 					fi
 
 					for ap in $aplist; do
+
 						radio=$(uci get "$ap.device" 2> /dev/null)
 						. "$tmpdir/radios/$radio"
 
@@ -2262,6 +2263,18 @@ auto_config() {
 
 				fi
 
+				if [ "$mesh_gate_encryption" -gt 0 ] && [ "$mesh_gate_encryption" -lt 4 ]; then
+
+					for ap in $aplist; do
+
+						radio=$(uci get "$ap.device" 2> /dev/null)
+						. "$tmpdir/radios/$radio"
+
+						echo "set $ap.encryption='$encryption_type'" | uci batch
+						echo "set $ap.key='$mesh_gate_key'" | uci batch
+					done
+
+				fi
 
 				debugtype="debug"
 				syslogmessage="auto config complete...."
