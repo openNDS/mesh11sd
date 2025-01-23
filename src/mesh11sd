@@ -3610,11 +3610,11 @@ if [ -z "$1" ] || [ "$1" = "-h" ] || [ $1 = "--help" ] || [ $1 = "help" ]; then
   Option: auto_config
   Configure auto config mode
   Usage:
-    mesh11sd auto_config test | enable
+    mesh11sd auto_config test | enable | disable
       Takes immediate effect, any current connection is likely to be lost, requiring re-connection on possibly a different ipv4 address 
       test - turn on auto config test mode. A reboot will revert the auto configuration.
-      enable - configure auto config mode.
-    Valid only when auto_config is disabled (default)
+      enable - enable auto config mode.
+      disable - disable auto config mode.
 
   Option: status
   Returns: the mesh status in json format
@@ -3770,12 +3770,23 @@ elif [ "$1" = "auto_config" ]; then
 		echo "Usage:"
 		echo "mesh11sd auto_config test - turn on auto config test mode "
 		echo "mesh11sd auto_config enable - configure auto config mode "
+		echo "mesh11sd auto_config disable - disable auto config mode "
 		echo
 		exit 1
 	fi
 
-	if [ "$auto_config" -eq 1 ];  then
-		echo "auto_config is already configured"
+	if [ "$auto_config" -eq 1 ] && [ "$2" = "test" ];  then
+		echo "auto_config is already enabled"
+		exit 0
+	fi
+
+	if [ "$auto_config" -eq 1 ] && [ "$2" = "enable" ];  then
+		echo "auto_config is already enabled"
+		exit 0
+	fi
+
+	if [ "$auto_config" -eq 0 ] && [ "$2" = "disable" ];  then
+		echo "auto_config is already disabled"
 		exit 0
 	fi
 
@@ -3823,6 +3834,30 @@ elif [ "$1" = "auto_config" ]; then
 
 			uci revert mesh11sd
 			uci set mesh11sd.setup.auto_config='1'
+			uci commit mesh11sd
+
+			for change in $changes; do
+				echo "set $change" | uci batch
+			done
+		fi
+
+	elif [ "$2" = "disable" ]; then
+		echo
+		echo "This will disable and stop autoconfiguration."
+		echo "You must restart the device for this to take effect."
+		echo
+		echo "    Do you want to continue? [yes/no] "
+		echo
+
+		read reply
+
+		if [ "$reply" = "yes" ]; then
+			rm "$tmpdir/auto_config_test 2> /dev/null"
+			changes=$(uci changes mesh11sd)
+			changelist=$(echo "$changes" | awk '{printf "%s ", $1}')
+
+			uci revert mesh11sd
+			uci set mesh11sd.setup.auto_config='0'
 			uci commit mesh11sd
 
 			for change in $changes; do
