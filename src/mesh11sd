@@ -3483,9 +3483,13 @@ set_led() {
 	for led in $leds; do
 		last_param=$(echo "$led" | awk -F":" '{printf "%s", $NF}')
 
-		if [ "$last_param" = "power" ] || [ "$last_param" = "system" ] || [ "$last_param" = "status" ] || [ "$last_param" = "run" ]; then
+		if [ "$last_param" = "power" ] || [ "$last_param" = "pwr" ] || [ "$last_param" = "system" ] || [ "$last_param" = "status" ] || [ "$last_param" = "run" ]; then
 			echo "$led_action" > "/sys/class/leds/$led/trigger"
 			break
+		elif [ "$led" = "green-2" ] || [ "$led" = "pwr" ] || [ "$led" = "system" ] || [ "$led" = "status" ] || [ "$led" = "run" ]; then
+			echo "$led_action" > "/sys/class/leds/$led/trigger"
+			break
+
 		fi
 	done
 }
