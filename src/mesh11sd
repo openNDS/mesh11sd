@@ -2227,7 +2227,17 @@ auto_config() {
 					*) encryption_type="none";;
 				esac
 
-				if [ "$encryption_type" = "owe" ] || [ "$encryption_type" = "none" ]; then
+				#Configure vxradio encryption
+				case $vtun_gate_encryption in
+					0) vx_encryption_type="none";;
+					1) vx_encryption_type="sae";;
+					2) vx_encryption_type="sae-mixed+aes";;
+					3) vx_encryption_type="psk2+aes";;
+					4) vx_encryption_type="owe";;
+					*) vx_encryption_type="none";;
+				esac
+
+				if [ "$encryption_type" = "owe" ] || [ "$encryption_type" = "none" ] || [ "$vx_encryption_type" = "owe" ] || [ "$vx_encryption_type" = "none" ]; then
 
 					if [ "$wpad_mbedtls" -eq 0 ] || [ "$wpad_wolfssl" -eq 0 ] || [ "$wpad_openssl" -eq 0 ]; then
 
@@ -2238,43 +2248,40 @@ auto_config() {
 						write_to_syslog
 					else
 						encryption_type="none"
+						vx_encryption_type="none"
 						owe_able=0
 						debugtype="err"
 						syslogmessage="owe not supported, install a full version of wpad"
 						write_to_syslog
 					fi
+				fi
 
-					for ap in $aplist; do
+				for ap in $aplist; do
+					radio=$(uci get "$ap.device" 2> /dev/null)
+					. "$tmpdir/radios/$radio"
 
-						radio=$(uci get "$ap.device" 2> /dev/null)
-						. "$tmpdir/radios/$radio"
+					is_vx=$(echo "$ap" | grep -c "vxradio")
 
+					if [ "$is_vx" -eq 0 ]; then
 						echo "set $ap.encryption='$encryption_type'" | uci batch
 						echo "set $ap.key='$mesh_gate_key'" | uci batch
 
-						if [ "$encryption_type" = "none" ] && [ "$total_ifaces" -ge 5 ]; then
+					elif [ "$is_vx" -eq 1 ]; then
+						echo "set $ap.encryption='$vx_encryption_type'" | uci batch
+						echo "set $ap.key='$vtun_gate_key'" | uci batch
+					fi
+
+					if [ "$encryption_type" = "none" ] || [ "$vx_encryption_type" = "none" ]; then
+
+						if [ "$total_ifaces" -ge 5 ]; then
 							# setup owe transition if wpad supports it
 
 							if [ "$owe_able" -eq 1 ]; then
 								owe_transition
 							fi
 						fi
-					done
-
-				fi
-
-				if [ "$mesh_gate_encryption" -gt 0 ] && [ "$mesh_gate_encryption" -lt 4 ]; then
-
-					for ap in $aplist; do
-
-						radio=$(uci get "$ap.device" 2> /dev/null)
-						. "$tmpdir/radios/$radio"
-
-						echo "set $ap.encryption='$encryption_type'" | uci batch
-						echo "set $ap.key='$mesh_gate_key'" | uci batch
-					done
-
-				fi
+					fi
+				done
 
 				debugtype="debug"
 				syslogmessage="auto config complete...."
@@ -2301,25 +2308,28 @@ auto_config() {
 }
 
 owe_transition() {
-	section_ap=$(uci show "$ap")
-	section_list=$(echo "$section_ap" | awk '{printf "%s ", $1}')
+	local enc_type=$(uci get $ap.encryption)
 
-	radio_index=$(echo "$section_ap" | grep "radio" | awk -F "'" '{printf "%s", $2}' | awk -F "radio" '{printf "%i", $2}')
+	if [ "$enc_type" = "none" ]; then
+		section_ap=$(uci show "$ap")
+		section_list=$(echo "$section_ap" | awk '{printf "%s ", $1}')
 
-	echo "set $ap.ifname='open$transition_count-$radio_index'" | uci batch
-	echo "set $ap.owe_transition_ifname='owe$transition_count-$radio_index'" | uci batch
+		radio_index=$(echo "$section_ap" | grep "radio" | awk -F "'" '{printf "%s", $2}' | awk -F "radio" '{printf "%i", $2}')
 
-	for section_item in $section_list; do
-		oweap="s/$ap/wireless.owe$transition_count$radio_index/g"
-		uci_option=$(echo "$section_item" | sed "$oweap")
-		echo "set $uci_option" | uci batch
-	done
+		echo "set $ap.ifname='open$transition_count-$radio_index'" | uci batch
+		echo "set $ap.owe_transition_ifname='owe$transition_count-$radio_index'" | uci batch
 
-	echo "set wireless.owe$transition_count$radio_index.ifname='owe$transition_count-$radio_index'" | uci batch
-	echo "set wireless.owe$transition_count$radio_index.hidden='1'" | uci batch
-	echo "set wireless.owe$transition_count$radio_index.encryption='owe'" | uci batch
-	transition_count=$(($transition_count + 1))
+		for section_item in $section_list; do
+			oweap="s/$ap/wireless.owe$transition_count$radio_index/g"
+			uci_option=$(echo "$section_item" | sed "$oweap")
+			echo "set $uci_option" | uci batch
+		done
 
+		echo "set wireless.owe$transition_count$radio_index.ifname='owe$transition_count-$radio_index'" | uci batch
+		echo "set wireless.owe$transition_count$radio_index.hidden='1'" | uci batch
+		echo "set wireless.owe$transition_count$radio_index.encryption='owe'" | uci batch
+		transition_count=$(($transition_count + 1))
+	fi
 }
 
 urlencode() {
@@ -2542,8 +2552,8 @@ block_bridge_loops() {
 		local br_iface
 		local br_ifaces=$(brctl showstp "$device" | grep -B 1 -w "port id" | grep "(" | awk '{printf "%s ", $1}')
 
-		if [ ! -e "$tmpdir/mesh11sd/brmac_la" ]; then
-			touch "$tmpdir/mesh11sd/brmac_la"
+		if [ ! -e "$tmpdir/brmac_la" ]; then
+			touch "$tmpdir/brmac_la"
 		fi
 
 		get_mesh_iflist
