@@ -1479,7 +1479,9 @@ get_portal_state() {
 	write_to_syslog
 
 	if [ -z "$is_portal" ] && [ -e "$tmpdir/is_portal" ]; then
-		rm /$tmpdir/is_portal
+		if [ -e "/$tmpdir/is_portal" ]; then
+			rm /$tmpdir/is_portal
+		fi
 	elif [ ! -z "$is_portal" ] && [ ! -e "$tmpdir/is_portal" ]; then
 		touch /$tmpdir/is_portal
 	fi
@@ -3879,7 +3881,11 @@ elif [ "$1" = "auto_config" ]; then
 		read reply
 
 		if [ "$reply" = "yes" ]; then
-			rm "$tmpdir/auto_config_test 2> /dev/null"
+
+			if [ -e "$tmpdir/auto_config_test" ]; then
+				rm "$tmpdir/auto_config_test 2> /dev/null"
+			fi
+
 			changes=$(uci changes mesh11sd)
 			changelist=$(echo "$changes" | awk '{printf "%s ", $1}')
 
