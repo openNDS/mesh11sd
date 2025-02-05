@@ -31,25 +31,33 @@ config mesh11sd 'setup'
 	# Default 1
 	#
 	# Possible values:
-	#  0  - Force Portal mode regardless of an upstream connection.
+	#  0  - Force ipv4 nat routed Portal mode regardless of an upstream connection.
+	#
 	#  1  - Detect if the meshnode is a portal, meaning it has an upstream wan link.
 	# 	If the upstream link is active, the router hosting the meshnode will serve ipv4 dhcp into the mesh network.
 	# 	If the upstream link is not connected, dhcp will be disabled and the meshnode will function as a layer 2 bridge on the mesh network.
-	#  2  - Deprecated - no longer used.
+	#
+	#  2  - Deprecated - no longer used - replaced by mode 5.
+	#
 	#  3  - Force CPE mode (Customer Premises Equipment)
 	#  	This is a peer mode but treats the mesh backhaul as an upstream wan connection.
-	#  	A nat routed lan is created with its own ipv4 subnet.
-	#  4  - bridge vxlan trunk portal
-	#	Functions as 0, but adds wan ethernet port to the vxtunnel bridge (default br-tun69)
-	#	The wan port will be an ethernet end point into the vxtunnel, supporting vlans if required
-	#	This mode should be used if a bridged connection to the upstream ISP router is required (ie bridged/no-nat ipv4 ).
-	#	The wan port and lan port(s) form independent layer 2 networks carried by the mesh backhaul to all peer meshnodes.
-	#	For normal use, both the wan and a lan port should be patched to the upstream router or an intermediate switch.
+	#  	A nat routed ipv4 lan is created with its own ipv4 subnet.
 	#
-	#  5  - bridge vxlan trunk node
-	#	Functions as 1, but adds wan ethernet port to the vxtunnel bridge (default br-tun69)
+	#  4  - Bridge vxlan trunk portal node
+	#	This mode should be used if a bridged connection to the upstream ISP router is required (ie bridged/no-nat ipv4 ).
+	#	Functions in a similar way to 0, ie forces BRIDGED portal mode, ADDING the wan ethernet port to the vxtunnel bridge (default br-tun69)
 	#	The wan port will be an ethernet end point into the vxtunnel, supporting vlans if required.
-	#	Compatible woth portal nosdes configured with portal_detect 0, 1 or 4.
+	#	The wan port and lan port(s) form independent layer 2 networks carried by the mesh backhaul to all peer meshnodes.
+	#	the vxlan tunnel can be treated as a separate virtual ethernet tunnel to all mesh nodes.
+	#	ie the wan port on a mode 4 portal is the end point of a virtual vlan supporting ethernet network connecting
+	#	to the wan ports of all mode 5 bridge vxlantrunk peer nodes.
+	#	In normal use, BOTH the wan and a lan port could be patched to the upstream router or an intermediate switch.
+	#
+	#  5  - Bridge vxlan trunk peer node
+	#	Compatible with portal nodes configured with portal_detect 0, 1 or 4.
+	#	Functions in a similar way to 0, but FORCES peer mode and adds wan ethernet port to the vxtunnel bridge (default br-tun69)
+	#	The wan port will be an ethernet end point into the vxtunnel, supporting vlans if required.
+	#	The lan port(s) will be ethernet end points into the mash backhaul and will NOT support vlans.
 	#
 	#
 	# Has no effect if auto_config is disabled.
