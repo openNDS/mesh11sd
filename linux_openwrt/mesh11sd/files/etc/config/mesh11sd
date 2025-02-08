@@ -213,6 +213,22 @@ config mesh11sd 'setup'
 	#option mesh_basename 'link'
 
 	###########################################################################################
+	# mesh_gate_base_ssid
+	#
+	# Sets the mesh gate base ssid string
+	#	If ssid_suffix_enable is set to 0, must be a maximum of 30 characters in length
+	#	If ssid_suffix_enable is set to 1, must be a maximum of 22 characters in length
+	#	Excess characters will be truncated
+	#
+	# Default - uses the ssid string set in the wireless config
+	#
+	#
+	# When set, overrides the ssid string set in the wireless config
+	#
+	# Example:
+	#option mesh_gate_base_ssid 'OfficeNetwork'
+
+	###########################################################################################
 	# mesh_gate_encryption (optional)
 	# Determines whether this node's gate (Access Point) will be a encrypted
 	#
