@@ -233,25 +233,33 @@ config mesh11sd 'setup'
 	# Default 1
 	#
 	# Possible values:
-	#  0  - Force Portal mode regardless of an upstream connection.
+	#  0  - Force ipv4 nat routed Portal mode regardless of an upstream connection.
+	#
 	#  1  - Detect if the meshnode is a portal, meaning it has an upstream wan link.
 	# 	If the upstream link is active, the router hosting the meshnode will serve ipv4 dhcp into the mesh network.
 	# 	If the upstream link is not connected, dhcp will be disabled and the meshnode will function as a layer 2 bridge on the mesh network.
-	#  2  - Deprecated - no longer used.
+	#
+	#  2  - Deprecated - no longer used - replaced by mode 5.
+	#
 	#  3  - Force CPE mode (Customer Premises Equipment)
 	#  	This is a peer mode but treats the mesh backhaul as an upstream wan connection.
-	#  	A nat routed lan is created with its own ipv4 subnet.
-	#  4  - bridge vxlan trunk portal
-	#	Functions as 0, but adds wan ethernet port to the vxtunnel bridge (default br-tun69)
-	#	The wan port will be an ethernet end point into the vxtunnel, supporting vlans if required
-	#	This mode should be used if a bridged connection to the upstream ISP router is required (ie bridged/no-nat ipv4 ).
-	#	The wan port and lan port(s) form independent layer 2 networks carried by the mesh backhaul to all peer meshnodes.
-	#	For normal use, both the wan and a lan port should be patched to the upstream router or an intermediate switch.
+	#  	A nat routed ipv4 lan is created with its own ipv4 subnet.
 	#
-	#  5  - bridge vxlan trunk node
-	#	Functions as 1, but adds wan ethernet port to the vxtunnel bridge (default br-tun69)
+	#  4  - Bridge vxlan trunk portal node
+	#	This mode should be used if a bridged connection to the upstream ISP router is required (ie bridged/no-nat ipv4 ).
+	#	Functions in a similar way to 0, ie forces BRIDGED portal mode, ADDING the wan ethernet port to the vxtunnel bridge (default br-tun69)
 	#	The wan port will be an ethernet end point into the vxtunnel, supporting vlans if required.
-	#	Compatible woth portal nosdes configured with portal_detect 0, 1 or 4.
+	#	The wan port and lan port(s) form independent layer 2 networks carried by the mesh backhaul to all peer meshnodes.
+	#	the vxlan tunnel can be treated as a separate virtual ethernet tunnel to all mesh nodes.
+	#	ie the wan port on a mode 4 portal is the end point of a virtual vlan supporting ethernet network connecting
+	#	to the wan ports of all mode 5 bridge vxlantrunk peer nodes.
+	#	In normal use, BOTH the wan and a lan port could be patched to the upstream router or an intermediate switch.
+	#
+	#  5  - Bridge vxlan trunk peer node
+	#	Compatible with portal nodes configured with portal_detect 0, 1 or 4.
+	#	Functions in a similar way to 0, but FORCES peer mode and adds wan ethernet port to the vxtunnel bridge (default br-tun69)
+	#	The wan port will be an ethernet end point into the vxtunnel, supporting vlans if required.
+	#	The lan port(s) will be ethernet end points into the mash backhaul and will NOT support vlans.
 	#
 	#
 	# Has no effect if auto_config is disabled.
@@ -405,6 +413,22 @@ config mesh11sd 'setup'
 	# Results in ifname=m-link-0
 	#
 	#option mesh_basename 'link'
+
+	###########################################################################################
+	# mesh_gate_base_ssid
+	#
+	# Sets the mesh gate base ssid string
+	#	If ssid_suffix_enable is set to 0, must be a maximum of 30 characters in length
+	#	If ssid_suffix_enable is set to 1, must be a maximum of 22 characters in length
+	#	Excess characters will be truncated
+	#
+	# Default - uses the ssid string set in the wireless config
+	#
+	#
+	# When set, overrides the ssid string set in the wireless config
+	#
+	# Example:
+	#option mesh_gate_base_ssid 'OfficeNetwork'
 
 	###########################################################################################
 	# mesh_gate_encryption (optional)
@@ -699,14 +723,6 @@ config mesh11sd 'mesh_params'
 ```
 All mesh parameter settings in the config file are dynamic and will take effect immediately.
 
-**NOTE:** The setup option `portal_detect` is set to 1 (enabled) by default.
-
-**NOTE:** If the setup option `portal_detect` is set to 0, the meshnode will be forced into Portal mode. ie it will act as a layer 3 router between its wan and lan ports regardless of the availability of an upstream wan feed.
-
-**NOTE:** If the setup option `portal_detect` is set to 2, the meshnode will be forced into Peer mode, ignoring any any upstream wan feed.
-
-**NOTE:** If the setup option `portal_detect` is set to 3, the meshnode will be forced into CPE (Customer Premises Equipment) mode, The mesh backhaul will be used as a wan connection and the meshnode will function as an ipv4 NAT router with a unique ipv4 subnet on its lan and mesh gate (access point).
-
 The option portal_detect much simplifies the setup of the meshnodes of a network. Each can be configured as a basic router with a mesh interface defined as above. Once mesh11sd is installed, portal detection will be activated and with the upstream wan port connected, the meshnode will continue to function as a router with the additional functionality of a mesh portal.
 
 When the upstream wan connection is disconnected, the meshnode will automatically reconfigure itself as a layer 2 peer meshnode.
@@ -723,41 +739,280 @@ Access to the remote meshnode peers will not be possible using the default ipv4 
 
 * checkinterval - the interval in seconds after which changes in parameters are detected and activated. Default 10 seconds
 
-* portal_detect - (optional, default 1)  Detect if the meshnode is a portal, meaning it has an upstream wan link. If the upstream link is active, the router hosting the meshnode will serve ipv4 dhcp into the mesh network. If the upstream link is not connected, dhcp will be disabled and the meshnode will function as a level 2 bridge on the mesh network. Default 1 (enabled). Set to 0 to force Portal mode, 2 to force Peer mode, or 3 to enable CPE mode.
+* portal_detect (optional) - Ignored if auto_config is disabled.
 
-* portal_channel - valid only when the meshnode is a portal. Specifies the mesh network working channel. All other meshnodes will track this channel.
+            Default 1
 
-* interface_timeout - the time in seconds that mesh11sd will wait for a mesh interface to establish before continuing. Default 10 seconds
+            Possible values:
 
-* mesh_path_cost - sets the STP cost of the mesh network. Default: 10. Can be set to any value from 0 to 65534. Setting to 0 disables STP
+            0  - Force ipv4 nat routed Portal mode regardless of an upstream connection.
 
-* auto_config - (optional) - autonomously configures the mesh network. Default 1 (enabled). Set to 0 to disable
+	        1  - Detect if the meshnode is a portal, meaning it has an upstream wan link.
 
-* auto_mesh_id - (optional) - specifies a string used to generate the mesh id hash. If set, this must be the same on all mesh nodes. Default --__
+                 If the upstream link is active, the router hosting the meshnode will serve ipv4 dhcp into the mesh network.
 
-* auto_mesh_band - (optional) - specifies the wireless band to be used for the mesh network. Possible values are 2g, 5g, 6g and 60g. Default 2g
+	             If the upstream link is not connected, dhcp will be disabled and the meshnode will function as a layer 2 bridge on the mesh network.
 
-* auto_mesh_key - specifies a seed value string to be used in generating the mesh key hash used for mesh encryption. If set, this must be the same on all meshnodes. Default not set
+            2  - Deprecated - no longer used - replaced by mode 5.
 
-* auto_mesh_network - (optional) - specifies the firewall zone used for the mesh. Typical values "lan", "guest" etc. This can be set differently on each meshnode as required. Firewall zone "wan" is not valid. Default lan
+	        3  - Force CPE mode (Customer Premises Equipment)
 
-* mesh_basename - (optional) The first 4 characters after non alphanumerics (ie special characters) are removed are used as the mesh_basename. The mesh_basename is used to construct a unique mesh interface name of the form m-xxxx-n. Default: 11s
+	             This is a peer mode but treats the mesh backhaul as an upstream wan connection.
+	             A nat routed ipv4 lan is created with its own ipv4 subnet.
 
-* mesh_gate_enable - enables any access points configured on the meshnode. Default 1 (enabled). Set to 0 to disable. **Note:** If there is an interface level "disable option" (in wireless config), mesh11sd will use that setting.
+	        4  - Bridge vxlan trunk portal node
 
-* mesh_gate_encryption - Determines whether this node's gate will be a encrypted. Default: 0 (disabled). Set to 0 (none/owe-transition), 1 (sae, aka wpa3), 2 (sae-mixed, aka wpa2/wpa3), 3 (psk2, aka wpa2) or 4 (Opportunistic Wireless Encryption - owe).
+	             This mode should be used if a bridged connection to the upstream ISP router is required (ie bridged/no-nat ipv4 ).
 
-* mesh_gate_key - Determines the encryption key for this node's gate. Default: not set (encryption disabled or owe). Set to a secret string value to use for encrypting the node's gate
+	             Functions in a similar way to 0, ie forces BRIDGED portal mode, ADDING the wan ethernet port to the vxtunnel bridge (default br-tun69)
 
-* mesh_leechmode_enable - Determines whether this node will be a gate only leech node. A gate only leech node acts as an access point with a mesh backhaul connection, but does not contribute to the mesh. This is useful when a node is well within the coverage of 2 or more peer nodes, as otherwise it could create unstable multi hop paths within the backhaul. Default: 0 (disabled). Set to 1 to enable (turns off the node's mesh forwarding and HWMP mac-routing).
+	             The wan port will be an ethernet end point into the vxtunnel, supporting vlans if required.
 
-* mesh_path_stabilisation - This enables mesh path stabilisation, preventing multi hop path changes due to multipath signal strength jitter. Default: 1 (enabled). To disable, set to zero.
+	             The wan port and lan port(s) form independent layer 2 networks carried by the mesh backhaul to all peer meshnodes.
 
-* txpower - set the mesh radio transmit power in dBm. Takes effect immediately.
+	             The vxlan tunnel can be treated as a separate virtual ethernet tunnel to all mesh nodes.
 
-* ssid_suffix_enable - Add a 4 digit suffix to the ssid. The 4 digits are the last 4 digits of the mac address of the mesh interface.
+	             ie the wan port on a mode 4 portal is the end point of a virtual vlan supporting ethernet network connecting to the wan ports of all mode 5 bridge vxlantrunk peer nodes.
 
-* watchdog_nonvolatile_log - (optional - FOR DEBUGGING PURPOSES ONLY). This enables logging of the portal detect watchdog actions in non-volatile storage. The log file /mesh11sd_log/mesh11sd.log is created. THIS OPTION IS FOR PORTAL DETECT WATCHDOG DEBUGGING PURPOSES ONLY. IF LEFT ENABLED FOR A LENGTH OF TIME IT MAY CAUSE NONE REPAIRABLE FLASH MEMORY WEAR AND USE UP FREE STORAGE SPACE. DISABLE IMMEDIATELY AFTER DEBUGGING OPERATIONS ARE COMPLETE.
+	             In normal use, BOTH the wan and a lan port could be patched to the upstream router or an intermediate switch.
+
+             5  - Bridge vxlan trunk peer node
+
+	             Compatible with portal nodes configured with portal_detect 0, 1 or 4.
+
+	             Functions in a similar way to 0, but FORCES peer mode and adds wan ethernet port to the vxtunnel bridge (default br-tun69)
+
+	             The wan port will be an ethernet end point into the vxtunnel, supporting vlans if required.
+
+	             The lan port(s) will be ethernet end points into the mash backhaul and will NOT support vlans.
+
+	             Has no effect if auto_config is disabled.
+
+* portal_channel (optional) Applies to 2.4 GHz band only
+             Valid only when the meshnode is a portal.
+
+             If portal_detect is disabled (0), portal_channel can be set to:
+
+	             1. auto - a channel is auto selected
+
+                 2. default - the channel defined in /etc/config/wireless is used
+
+                 3. A valid 2.4 GHz channel (1 to 13, depending on the country setting)
+
+             Default: system default
+
+             All mesh peer and mesh gate nodes will autonomously track the mesh portal channel regardless of the configured auto_mesh_band.
+
+* channel_tracking_checkinterval (optional)
+
+	         The minimum interval in seconds after which channel tracking begins on peer nodes. Values less than checkinterval are ignored.
+
+             Default: 30 seconds
+
+* interface_timeout - the time in seconds that mesh11sd will wait for a mesh interface to establish before continuing.
+
+             Default 10 seconds
+
+* portal_detect_threshold (optional)
+
+             This controls the portal detect watchdog.
+
+             Sets the number of checkintervals before the portal detect watchdog begins actions to (re)establish a reconnection to a portal.
+
+             Default 10 (watchdog is triggered after 10 iterations)
+
+             If set to 0, the watchdog is never triggered.
+
+             Ignored if auto_config is disabled.
+
+             Each time the peer node fails to detect the portal, a counter is incremented.
+
+             If the threshold is reached, the node will take various actions in an attempt to find the portal.
+
+             If the portal is still not detected, the watchdog will reboot the peer node.
+
+* mesh_path_cost - sets the STP cost of the mesh network.
+
+             Can be set to any value from 0 to 65534. Setting to 0 disables STP.
+
+             Default: 10.
+
+* auto_config - (optional) - autonomously configures the mesh network.
+
+             Enables autonomous dynamic mesh configuration.
+
+             Auto configure mesh interfaces in the wireless configuration.
+
+             Default 0 (disabled). Set to 1 to enable.
+
+             When set to 0, the mesh11sd daemon will check for an existing mesh configuration.
+
+             Warning: If an existing mesh configuration is found, it will be honoured even if it is incorrect.
+
+             Manually configuring a mesh can soft brick the router if incorrectly done.
+
+             Auto config can be tested using the command line function 'mesh11sd auto_config test'
+
+             See the documentation for further information (Hint: try 'mesh11sd --help')
+
+* auto_mesh_id - (optional) - specifies a string used to generate the mesh id hash.
+
+             If set, this must be the same on all mesh nodes.
+
+             Default --__
+
+* auto_mesh_band (optional)
+
+             Configure the band to use for the mesh network
+
+             Valid values: 2g, 2g40, 5g, 6g, 60g
+
+             Default 2g40
+
+             If set, it must also be set to the same value on every mesh node
+
+             All mesh peer and mesh gate nodes will autonomously track the mesh portal channel regardless of the configured auto_mesh_band.
+
+* country (optional)
+
+             Set a valid country code for all radios.
+
+             Defaults to DFS-ETSI if not explicitly set in wireless config
+
+             If set here, will overide any setting in wireless config
+
+* auto_mesh_key (optional)
+
+             Defaults to a sha256 key to be automatically used on all members of this mesh when auto_config is enabled.
+
+             Generates a secure sha256 key from the string value set in this option.
+
+             If set, it must also be set to the same value on every mesh node
+
+* auto_mesh_network - (optional) - specifies the firewall zone used for the mesh.
+
+             Typical values "lan", "guest" etc.
+
+             This can be set differently on each meshnode as required.
+
+             Firewall zone "wan" is not valid.
+
+             Default lan
+
+* mesh_basename - (optional)
+
+             The first 4 characters after non alphanumerics (ie special characters) are removed are used as the mesh_basename.
+
+             The mesh_basename is used to construct a unique mesh interface name of the form m-xxxx-n.
+
+             Default: 11s
+
+* mesh_gate_base_ssid
+
+             Sets the mesh gate base ssid string
+
+             If ssid_suffix_enable is set to 0, must be a maximum of 30 characters in length.
+
+             If ssid_suffix_enable is set to 1, must be a maximum of 22 characters in length
+
+             Excess characters will be truncated
+
+             Default - uses the ssid string set in the wireless config
+
+             When set, overrides the ssid string set in the wireless config
+
+* mesh_gate_encryption (optional)
+
+             Determines whether this node's gate (Access Point) will be a encrypted.
+
+             Default: 0 (disabled)
+             Set to
+
+                 0 (none/owe-transition)
+
+                 1 (sae, aka wpa3)
+
+                 2 (sae-mixed, aka wpa2/wpa3)
+
+                 3 (psk2, aka wpa2)
+
+                 4 (Opportunistic Wireless Encryption - owe)
+
+* mesh_gate_key (optional)
+
+             Determines the encryption key for this node's gate.
+
+             Default: not set (encryption disabled)
+
+             Set to a secret string value to use for encrypting the node's gate
+
+             Ignored if mesh_gate_encryption is set to 0 or 4
+
+* mesh_gate_enable - enables any access points configured on the meshnode.
+
+             Default 1 (enabled).
+
+             Set to 0 to disable.
+
+             **Note:** If there is an interface level "disable option" (in wireless config), mesh11sd will use that setting.
+
+* mesh_gate_encryption - Determines whether this node's gate will be a encrypted.
+
+             Default: 0 (disabled).
+
+             Set to:
+
+                  0 (none/owe-transition)
+
+                  1 (sae, aka wpa3)
+
+                  2 (sae-mixed, aka wpa2/wpa3)
+
+                  3 (psk2, aka wpa2)
+
+                  4 (Opportunistic Wireless Encryption - owe).
+
+* mesh_gate_key - Determines the encryption key for this node's gate.
+
+             Default: not set (encryption disabled or owe).
+
+             Set to a secret string value to use for encrypting the node's gate
+
+* mesh_leechmode_enable - Determines whether this node will be a gate only leech node
+
+              A gate only leech node acts as an access point with a mesh backhaul connection, but does not contribute to the mesh.
+
+              This is useful when a node is well within the coverage of 2 or more peer nodes, as otherwise it could create unstable multi hop paths within the backhaul.
+
+              Default: 0 (disabled).
+
+              Set to 1 to enable (turns off the node's mesh forwarding and HWMP mac-routing).
+
+* mesh_path_stabilisation - This enables mesh path stabilisation, preventing multi hop path changes due to multipath signal strength jitter.
+
+              Default: 1 (enabled).
+
+              To disable, set to zero.
+
+* txpower - set the mesh radio transmit power in dBm.
+
+              Takes effect immediately.
+
+* ssid_suffix_enable - Add a 4 digit suffix to the ssid.
+
+              The 4 digits are the last 4 digits of the mac address of the mesh interface.
+
+* watchdog_nonvolatile_log - (optional - FOR DEBUGGING PURPOSES ONLY).
+
+              This enables logging of the portal detect watchdog actions in non-volatile storage.
+
+              The log file /mesh11sd_log/mesh11sd.log is created.
+
+              THIS OPTION IS FOR PORTAL DETECT WATCHDOG DEBUGGING PURPOSES ONLY.
+
+              IF LEFT ENABLED FOR A LENGTH OF TIME IT MAY CAUSE NONE REPAIRABLE FLASH MEMORY WEAR AND USE UP FREE STORAGE SPACE.
+
+              DISABLE IMMEDIATELY AFTER DEBUGGING OPERATIONS ARE COMPLETE.
 
 
 **Example**:

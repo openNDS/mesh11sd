@@ -407,6 +407,30 @@ get_current_setup () {
 	write_to_syslog
 
 	#####
+	mesh_gate_base_ssid=$(uci get mesh11sd.setup.mesh_gate_base_ssid 2> /dev/null)
+
+	if [ "$ssid_suffix_enable" -eq 1 ]; then
+		maxlen=22
+	else
+		maxlen=30
+	fi
+
+	mesh_gate_base_ssid=$(echo -n "$mesh_gate_base_ssid" | tr -d " " | head -c "$maxlen")
+
+	if [ -z "$mesh_gate_base_ssid" ]; then
+		syslogmessage="option mesh_gate_base_ssid [ Not Set ] Using default"
+		debugtype="info"
+		mute="$mutestate"
+		write_to_syslog
+
+	else
+		syslogmessage="option mesh_gate_base_ssid [ $mesh_gate_base_ssid ] "
+		debugtype="info"
+		mute="$mutestate"
+		write_to_syslog
+	fi
+
+	#####
 	mesh_gate_encryption=$(uci get mesh11sd.setup.mesh_gate_encryption 2> /dev/null)
 	package_list="wpad-mbedtls wpad-wolfssl wpad-openssl"
 	check_package_list
@@ -476,22 +500,6 @@ get_current_setup () {
 	fi
 
 	syslogmessage="option ssid_suffix_enable [ $ssid_suffix_enable ]"
-	debugtype="info"
-	mute="$mutestate"
-	write_to_syslog
-
-	#####
-	default_ssid=$(uci get mesh11sd.setup.default_ssid 2> /dev/null)
-
-	if [ "$ssid_suffix_enable" -eq 1 ]; then
-		maxlen=22
-	else
-		maxlen=30
-	fi
-
-	default_ssid=$(echo -n "$default_ssid" | tr -d " " | head -c "$maxlen")
-
-	syslogmessage="option default_ssid [ $default_ssid ]"
 	debugtype="info"
 	mute="$mutestate"
 	write_to_syslog
@@ -2205,8 +2213,8 @@ auto_config() {
 						echo "set $ap.ifname='$ifname'" | uci batch
 					fi
 
-					if [ "$ssid" != "$vtun_base_ssid" ] && [ ! -z "$default_ssid" ]; then
-						ssid="$default_ssid"
+					if [ "$ssid" != "$vtun_base_ssid" ] && [ ! -z "$mesh_gate_base_ssid" ]; then
+						ssid="$mesh_gate_base_ssid"
 					fi
 
 					if [ "$ssid_suffix_enable" -eq 1 ]; then
