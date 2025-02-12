@@ -193,13 +193,14 @@ config mesh11sd 'setup'
 	#option auto_mesh_key 'MySecretKey'
 
 	###########################################################################################
-	# auto_mesh_network (optional)
+	# auto_mesh_network - (optional) - specifies the firewall zone used for the mesh.
+	#	Typical values "lan", "guest" etc.
 	#
-	# Set the network the mesh interface will bind to (eg lan, guestlan etc) when auto_config is enabled.
-	# Network wan is not accepted
-	# Default lan
+	#	This can be set differently on each meshnode as required.
 	#
-	#option auto_mesh_network 'guestlan'
+	#	Firewall zone "wan" is not valid.
+	#
+	#	Default lan
 
 	###########################################################################################
 	# mesh_basename (optional)
