@@ -57,7 +57,7 @@ config mesh11sd 'setup'
 	#	Compatible with portal nodes configured with portal_detect 0, 1 or 4.
 	#	Functions in a similar way to 0, but FORCES peer mode and adds wan ethernet port to the vxtunnel bridge (default br-tun69)
 	#	The wan port will be an ethernet end point into the vxtunnel, supporting vlans if required.
-	#	The lan port(s) will be ethernet end points into the mash backhaul and will NOT support vlans.
+	#	The lan port(s) will be ethernet end points into the mesh backhaul and will NOT support vlans.
 	#
 	#
 	# Has no effect if auto_config is disabled.
