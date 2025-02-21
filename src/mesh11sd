@@ -506,10 +506,37 @@ get_current_setup () {
 
 	####
 	# vxlan configs
+
+	#####
+	vtun_enable=$(uci get mesh11sd.setup.vtun_enable 2> /dev/null)
+
+	if [ -z "$vtun_enable" ]; then
+		vtun_enable=1
+	elif [ "$vtun_enable" -gt 1 ]; then
+		vtun_enable=1
+	else
+		vtun_enable=0
+	fi
+
+	if [ "$portal_detect" -eq 3 ]; then
+		uci set mesh11sd.setup.vtun_enable='0'
+		vtun_enable=0
+		syslogmessage="option vtun_enable is disabled because cpe mode is enabled"
+		debugtype="info"
+		mute="$mutestate"
+		write_to_syslog
+	else
+		syslogmessage="option vtun_enable [ $vtun_enable ]"
+		debugtype="info"
+		mute="$mutestate"
+		write_to_syslog
+	fi
+
+
 	package_list="ip-full vxlan"
 	check_package_list
 
-	if [ "$ip_full" -eq 0 ] && [ "$vxlan" -eq 0 ]; then # we have the required packages for vxlan
+	if [ "$ip_full" -eq 0 ] && [ "$vxlan" -eq 0 ] & [ "$vtun_enable" -eq 1 ]; then # we have the required packages for vxlan and it is enabled
 
 		#####
 		vtun_enable=$(uci get mesh11sd.setup.vtun_enable 2> /dev/null)
@@ -522,10 +549,19 @@ get_current_setup () {
 			vtun_enable=0
 		fi
 
-		syslogmessage="option vtun_enable [ $vtun_enable ]"
-		debugtype="info"
-		mute="$mutestate"
-		write_to_syslog
+		if [ "$portal_detect" -eq 3 ]; then
+			uci set mesh11sd.setup.vtun_enable='0'
+			vtun_enable=0
+			syslogmessage="option vtun_enable is disabled because cpe mode is enabled"
+			debugtype="info"
+			mute="$mutestate"
+			write_to_syslog
+		else
+			syslogmessage="option vtun_enable [ $vtun_enable ]"
+			debugtype="info"
+			mute="$mutestate"
+			write_to_syslog
+		fi
 
 		#####
 		tun_id=$(uci get mesh11sd.setup.tun_id 2> /dev/null)
@@ -2037,7 +2073,7 @@ auto_config() {
 		package_list="ip-full vxlan"
 		check_package_list
 
-		if [ "$ip_full" -eq 0 ] && [ "$vxlan" -eq 0 ]; then
+		if [ "$ip_full" -eq 0 ] && [ "$vxlan" -eq 0 ] && [ "$vtun_enable" -eq 1 ]; then
 			# we have the required packages for vxlan
 			aplist=$(uci show wireless | grep "mode='ap'" | awk -F "." '{printf "%s ", $2}')
 
