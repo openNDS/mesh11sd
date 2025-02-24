@@ -2,9 +2,7 @@
 
   Mesh11sd is a dynamic management and parameter configuration daemon for 802.11s mesh networks.
 
-  It was originally designed to leverage 802.11s mesh networking at Captive Portal venues.
-
-  This is the open source version and it enables easy and automated mesh network operation with multiple mesh nodes.
+  It was originally designed to leverage 802.11s mesh networking at Captive Portal venues but has now been open sourced. It enables easy and automated mesh network operation with multiple mesh nodes.
 
   It has a comprehensive CLI based API allowing it to be integrated into typical Captive Portal operations but does not require a Captive Portal to be running.
 
@@ -16,9 +14,13 @@ A mesh network is a multi point to multi point layer 2 mac-routing backhaul used
 
 A normally configured user device, such as a phone, tablet, laptop etc., cannot connect to a mesh network. Instead, connection is achieved via a mesh gateway, a special type of mesh peer.
 
+**What is Mesh11sd**
+
+Mesh11sd is an OpenWrt package that autonomously configures and manages all aspects of an 802.11s mesh backhaul network and its connected nodes.
+
 **Are you sure you want a mesh?**
 
-A mesh has nothing to do with a solution to enable your user devices to seamlessly roam from one access point to another. If this is what you want, **YOU ARE NOT LOOKING FOR A MESH**.
+A mesh is not a solution to enable your user devices to seamlessly roam from one access point to another.
 
 *It is unfortunate that some manufacturers have used the word “Mesh” for marketing purposes to describe their non-standard, closed source, proprietary “roaming” functionality and this causes great confusion to many people when they enter the world of international standards and open source firmware for their network infrastructure.*
 
@@ -34,9 +36,240 @@ A mesh has nothing to do with a solution to enable your user devices to seamless
  4. Optional Customer/Client Premises Mode (CPE)
  5. Default support for Opportunistic Wireless Encryption (OWE), with OWE Transition.
  6. Optional portal node to multi point peer group, enabling "guest" networking over mesh backhaul without the need for setting up a VLAN.
+ 7. Centralised Access Point usage database, enabling connected client statistics to be viewed.
 
 ## 4. Getting Started:
-To get started, you will need at least two mesh capable devices to use as meshnodes.
+To get started, you will need at least two mesh capable devices to use as meshnodes. These meshnodes should have:
+
+ 1. At least the recommended minimum flash/ram resources for the version of OpenWrt to be used.
+ 2. At least two ethernet ports (usually labelled wan and lan).
+ 3. At least one mesh compatible radio.
+
+There are two deployment methods:
+
+  1. *The Rapid Deployment firmware flash method* is the quickest and most efficient way to get a mesh network up and running.
+
+     *This is the preferred deployment method.*
+
+  2. *The Node by Node installation method* can also be used, but is significantly less efficient. It takes much more time and a greater in depth knowledge of OpenWrt to deploy and uses more flash space on the nodes. In addition, there is greater scope for error. There will however be little or no performance penalty if using this method.
+
+### 4.1 Rapid Deployment Firmware Flash
+
+An 802.11s mesh backhaul can be rapidly deployed by taking advantage of the OpenWrt Firmware Selector (or the Image Builder) and the Mesh11sd package.
+
+We will go through the simple steps to create a flash image that contains all that is required to deploy a mesh network backhaul.
+
+In this case we will use one hardware model, but there is no requirement for all the nodes of the mesh to be the same hardware. Obviously, a flash image will have to be made for each hardware type.
+
+#### Using The Firmware Selector to Create a Custom Image
+
+For this example we will use the GL-iNet MT300N-V2, a tiny low cost device capable of 300Mb/s in backhaul operation.
+
+The Firmware Selector can be found here:
+
+https://firmware-selector.openwrt.org/
+
+Open the link in your browser.
+
+Select the model
+
+Select the version of OpenWrt
+
+Click on “Customize installed packages and/or first boot script”
+
+In the upper text box, labelled “Installed Packages”, you will see a list of packages.
+
+At or near the end you will see wpad-basic-mbedtls. Add a minus sign (-) in front of it, ie -wpad-basic-mbedtls
+
+At the end of the list add the following dependency packages:
+
+  1. wpad-mbedtls
+  2. px-5g-mbedtls
+  3. ip-full
+  4. kmod-nft-bridge
+  5. vxlan
+  6. mesh11sd
+
+***NOTE: If the node you are configuring uses ath10k-ct drivers, you must change to the none-ct versions. If you do not, mesh11sd will log an error to syslog and terminate.***
+
+For our example of the GL-MT300N-V2, the upper text box will now look like this:
+
+```
+base-files busybox ca-bundle dnsmasq dropbear firewall4 fstools kmod-gpio-button-hotplug
+kmod-leds-gpio kmod-mt7603 kmod-nft-offload kmod-usb-ohci kmod-usb2 libc libgcc
+libustream-mbedtls logd luci mtd netifd nftables odhcp6c odhcpd-ipv6only opkg
+ppp ppp-mod-pppoe procd procd-seccomp procd-ujail swconfig uci uclient-fetch urandom-seed
+urngd -wpad-basic-mbedtls wpad-mbedtls px-5g-mbedtls ip-full kmod-nft-bridge vxlan mesh11sd
+```
+
+Now, in the lower text box, add the following:
+
+```
+uci set mesh11sd.setup.auto_config='1'
+uci set mesh11sd.setup.auto_mesh_id='MyMeshID'
+uci set mesh11sd.setup.mesh_gate_base_ssid='MyNetwork'
+uci set mesh11sd.setup.mesh_gate_encryption='1'
+uci set mesh11sd.setup.mesh_gate_key='MyWifiCode'
+uci commit mesh11sd
+uci commit network
+rootpassword="myrootpassword"
+/bin/passwd root << EOF
+$rootpassword
+$rootpassword
+EOF
+```
+Replace MyMeshID with a secret mesh id string of your choice. This is used as a seed for generating secure keys to be used for encrypting all traffic on the mesh backhaul.
+
+Replace MyNetwork with a base SSID to use for all Mesh Gate Access Points. This must be a maximum of 22 characters in length, excess characters will be truncated.
+
+Replace MyWifiCode with a wifi access code you will use for connecting user devices to the Mesh Gate Access Points.
+
+Replace myrootpassword with a secret root password of your choice.
+
+***NOTE:*** Selecting mesh_gate_encryption='0' will enable OWE Transition mode, supporting “Enhanced Open” encryption on client devices that support it (almost all recent ones) or falling back to legacy “open unencrypted” for those that don't.
+
+OWE is ideal for “guest” type systems and public venues, providing a level of security previously not available.
+
+By default, Mesh11sd creates an additional, independent "Guest" network (ssid Guestxgxxxx).
+
+The Guest network will use OWE Transition security by default.
+
+For a full list of setup options, see sections 9 and 10 below.
+
+Finally, click “REQUEST BUILD” to build your customised firmware.
+
+Once the firmware build has completed, you should download it and re-flash all your meshnode devices (of the same hardware type).
+
+If you have more than one hardware type, repeat the above build process for each type, keeping the configuration the same between types.
+
+You can now deploy Your MeshNodes.
+
+A portal node will have its wan port connected to a lan port on the upstream (isp) router which provides your Internet feed.
+
+
+#### Deployment Options for your meshnodes.
+
+There are two main deployment options.
+
+1. As a fully routed mesh network with an Internet feed uplink connected to the wan port of one of the nodes. This is the default option.
+
+2. As a mesh extension of an existing local area network with a link to the existing lan connected to the lan port of one of the nodes. This is known as "Bridge Portal Mode", and is selected by setting option portal_detect to 4 ONLY on the portal device - if required this should be changed only after testing with the live mesh backhaul is complete.
+
+
+Connect an ethernet patch lead, on just one meshnode, to its wan port.
+
+Connect the other end of the patch lead to a lan port of your isp or existing router, and power up the node.
+
+This node will autoconfigure as a portal node, routing ip traffic from the isp or other router's lan to the new mesh backhaul subnet. The ipv4 subnet is automatically set by the autoconfigure process 
+
+#### Getting the Link Local ipv6 address of the portal node.
+
+As most nodes will autoconfigure to be a portal mode if provided with an upstream ethernet connection, it is important to realise that the ipv4 subnet is configured based on the hash of the mac address of the node and will not be recognisable or easy to guess.
+
+However the ipv6 link local address will be unique to the node regardless of the autoconfigured node type. The last four hex digits of the ipV6 will be the same as, (or in the case of some hardware types be recognisably similar to) the last four digits of the mac address on the label.
+
+Having reflashed the meshnode you want to be the portal node, ie the one that is going to have the upstream ethernet connection, connect the upstream ethernet to wan and your computer to lan and power it on. Wait for it to boot up, could be a minute or so....
+
+On your computer, It should request and receive an ipv4 address via DHCP. Look at the routing table.
+
+**On Linux this would be ip -6 route.** (See later for Windows)
+
+Look for a line in the output with the keyword "via".
+
+For example you might see:
+
+        default via fe80::9683:c4ff:fea2:8ecb dev enp3s0f3u2u4 proto ra metric 20100 pref medium
+
+It may take a few minutes to appear and initially may not say "default".
+
+Re-run the command if necessary.
+
+In this example, the link local ipv6 address is:
+
+        fe80::9683:c4ff:fea2:8ecb
+
+and the ethernet interface is:
+
+        enp3s0f3u2u4
+
+So the full ipv6 address to use from your computer would be:
+
+        fe80::9683:c4ff:fea2:8ecb%enp3s0f3u2u4
+
+Obviously you would substitute the values you found.
+
+To start an ssh terminal window for the device, you would run:
+
+        ssh root@fe80::9683:c4ff:fea2:8ecb%enp3s0f3u2u4
+
+**On Windows this would be the ipconfig command**
+
+ 1. Open Command Prompt: Press Windows Key + R, type cmd, and hit Enter.
+ 2. Run the command: Type ipconfig and press Enter.
+ 3. Look for the IPv6 Default Gateway: Scroll through the output. Find the network adapter you’re using (e.g., "Ethernet adapter" or "Wireless LAN adapter"). Under that section, look for "Default Gateway."
+ 4. It’ll look something like fe80::9683:c4ff:fea2:8ecb%8 or similar, the number after the % will be the interface number.
+
+To start an ssh terminal window for the device, first you must ensure the ssh client software is installed.
+
+ 1. Open cmd (press Windows Key + R, type cmd, and hit Enter).
+ 2. Type ssh and press Enter. If it shows usage info (e.g., "usage: ssh [-46Aaf..."), the SSH client is already installed.
+ 3. If you get "'ssh' is not recognized," you’ll need to enable it.
+       * Go to Settings > Apps > Optional Features.
+       * Click "Add a feature," search for "OpenSSH Client," install it, and restart cmd.
+
+You can now start the ssh terminal window using the command.
+
+Substituting the values you obtained from ipconfig:
+
+        ssh root@fe80::9683:c4ff:fea2:8ecb%8
+
+Once you have logged in to the ssh terminal session, you can check the status by running the command:
+
+        mesh11sd status
+
+#### Power up the other meshnodes
+
+When you are ready, place all the other meshnodes in their desired locations, with at least pairs of nodes within range of each other.
+
+Power them all up and wait for a few minutes for booting to complete and the mesh backhaul to establish.
+
+#### The Mesh Backhaul Heartbeat LED Indicator
+
+On most hardware types of meshnode, the power or status led will begin to flash in a distinctive heartbeat sequence once is is in communication with at least one other meshnode on the mesh backhaul.
+
+
+
+#### Additional Alternative Setup Options
+
+**CPE mode**
+
+One of the most useful options in a “Community” or “Public” mesh network is CPE mode.
+CPE mode (Customer[Client] Premises Equipment, is a special configuration mode for a mesh gate, where the gate provides a nat routed ipv4 network for clients.
+
+For CPE mode, enter the following into the Firmware Selector lower text box:
+
+```
+uci set mesh11sd.setup.auto_config='1'
+uci set portal_detect='3'
+uci set mesh11sd.setup.mesh_gate_base_ssid='MyNetwork'
+uci set mesh11sd.setup.auto_mesh_id='MyMeshID'
+uci set mesh11sd.setup.mesh_gate_encryption='1'
+uci set mesh11sd.setup.mesh_gate_key='MyWifiCode'
+uci commit mesh11sd
+rootpassword="myrootpassword"
+/bin/passwd root << EOF
+$rootpassword
+$root password
+EOF
+```
+
+**Other modes**
+
+There are also numerous other setup options that can be added to the configuration, such as the wireless band to use, the backhaul channel, the mesh path cost etc.
+Full details can be seen here: https://github.com/openNDS/mesh11sd/tree/master#6-setup-options
+
+
+### 4.2 Node by Node Installation
 
 Reflash the first one of these with the standard OpenWrt image and allow it to boot up making sure it is connected to your upstream Internet feed **using its wan port** and that you get Internet access when connected to (one of) its lan ports.
 
@@ -1015,16 +1248,6 @@ Access to the remote meshnode peers will not be possible using the default ipv4 
               DISABLE IMMEDIATELY AFTER DEBUGGING OPERATIONS ARE COMPLETE.
 
 
-**Example**:
-Set the debuglevel to 2
-
-        uci set mesh11sd.setup.debuglevel='2'
-
-Debuglevel will be set immediately to level 2 "info" and will remain set until changed again or a reboot occurs.
-
-Changes can be made permanent with the following command:
-
-        uci commit mesh11sd
 
 ## 11. Mesh Parameter Options
 
@@ -1033,63 +1256,63 @@ Mesh parameters can be changed only while the mesh is active.
 
 Here is a list of available parameters and their function:
 
- * mesh_retry_timeout: the initial retry timeout in millisecond units used by the Mesh Peering Open message
+ * mesh_retry_timeout - the initial retry timeout in millisecond units used by the Mesh Peering Open message
 
- * mesh_confirm_timeout: the initial confirm timeout in millisecond units used by the Mesh Peering Open message
+ * mesh_confirm_timeout - the initial confirm timeout in millisecond units used by the Mesh Peering Open message
 
- * mesh_holding_timeout: the confirm timeout in millisecond units used by the mesh peering management to close a mesh peering
+ * mesh_holding_timeout - the confirm timeout in millisecond units used by the mesh peering management to close a mesh peering
 
- * mesh_max_peer_links: the maximum number of peer links allowed on this mesh interface
+ * mesh_max_peer_links - the maximum number of peer links allowed on this mesh interface
 
- * mesh_max_retries: the maximum number of peer link open retries that can be sent to establish a new peer link instance in a mesh
+ * mesh_max_retries - the maximum number of peer link open retries that can be sent to establish a new peer link instance in a mesh
 
- * mesh_ttl: the value of TTL field set at a source mesh STA (STAtion)
+ * mesh_ttl - the value of TTL field set at a source mesh STA (STAtion)
 
- * mesh_element_ttl: the value of TTL field set at a mesh STA for path selection elements
+ * mesh_element_ttl - the value of TTL field set at a mesh STA for path selection elements
 
- * mesh_auto_open_plinks: whether peer links should be automatically opened when compatible mesh peers are detected [deprecated - most implementations hard coded to enabled]
+ * mesh_auto_open_plinks - whether peer links should be automatically opened when compatible mesh peers are detected [deprecated - most implementations hard coded to enabled]
 
- * mesh_sync_offset_max_neighor: (note the odd spelling)- the maximum number of neighbors to synchronize to
+ * mesh_sync_offset_max_neighor - (note the odd spelling)- the maximum number of neighbors to synchronize to
 
- * mesh_hwmp_max_preq_retries: the number of action frames containing a PREQ (PeerREQuest) that an originator mesh STA can send to a particular path target
+ * mesh_hwmp_max_preq_retries - the number of action frames containing a PREQ (PeerREQuest) that an originator mesh STA can send to a particular path target
 
- * mesh_path_refresh_time: how frequently to refresh mesh paths in milliseconds
+ * mesh_path_refresh_time - how frequently to refresh mesh paths in milliseconds
 
- * mesh_min_discovery_timeout: the minimum length of time to wait until giving up on a path discovery in milliseconds
+ * mesh_min_discovery_timeout - the minimum length of time to wait until giving up on a path discovery in milliseconds
 
- * mesh_hwmp_active_path_timeout: the time in milliseconds for which mesh STAs receiving a PREQ shall consider the forwarding information from the root to be valid.
+ * mesh_hwmp_active_path_timeout - the time in milliseconds for which mesh STAs receiving a PREQ shall consider the forwarding information from the root to be valid.
 
- * mesh_hwmp_preq_min_interval: the minimum interval of time in milliseconds during which a mesh STA can send only one action frame containing a PREQ element
+ * mesh_hwmp_preq_min_interval - the minimum interval of time in milliseconds during which a mesh STA can send only one action frame containing a PREQ element
 
- * mesh_hwmp_net_diameter_traversal_time: the interval of time in milliseconds that it takes for an HWMP (Hybrid Wireless Mesh Protocol) information element to propagate across the mesh
+ * mesh_hwmp_net_diameter_traversal_time - the interval of time in milliseconds that it takes for an HWMP (Hybrid Wireless Mesh Protocol) information element to propagate across the mesh
 
- * mesh_hwmp_rootmode: the configuration of a mesh STA as root mesh STA
+ * mesh_hwmp_rootmode - the configuration of a mesh STA as root mesh STA
 
- * mesh_hwmp_rann_interval: the interval of time in milliseconds between root announcements (rann - RootANNouncement)
+ * mesh_hwmp_rann_interval - the interval of time in milliseconds between root announcements (rann - RootANNouncement)
 
- * mesh_gate_announcements: whether to advertise that this mesh station has access to a broader network beyond the MBSS (Mesh Basic Service Set, a self-contained network of mesh stations that share a mesh profile)
+ * mesh_gate_announcements - whether to advertise that this mesh station has access to a broader network beyond the MBSS (Mesh Basic Service Set, a self-contained network of mesh stations that share a mesh profile)
 
- * mesh_fwding: whether the Mesh STA is forwarding or non-forwarding
+ * mesh_fwding - whether the Mesh STA is forwarding or non-forwarding
 
- * mesh_rssi_threshold: the threshold for average signal strength of candidate station to establish a peer link
+ * mesh_rssi_threshold - the threshold for average signal strength of candidate station to establish a peer link
 
- * mesh_hwmp_active_path_to_root_timeout: The time in milliseconds for which mesh STAs receiving a proactive PREQ shall consider the forwarding information to the root mesh STA to be valid
+ * mesh_hwmp_active_path_to_root_timeout - The time in milliseconds for which mesh STAs receiving a proactive PREQ shall consider the forwarding information to the root mesh STA to be valid
 
- * mesh_hwmp_root_interval: The interval of time in milliseconds between proactive PREQs
+ * mesh_hwmp_root_interval - The interval of time in milliseconds between proactive PREQs
 
  * mesh_hwmp_confirmation_interval: The minimum interval of time in milliseconds during which a mesh STA can send only one Action frame containing a PREQ element for root path confirmation
 
- * mesh_power_mode: The default mesh power save mode which will be the initial setting for new peer links
+ * mesh_power_mode - The default mesh power save mode which will be the initial setting for new peer links
 
- * mesh_awake_window: The duration in milliseconds the STA will remain awake after transmitting its beacon
+ * mesh_awake_window - The duration in milliseconds the STA will remain awake after transmitting its beacon
 
- * mesh_plink_timeout: If no tx activity is seen from a peered STA for longer than this time (in seconds), then remove it from the STA's list of peers.  Default is 0, equating to 30 minutes
+ * mesh_plink_timeout - If no tx activity is seen from a peered STA for longer than this time (in seconds), then remove it from the STA's list of peers.  Default is 0, equating to 30 minutes
 
- * mesh_connected_to_as: if set to true then this mesh STA will advertise in the mesh station information field that it is connected to a captive portal authentication server, or in the simplest case, an upstream router
+ * mesh_connected_to_as - if set to true then this mesh STA will advertise in the mesh station information field that it is connected to a captive portal authentication server, or in the simplest case, an upstream router
 
- * mesh_connected_to_gate: if set to true then this mesh STA will advertise in the mesh station information field that it is connected to a separate network infrastucture such as a wireless network or downstream router
+ * mesh_connected_to_gate - if set to true then this mesh STA will advertise in the mesh station information field that it is connected to a separate network infrastucture such as a wireless network or downstream router
 
- * mesh_nolearn: Try to avoid multi-hop path discovery if the destination is a direct neighbour. Note that this will not be optimal as multi-hop mac-routes will not be discovered. If using this setting, disable mesh forwarding and use another mesh routing protocol
+ * mesh_nolearn - Try to avoid multi-hop path discovery if the destination is a direct neighbour. Note that this will not be optimal as multi-hop mac-routes will not be discovered. If using this setting, disable mesh forwarding and use another mesh routing protocol
 
 **Acronyms used**
 

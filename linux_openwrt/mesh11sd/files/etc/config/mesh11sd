@@ -42,6 +42,7 @@ config mesh11sd 'setup'
 	#  3  - Force CPE mode (Customer Premises Equipment)
 	#  	This is a peer mode but treats the mesh backhaul as an upstream wan connection.
 	#  	A nat routed ipv4 lan is created with its own ipv4 subnet.
+	#       If selected, option vtun_enable is forced to 0
 	#
 	#  4  - Bridge vxlan trunk portal node
 	#	This mode should be used if a bridged connection to the upstream ISP router is required (ie bridged/no-nat ipv4 ).
@@ -57,7 +58,7 @@ config mesh11sd 'setup'
 	#	Compatible with portal nodes configured with portal_detect 0, 1 or 4.
 	#	Functions in a similar way to 0, but FORCES peer mode and adds wan ethernet port to the vxtunnel bridge (default br-tun69)
 	#	The wan port will be an ethernet end point into the vxtunnel, supporting vlans if required.
-	#	The lan port(s) will be ethernet end points into the mash backhaul and will NOT support vlans.
+	#	The lan port(s) will be ethernet end points into the mesh backhaul and will NOT support vlans.
 	#
 	#
 	# Has no effect if auto_config is disabled.
@@ -375,7 +376,7 @@ config mesh11sd 'setup'
 	#
 	# Enables point to multi-point vxlan tunneling from portal to all compatible nodes
 	#
-	# Default: 1 (enabled)
+	# Default: 1 (enabled) unless portal_detect is set to 3 (cpe mode), in which case the default is 0 (disabled)
 	#
 	# To disable, set to zero:
 	#option vtun_enable '0'
