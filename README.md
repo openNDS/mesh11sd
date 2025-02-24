@@ -45,6 +45,31 @@ To get started, you will need at least two mesh capable devices to use as meshno
  2. At least two ethernet ports (usually labelled wan and lan).
  3. At least one mesh compatible radio.
 
+If you are not sure one or more devices you want to use as meshnodes are compatible with a mesh, then you can do a Confidence Test.
+
+#### Confidence Testing
+
+Most modern router hardware supported by OpenWrt also support 802.11s mesh under OpenWrt.
+
+A small number do not and a small number do but lack certain advantageous features such as a reset button that would allow uboot or tftp reflashing to escape from a "bricked" situation.
+
+Also, sometimes, configuration errors may be made, also resulting in a bricked condition.
+
+Mesh11sd provides an escapable "Confidence Test", a basic reflash image that allows the mesh11sd daemon to be manually started in autoconfig mode. If, in the worst case, it becomes impossible to access the node being tested, a simple power cycle will restore an accessible state.
+
+To enable a Confidence Test, configure the node using one of the Deployment Methods mentioned in the next section - BUT configure the auto-config option to be 0, ie disabled.
+
+You can then begin the test by starting an ssh terminal session and issuing the command:
+
+        mesh11sd debuglevel 3; mesh11sd commit_changes commit; mesh11sd auto_config test; logread -f
+
+You will now see the auto_config process in progress. If all is well you can continue with the deployment.
+
+If the process fails and you loose contact, simply power cycle to recover the device.
+
+
+#### Deployment Methods
+
 There are two deployment methods:
 
   1. *The Rapid Deployment firmware flash method* is the quickest and most efficient way to get a mesh network up and running.
@@ -105,7 +130,7 @@ urngd -wpad-basic-mbedtls wpad-mbedtls px-5g-mbedtls ip-full kmod-nft-bridge vxl
 Now, in the lower text box, add the following:
 
 ```
-uci set mesh11sd.setup.auto_config='1'
+uci set mesh11sd.setup.auto_config='1' # Note: Set to 0 for Confidence Testing
 uci set mesh11sd.setup.auto_mesh_id='MyMeshID'
 uci set mesh11sd.setup.mesh_gate_base_ssid='MyNetwork'
 uci set mesh11sd.setup.mesh_gate_encryption='1'
