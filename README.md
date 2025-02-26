@@ -1,33 +1,30 @@
 ## 1. The mesh11sd project
 
-  Mesh11sd is a dynamic management and parameter configuration daemon for 802.11s mesh networks.
+Mesh11sd is a tool for OpenWrt users looking to create and manage wireless mesh networks using the 802.11s standard. (1)
 
-  It was originally designed to leverage 802.11s mesh networking at Captive Portal venues but has now been open sourced. It enables easy and automated mesh network operation with multiple mesh nodes.
-
-  It has a comprehensive CLI based API allowing it to be integrated into typical Captive Portal operations but does not require a Captive Portal to be running.
+It helps automate the process, which can be complex, especially for those new to networking or for the more experienced wanting to rapidly deploy larger networks.
 
 ## 2. Overview
 
-**What is a Mesh?**
+### What is a Mesh Network?
 
-A mesh network is a multi point to multi point layer 2 mac-routing backhaul used to interconnect mesh peers. Mesh peers are generally non-user devices, such as routers, access points, CPEs etc..
+A mesh network is a type of network setup where devices, or "nodes," are interconnected in a way that allows them to communicate with each other directly, without needing a central hub like a router in a traditional network.
 
-A normally configured user device, such as a phone, tablet, laptop etc., cannot connect to a mesh network. Instead, connection is achieved via a mesh gateway, a special type of mesh peer.
+Picture a web: each node can send, receive, and relay data to other nodes, creating multiple paths for information to travel. This makes the network flexible and resilient—if one node goes down, the others can still connect through different routes.
 
-**What is Mesh11sd**
+In practical terms, mesh networks are often used in places where reliable coverage is tricky, like large homes, outdoor areas, or even smart cities.
 
-Mesh11sd is an OpenWrt package that autonomously configures and manages all aspects of an 802.11s mesh backhaul network and its connected nodes.
+For example, some Wi-Fi systems use mesh technology with multiple units working together to blanket an area with signal, avoiding dead zones.
 
-**Are you sure you want a mesh?**
+They’re also common in things like IoT (Internet of Things) devices, where gadgets need to talk to each other efficiently.
 
-A mesh is not a solution to enable your user devices to seamlessly roam from one access point to another.
+The beauty of it is the self-healing nature: the network adapts as nodes join or drop out, keeping things running smoothly. It’s less centralized, more cooperative—like a team passing a ball around until it reaches the goal. (2)
 
-*It is unfortunate that some manufacturers have used the word “Mesh” for marketing purposes to describe their non-standard, closed source, proprietary “roaming” functionality and this causes great confusion to many people when they enter the world of international standards and open source firmware for their network infrastructure.*
+### What is Mesh11sd
 
-    The accepted standard for mesh networks is ieee802.11s.
-    The accepted standard for fast roaming of user devices is ieee802.11r.
+Mesh11sd is an OpenWrt package that autonomously manages all aspects of an 802.11s mesh network and its connected nodes. (3)
 
-***These are two completely unrelated standards.***
+The package acts as a service daemon, dynamically configuring network parameters across multiple mesh nodes and is particularly useful for simplifying setup, reducing manual configuration, and improving network reliability.
 
 ## 3. Major Features:
  1. Auto configuration of 802.11s mesh backhaul
@@ -47,9 +44,9 @@ To get started, you will need at least two mesh capable devices to use as meshno
 
 If you are not sure one or more devices you want to use as meshnodes are compatible with a mesh, then you can do a Confidence Test.
 
-#### Confidence Testing
+### Confidence Testing
 
-Most modern router hardware supported by OpenWrt also support 802.11s mesh under OpenWrt.
+Most modern router hardware supported by OpenWrt also supports 802.11s mesh under OpenWrt.
 
 A small number do not and a small number do but lack certain advantageous features such as a reset button that would allow uboot or tftp reflashing to escape from a "bricked" situation.
 
@@ -57,7 +54,9 @@ Also, sometimes, configuration errors may be made, also resulting in a bricked c
 
 Mesh11sd provides an escapable "Confidence Test", a basic reflash image that allows the mesh11sd daemon to be manually started in autoconfig mode. If, in the worst case, it becomes impossible to access the node being tested, a simple power cycle will restore an accessible state.
 
-To enable a Confidence Test, configure the node using one of the Deployment Methods mentioned in the next section - BUT configure the auto-config option to be 0, ie disabled.
+#### Enable a Confidence Test
+
+***To enable a Confidence Test, configure the node using one of the Deployment Methods mentioned in the next section - BUT configure the auto-config option to be 0, ie disabled.***
 
 You can then begin the test by starting an ssh terminal session and issuing the command:
 
@@ -68,7 +67,7 @@ You will now see the auto_config process in progress. If all is well you can con
 If the process fails and you loose contact, simply power cycle to recover the device.
 
 
-#### Deployment Methods
+### Deployment Methods
 
 There are two deployment methods:
 
@@ -78,17 +77,17 @@ There are two deployment methods:
 
   2. *The Node by Node installation method* can also be used, but is significantly less efficient. It takes much more time and a greater in depth knowledge of OpenWrt to deploy and uses more flash space on the nodes. In addition, there is greater scope for error. There will however be little or no performance penalty if using this method.
 
-### 4.1 Rapid Deployment Firmware Flash
+### Rapid Deployment Firmware Flash
 
 An 802.11s mesh backhaul can be rapidly deployed by taking advantage of the OpenWrt Firmware Selector (or the Image Builder) and the Mesh11sd package.
 
-We will go through the simple steps to create a flash image that contains all that is required to deploy a mesh network backhaul.
+We will go through the simple steps to create a flash image that contains all that is required to deploy a mesh network. We will call this network the *mesh backhaul* as it is the virtual wireless infrastructure that carries user data from one point to another in the background.
 
-In this case we will use one hardware model, but there is no requirement for all the nodes of the mesh to be the same hardware. Obviously, a flash image will have to be made for each hardware type.
+By means of an example, we will use one hardware model, but there is no requirement for all the nodes of the mesh to be the same hardware. Obviously, a flash image will have to be made for each hardware type.
 
 #### Using The Firmware Selector to Create a Custom Image
 
-For this example we will use the GL-iNet MT300N-V2, a tiny low cost device capable of 300Mb/s in backhaul operation.
+For this example we will use the GL-iNet MT300N-V2, a tiny low cost device capable of 300Mb/s for mesh backhaul traffic.
 
 The Firmware Selector can be found here:
 
@@ -155,13 +154,17 @@ Replace myrootpassword with a secret root password of your choice.
 
 OWE is ideal for “guest” type systems and public venues, providing a level of security previously not available.
 
-By default, Mesh11sd creates an additional, independent "Guest" network (ssid Guestxgxxxx).
+#### Guest Network
+
+Mesh11sd creates an additional, independent "Guest" network (ssid Guestxgxxxx).
 
 The Guest network will use OWE Transition security by default.
 
-For a full list of setup options, see sections 9 and 10 below.
+For a full list of setup options, including turning off the Guest network, see sections 9 and 10 below.
 
-Finally, click “REQUEST BUILD” to build your customised firmware.
+#### Request Your Firmware Build
+
+On the Firmware Selector page, click “REQUEST BUILD” to build your customised firmware.
 
 Once the firmware build has completed, you should download it and re-flash all your meshnode devices (of the same hardware type).
 
@@ -186,6 +189,10 @@ Connect an ethernet patch lead, on just one meshnode, to its wan port.
 Connect the other end of the patch lead to a lan port of your isp or existing router, and power up the node.
 
 This node will autoconfigure as a portal node, routing ip traffic from the isp or other router's lan to the new mesh backhaul subnet. The ipv4 subnet is automatically set by the autoconfigure process 
+
+### Open a Terminal Session on the Node
+
+For this we need the Link Local ipv6 address.
 
 #### Getting the Link Local ipv6 address of the portal node.
 
@@ -1761,3 +1768,21 @@ drwxr-xr-x    2 root     root            40 Jan 19 18:54 tmp/
 drwxr-xr-x    3 root     root            60 Jan 19 18:54 usr/
 root@meshnode-1483:~#
 ```
+
+### Footnotes
+
+1. Mesh11sd was originally designed to leverage 802.11s mesh networking at Captive Portal venues but has now been open sourced. It enables easy and automated mesh network operation with multiple mesh nodes. It has a comprehensive CLI based API allowing it to be integrated into typical Captive Portal operations but does not require a Captive Portal to be running.
+
+2. A normally configured user device, such as a phone, tablet, laptop etc., cannot connect to a mesh network. Instead, connection is achieved via a mesh gateway, a special type of mesh device.
+
+3. A mesh is not a solution to enable your user devices to seamlessly roam from one access point to another.
+
+    *It is unfortunate that some manufacturers have used the word “Mesh” for marketing purposes to describe their non-standard, closed source, proprietary “roaming” functionality and this causes great confusion to many people when they enter the world of international standards and open source firmware for their network infrastructure.*
+
+    The accepted standard for mesh networks is ieee802.11s.
+
+    The accepted standard for fast roaming of user devices is ieee802.11r.
+
+    ***These are two completely unrelated standards.***
+
+4. bb
