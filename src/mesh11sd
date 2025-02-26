@@ -1097,7 +1097,7 @@ get_mesh_path_cost () {
 	mesh_path_cost=$(uci get mesh11sd.setup.mesh_path_cost 2> /dev/null)
 
 	if [ -z "$mesh_path_cost" ]; then
-		mesh_path_cost="10"
+		mesh_path_cost="65525"
 	fi
 
 	syslogmessage="option mesh_path_cost [ $mesh_path_cost ]"
