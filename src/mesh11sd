@@ -717,6 +717,12 @@ get_current_setup () {
 		mesh_gate_enable="1"
 	fi
 
+	if [ "$mesh_gate_enable" -eq 1 ]; then
+		ifdisable=0
+	else
+		ifdisable=1
+	fi
+
 	syslogmessage="option mesh_gate_enable [ $mesh_gate_enable ]"
 	debugtype="info"
 	mute="$mutestate"
@@ -2087,7 +2093,7 @@ auto_config() {
 				echo "set wireless.vxradio$radio_index.ifname='vxradio$radio_index'" | uci batch
 				echo "set wireless.vxradio$radio_index.ssid='$vtun_base_ssid'" | uci batch
 				echo "set wireless.vxradio$radio_index.encryption='none'" | uci batch
-				echo "set wireless.vxradio$radio_index.disabled='0'" | uci batch
+				echo "set wireless.vxradio$radio_index.disabled='$ifdisable'" | uci batch
 			done
 		fi
 
