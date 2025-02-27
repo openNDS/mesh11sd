@@ -116,7 +116,7 @@ At the end of the list add the following dependency packages:
 
 ***NOTE: If the node you are configuring uses ath10k-ct drivers, you must change to the none-ct versions. If you do not, mesh11sd will log an error to syslog and terminate.***
 
-For our example of the GL-MT300N-V2, the upper text box will now look like this:
+For our example of the GL-MT300N-V2, the upper text box, labelled "Installed Packages"  will now look like this:
 
 ```
 base-files busybox ca-bundle dnsmasq dropbear firewall4 fstools kmod-gpio-button-hotplug
@@ -126,7 +126,12 @@ ppp ppp-mod-pppoe procd procd-seccomp procd-ujail swconfig uci uclient-fetch ura
 urngd -wpad-basic-mbedtls wpad-mbedtls px-5g-mbedtls ip-full kmod-nft-bridge vxlan mesh11sd
 ```
 
-Now, in the lower text box, add the following:
+On the Firmware Selector Window, it will be similar to this screenshot (changes highlighted in blue):
+
+![openNDS-Mesh11sd](https://github.com/openNDS/mesh11sd/blob/master/docs/images/installed-packages.png)
+
+
+Now, in the lower text box, labelled "Script to run on first boot (uci-defaults)", add the following:
 
 ```
 uci set mesh11sd.setup.auto_config='1' # Note: Set to 0 for Confidence Testing
@@ -142,6 +147,10 @@ $rootpassword
 $rootpassword
 EOF
 ```
+On the Firmware Selector Window, it will be similar to this screenshot:
+
+![openNDS-Mesh11sd](https://github.com/openNDS/mesh11sd/blob/master/docs/images/uci-defaults.png)
+
 Replace MyMeshID with a secret mesh id string of your choice. This is used as a seed for generating secure keys to be used for encrypting all traffic on the mesh backhaul.
 
 Replace MyNetwork with a base SSID to use for all Mesh Gate Access Points. This must be a maximum of 22 characters in length, excess characters will be truncated.
@@ -1786,5 +1795,5 @@ root@meshnode-1483:~#
     ***These are two completely unrelated standards.***
 
 
-![openNDS-Mesh11sd](https://github.com/openNDS/mesh11sd/blob/master/docs/avatarsmall.png)
+![openNDS-Mesh11sd](https://github.com/openNDS/mesh11sd/blob/master/docs/images/avatarsmall.png)
 
