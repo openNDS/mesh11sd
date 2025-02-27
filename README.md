@@ -1785,4 +1785,6 @@ root@meshnode-1483:~#
 
     ***These are two completely unrelated standards.***
 
-4. bb
+
+![openNDS-Mesh11sd](https://github.com/openNDS/mesh11sd/blob/master/docs/avatarsmall.png)
+
