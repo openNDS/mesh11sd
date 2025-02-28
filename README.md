@@ -149,15 +149,15 @@ EOF
 ```
 On the Firmware Selector Window, it will be similar to this screenshot:
 
-![openNDS-Mesh11sd](https://github.com/openNDS/mesh11sd/blob/master/docs/images/uci-defaults.png)
+![openNDS-Mesh11sd](https://github.com/openNDS/mesh11sd/blob/master/docs/images/uci-defaults-highlighted.png)
 
-Replace MyMeshID with a secret mesh id string of your choice. This is used as a seed for generating secure keys to be used for encrypting all traffic on the mesh backhaul.
+Replace MyMeshID (highlighted in red in the screenshot) with a secret mesh id string of your choice. This is used as a seed for generating secure keys to be used for encrypting all traffic on the mesh backhaul.
 
-Replace MyNetwork with a base SSID to use for all Mesh Gate Access Points. This must be a maximum of 22 characters in length, excess characters will be truncated.
+Replace MyNetwork (highlighted in red in the screenshot) with a base SSID to use for all Mesh Gate Access Points. This must be a maximum of 22 characters in length, excess characters will be truncated.
 
-Replace MyWifiCode with a wifi access code you will use for connecting user devices to the Mesh Gate Access Points.
+Replace MyWifiCode (highlighted in red in the screenshot) with a wifi access code you will use for connecting user devices to the Mesh Gate Access Points.
 
-Replace myrootpassword with a secret root password of your choice.
+Replace myrootpassword (highlighted in red in the screenshot) with a secret root password of your choice.
 
 ***NOTE:*** Selecting mesh_gate_encryption='0' will enable OWE Transition mode, supporting “Enhanced Open” encryption on client devices that support it (almost all recent ones) or falling back to legacy “open unencrypted” for those that don't.
 
