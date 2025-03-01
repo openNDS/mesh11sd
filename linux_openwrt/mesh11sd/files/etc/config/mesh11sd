@@ -331,7 +331,7 @@ config mesh11sd 'setup'
 	###########################################################################################
 	# mesh_mac_forced_forwarding (optional)
 	#
-	# This enables mac forced forewarding on the mesh interface
+	# This enables mac forced forwarding on the mesh interface
 	#
 	# Default: 1 (enabled)
 	#
