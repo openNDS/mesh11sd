@@ -4,6 +4,8 @@ Mesh11sd is a tool for OpenWrt users looking to create and manage wireless mesh 
 
 It helps automate the process, which can be complex, especially for those new to networking or for the more experienced wanting to rapidly deploy larger networks.
 
+***Please read this entire document before installing the mesh11sd package!***
+
 ## 2. Overview
 
 ### What is a Mesh Network?
@@ -77,7 +79,7 @@ There are two deployment methods:
 
   2. *The Node by Node installation method* can also be used, but is significantly less efficient. It takes much more time and a greater in depth knowledge of OpenWrt to deploy and uses more flash space on the nodes. In addition, there is greater scope for error. There will however be little or no performance penalty if using this method.
 
-### Rapid Deployment Firmware Flash
+### 4.1 Rapid Deployment Firmware Flash
 
 An 802.11s mesh backhaul can be rapidly deployed by taking advantage of the OpenWrt Firmware Selector (or the Image Builder) and the Mesh11sd package.
 
@@ -278,8 +280,6 @@ Power them all up and wait for a few minutes for booting to complete and the mes
 
 On most hardware types of meshnode, the power or status led will begin to flash in a distinctive heartbeat sequence once is is in communication with at least one other meshnode on the mesh backhaul.
 
-
-
 #### Additional Alternative Setup Options
 
 **CPE mode**
@@ -307,40 +307,47 @@ EOF
 **Other modes**
 
 There are also numerous other setup options that can be added to the configuration, such as the wireless band to use, the backhaul channel, the mesh path cost etc.
-Full details can be seen here: https://github.com/openNDS/mesh11sd/tree/master#6-setup-options
+Full details can be seen here: https://github.com/openNDS/mesh11sd/tree/master#10-setup-options
 
 
 ### 4.2 Node by Node Installation
 
-Reflash the first one of these with the standard OpenWrt image and allow it to boot up making sure it is connected to your upstream Internet feed **using its wan port** and that you get Internet access when connected to (one of) its lan ports.
+Reflash the first one of your meshnodes with the standard OpenWrt image and allow it to boot up making sure it is connected to your upstream Internet feed **using its wan port** and that you get Internet access when connected to (one of) its lan ports.
 
 **Note**: The OpenWrt default is for all wireless interfaces to be disabled. You do not have to enable them here as the mesh11sd daemon will do it for you.
 
 **Note**: If you cannot get Internet access you may need to change the ipv4 subnet of either this meshnode or your isp router.
 
-You are now ready to install mesh11sd and its supporting packages. None of these support packages are essential, but without them there will be much reduced functionality in the resulting mesh network. For example, the mesh backhaul will NOT be encrypted.
+You are now ready to install mesh11sd and its supporting packages. None of these support packages are essential, but without them there will be much reduced functionality in the resulting mesh network. For example, the mesh backhaul may NOT be encrypted.
 
 Log in to a terminal session on the meshnode using ssh.
-Using the normal OpenWrt method (opkg or apk), update the repository databases (``opkg update`` or ``apk update``).
+Using the normal OpenWrt method (opkg or apk), update the repository databases (`opkg update` or `apk update`).
 
 Now do the following:
 
  1. Remove the wpad-basic-mbedtls package.
  2. Install the wpad-mbedtls package.
- 3. Install the ip-full package.
- 4. Install the kmod-nft-bridge package.
- 5. Install the vxlan package
- 6. Install the uhttpd and px5g-mbedtls packages (may already be installed along with the LuCi UI).
+ 3. Activate the new wpad daemon using the command `service wpad restart`
+ 4. Install the ip-full package.
+ 5. Install the kmod-nft-bridge package.
+ 6. Install the vxlan package
+ . Install the uhttpd and px5g-mbedtls packages (may already be installed along with the LuCi UI).
  7. Finally - Install the mesh11sd package.
 
 The mesh11sd daemon should now be running in a "safe" state (aka "manual mode").
 
-To continue we now need to activate the new wpad daemon we installed at point 2 above.
+Now we need to login to the node to configure it. To do this, follow the section "Open a Terminal Session on the Node" above.
 
-Use the command:
+For security, you should now use the `passwd` command to set the root password on the node.
 
+The next step is to run a Confidence Test. To do this, follow the section "Enable a Confidence Test" above.
 
-``service wpad restart``
+If this is successful we can now set the final auto_config state for the node. Run the command:
+
+`mesh11sd auto_config enable`
+
+Repeat everything in this section for all the other meshnodes.
+
 
 ## 5. Important Considerations
 
