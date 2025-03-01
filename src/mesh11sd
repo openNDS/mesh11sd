@@ -2907,7 +2907,7 @@ check_vtunnel() {
 			uci set firewall.vtunlan.network='vtunlan'
 			uci set firewall.vtunlan.input='ACCEPT'
 			uci set firewall.vtunlan.output='ACCEPT'
-			uci set firewall.vtunlan.forward='REJECT'
+			uci set firewall.vtunlan.forward='ACCEPT'
 
 			uci set firewall.dhcptun$tun_id=rule
 			uci set firewall.dhcptun$tun_id.name='VTUN-DHCP-Renew'
