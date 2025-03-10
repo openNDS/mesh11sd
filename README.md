@@ -110,7 +110,7 @@ At or near the end you will see wpad-basic-mbedtls. Add a minus sign (-) in fron
 At the end of the list add the following dependency packages:
 
   1. wpad-mbedtls
-  2. px-5g-mbedtls
+  2. px5g-mbedtls
   3. ip-full
   4. kmod-nft-bridge
   5. vxlan
@@ -125,7 +125,7 @@ base-files busybox ca-bundle dnsmasq dropbear firewall4 fstools kmod-gpio-button
 kmod-leds-gpio kmod-mt7603 kmod-nft-offload kmod-usb-ohci kmod-usb2 libc libgcc
 libustream-mbedtls logd luci mtd netifd nftables odhcp6c odhcpd-ipv6only opkg
 ppp ppp-mod-pppoe procd procd-seccomp procd-ujail swconfig uci uclient-fetch urandom-seed
-urngd -wpad-basic-mbedtls wpad-mbedtls px-5g-mbedtls ip-full kmod-nft-bridge vxlan mesh11sd
+urngd -wpad-basic-mbedtls wpad-mbedtls px5g-mbedtls ip-full kmod-nft-bridge vxlan mesh11sd
 ```
 
 On the Firmware Selector Window, it will be similar to this screenshot (changes highlighted in blue):
