@@ -12,7 +12,7 @@
 #
 # mesh11sd daemon
 #
-version="5.0.1"
+version="5.0.2beta"
 fixup1=0
 ip4pingfailcount=0
 network_restart=0
