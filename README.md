@@ -6,6 +6,8 @@ It helps automate the process, which can be complex, especially for those new to
 
 ***Please read this entire document before installing the mesh11sd package!***
 
+***Note: This documentation applies to version 5.0.0 or higher.***
+
 ## 2. Overview
 
 ### What is a Mesh Network?
@@ -393,7 +395,7 @@ You must now stop the mesh11sd service using the following command:
 
 This should be set in the normal OpenWrt way, using either the uci utility or the Luci Web UI.
 
-**Base IP Addrress and Subnet Mask**
+**Base IP Address and Subnet Mask**
 
 This should be set in the normal OpenWrt way, using either the uci utility or the Luci Web UI.
 
@@ -483,6 +485,7 @@ If the mesh network interface is defined in the wireless configuration file, mes
 
 ```
 
+
 config mesh11sd 'setup'
 	###########################################################################################
 	# debuglevel (optional)
@@ -548,6 +551,17 @@ config mesh11sd 'setup'
 	# Has no effect if auto_config is disabled.
 	#
 	#option portal_detect '0'
+
+	###########################################################################################
+	# portal_use_default_ipv4 (optional)
+	# Effective only if node is a portal
+	#
+	# Default 0
+	#
+	# When set to 1, the default ipv4 address found in /etc/config/network is used
+	# When set to 0 or not set, an ip subnet address is calulated based on the label mac address
+	#
+	#option portal_use_default_ipv4 '1'
 
 	###########################################################################################
 	# portal_channel (optional) Applies to 2.4 GHz band only
@@ -815,7 +829,7 @@ config mesh11sd 'setup'
 	###########################################################################################
 	# mesh_mac_forced_forwarding (optional)
 	#
-	# This enables mac forced forewarding on the mesh interface
+	# This enables mac forced forwarding on the mesh interface
 	#
 	# Default: 1 (enabled)
 	#
@@ -1003,6 +1017,7 @@ config mesh11sd 'mesh_params'
 
 	#
 	# The command: "mesh11sd status" gives a full list of supported parameters.
+
 ```
 All mesh parameter settings in the config file are dynamic and will take effect immediately.
 
@@ -1070,6 +1085,15 @@ Access to the remote meshnode peers will not be possible using the default ipv4 
 	             The lan port(s) will be ethernet end points into the mash backhaul and will NOT support vlans.
 
 	             Has no effect if auto_config is disabled.
+
+* portal_use_default_ipv4 (optional)
+             Effective only if node is a portal
+
+             Default 0
+
+             When set to 1, the default ipv4 address found in /etc/config/network is used
+
+             When set to 0 or not set, an ip subnet address is calulated based on the label mac address
 
 * portal_channel (optional) Applies to 2.4 GHz band only
              Valid only when the meshnode is a portal.
