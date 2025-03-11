@@ -66,6 +66,17 @@ config mesh11sd 'setup'
 	#option portal_detect '0'
 
 	###########################################################################################
+	# portal_use_default_ipv4 (optional)
+	# Effective only if node is a portal
+	#
+	# Default 0
+	#
+	# When set to 1, the default ipv4 address found in /etc/config/network is used
+	# When set to 0 or not set, an ip subnet address is calulated based on the label mac address
+	#
+	#option portal_use_default_ipv4 '1'
+
+	###########################################################################################
 	# portal_channel (optional) Applies to 2.4 GHz band only
 	#
 	# If portal_detect is disabled (0), portal_channel can be set to:
