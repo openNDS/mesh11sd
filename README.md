@@ -455,13 +455,13 @@ Power up all nodes in any order, having one only connected to your isp router as
 
 The mesh can have numerous types of meshnodes.
 
-  1. **Peer Node** - the basic mesh peer - capable of mac-routing layer 2 packets in the mesh network.
-  2. **Gateway Node** - a peer node that also hosts an access point (AP) radio for normal client devices to connect to. Also known as a gate. A gate can also function as a CPE (Customer [or Client] Premises Equipment), hosting a downstream layer 3 network with its own unique ipv4 subnet.
-  3. **Gateway Leech Node** - a special type of Gateway Node that connects to the mesh backhaul but neither contributes to it nor advertises itself on it.
-  4. **Portal Node** - a peer node that also hosts a layer 3 routed upstream connection (eg an Internet feed)
-  5. **CPE Gateway Node**
-  6. **Portal Bridge Node**
-  7. **Trunk Node**
+  a. **Peer Node** - the basic mesh peer - capable of mac-routing layer 2 packets in the mesh network.
+  b. **Gateway Node** - a peer node that also hosts an access point (AP) radio for normal client devices to connect to. Also known as a gate. A gate can also function as a CPE (Customer [or Client] Premises Equipment), hosting a downstream layer 3 network with its own unique ipv4 subnet.
+  c. **Gateway Leech Node** - a special type of Gateway Node that connects to the mesh backhaul but neither contributes to it nor advertises itself on it.
+  d. **Portal Node** - a peer node that also hosts a layer 3 routed upstream connection (eg an Internet feed)
+  e. **CPE Gateway Node**
+  f. **Portal Bridge Node**
+  g. **Trunk Node**
 
 It is possible for a Portal node to also be a Gateway node (ie it hosts an AP as well as an upstream connection) as well as other combinations.
 
@@ -531,9 +531,9 @@ config mesh11sd 'setup'
 	#  	A nat routed ipv4 lan is created with its own ipv4 subnet.
 	#       If selected, option vtun_enable is forced to 0
 	#
-	#  4  - Bridge vxlan trunk portal node
+	#  4  - Force Bridge vxlan trunk portal node
 	#	This mode should be used if a bridged connection to the upstream ISP router is required (ie bridged/no-nat ipv4 ).
-	#	Functions in a similar way to 0, ie forces BRIDGED portal mode, ADDING the wan ethernet port to the vxtunnel bridge (default br-tun69)
+	#	Functions in a similar way to 0, but forces BRIDGED rather than routed portal mode, ADDING the wan ethernet port to the vxtunnel bridge (default br-tun69)
 	#	The wan port will be an ethernet end point into the vxtunnel, supporting vlans if required.
 	#	The wan port and lan port(s) form independent layer 2 networks carried by the mesh backhaul to all peer meshnodes.
 	#	the vxlan tunnel can be treated as a separate virtual ethernet tunnel to all mesh nodes.
@@ -1058,11 +1058,11 @@ Access to the remote meshnode peers will not be possible using the default ipv4 
 	             This is a peer mode but treats the mesh backhaul as an upstream wan connection.
 	             A nat routed ipv4 lan is created with its own ipv4 subnet.
 
-	        4  - Bridge vxlan trunk portal node
+	        4  - Force Bridge vxlan trunk portal node
 
 	             This mode should be used if a bridged connection to the upstream ISP router is required (ie bridged/no-nat ipv4 ).
 
-	             Functions in a similar way to 0, ie forces BRIDGED portal mode, ADDING the wan ethernet port to the vxtunnel bridge (default br-tun69)
+                 Functions in a similar way to 0, but forces BRIDGED rather than routed portal mode, ADDING the wan ethernet port to the vxtunnel bridge (default br-tun69)
 
 	             The wan port will be an ethernet end point into the vxtunnel, supporting vlans if required.
 
