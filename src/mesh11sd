@@ -339,7 +339,7 @@ get_current_setup () {
 	auto_mesh_network=$(uci get mesh11sd.setup.auto_mesh_network 2> /dev/null)
 
 	# Get the default lan mac address
-	auto_mesh_network=lan
+	auto_mesh_network="lan"
 	refresh_bridgemac
 	. $tmpdir/devicemac
 
@@ -1677,6 +1677,10 @@ check_portal() {
 
 				/sbin/service dnsmasq reload
 				/sbin/service system restart
+
+				# Just become a peer so stop opennds if it is installed and enabled
+				restart_opennds stop
+
 			fi
 
 			check_dns_server
@@ -1738,6 +1742,9 @@ check_portal() {
 				if [ "$daemon_startup" -eq 1 ]; then
 					daemon_startup=0
 				fi
+
+				# Just become a portal so start opennds if it is installed and enabled
+				restart_opennds start
 			fi
 		fi
 	fi
@@ -2040,8 +2047,32 @@ get_wiphys() {
 refresh_bridgemac() {
 	# get the device device mac and write it to $tmpdir/devicemac
 	device=$(uci get network.$auto_mesh_network.device)
+	configured_mac=$(uci get network.$auto_mesh_network.macaddr 2>/dev/null)
+
+	if [ -z "$device" ]; then
+		device="br-lan"
+	fi
+
 	wait_for_interface "$device"
 	devicemac=$(ip link | grep -A 1 "$device:" | grep -w "link/ether" | awk '{printf "%s", $2}')
+
+	if [ ! -f "/etc/factory_mac" ]; then
+		echo "factory_mac=\"$devicemac\"" > /etc/factory_mac
+
+		if [ -z "$configured_mac" ]; then
+			echo "set network.$auto_mesh_network.macaddr='$devicemac'" | uci batch
+			uci commit network
+		fi
+
+	fi
+
+	. /etc/factory_mac
+
+	if [ "$factory_mac" != "$devicemac" ]; then
+		devicemac="$factory_mac"
+		ip link set $device down; ip link set $device up address $devicemac
+	fi
+
 	echo "device=\"$device\" ; devicemac=\"$devicemac\"" > $tmpdir/devicemac
 }
 
@@ -2851,6 +2882,10 @@ create_vxlan_if() {
 check_vtunnel() {
 	# Check if vxlan tunnel is required and set it up
 
+	if [ ! -f "$tmpdir/active_mesh_ifname" ]; then
+		return
+	fi
+
 	if [ "$vtun_enable" = 1 ]; then
 		debugtype="debug"
 		syslogmessage="check_vtunnel"
@@ -3491,7 +3526,7 @@ is_default() {
 
 set_led() {
 
-	if [ "$mesh_backhaul_led" = "none" ]; then
+	if [ "$mesh_backhaul_led" = "none" ] || [ "$auto_config" -eq 0 ]; then
 		return 0
 	fi
 
@@ -3547,6 +3582,11 @@ set_led() {
 }
 
 check_mesh_active_led() {
+
+	if [ ! -f "$tmpdir/active_mesh_ifname" ]; then
+		return
+	fi
+
 	. $tmpdir/active_mesh_ifname
 	active_peers=$(iw dev $active_mesh_ifname mpath dump | grep -c -w $active_mesh_ifname)
 
@@ -3647,6 +3687,14 @@ generate_ipv4_base() {
 	debugtype="debug"
 	write_to_syslog
 }
+
+restart_opennds () {
+
+	if [ ! -z "$1" ] && [ "$opennds_installed" -eq 0 ]; then
+		/sbin/service opennds "$1"
+	fi
+}
+
 
 ##############
 # Start point
@@ -4861,6 +4909,20 @@ elif [ "$1" = "daemon" ]; then
 		rm "$tmpdir/active_mesh_ifname"
 	fi
 
+	# Is opennnds installed?
+	opennds_installed=$(is_installed "opennds"; echo -n $?)
+
+	if [ "$opennds_installed" -eq 0 ]; then
+		debugtype="notice"
+		syslogmessage="openNDS is installed, unconditionally stopping it"
+		write_to_syslog
+
+		# unconditionally trt to stop openNDS
+		restart_opennds stop
+		sleep 10
+	fi
+
+
 
 	if [ "$auto_config" -gt 0 ]; then
 		# redirect luci web ui
@@ -4972,7 +5034,7 @@ elif [ "$1" = "daemon" ]; then
 			ip link delete dev "$br_tun"
 		fi
 
-		/sbin/service network reload
+		/sbin/service network restart
 		/sbin/service dnsmasq restart
 		/sbin/service firewall restart
 		sleep 5
@@ -5033,6 +5095,8 @@ elif [ "$1" = "daemon" ]; then
 	arp_setup
 
 	setup_apmon_cgi
+
+	refresh_bridgemac
 
 	# Start the main loop
 	while true; do
@@ -5352,9 +5416,12 @@ elif [ "$1" = "daemon" ]; then
 						/sbin/service dnsmasq restart
 						/sbin/service odhcpd restart
 						restart_mesh
-
+						restart_opennds restart
 						cpe_conf=1
 					fi
+
+				elif [ "$portal_detect" -eq 0 ]; then
+					restart_opennds restart
 				fi
 			fi
 
@@ -5363,7 +5430,7 @@ elif [ "$1" = "daemon" ]; then
 			check_hwmp
 			wait_for_mesh
 
-			if [ "$mesh_mac_forced_forwarding" -eq 1 ]; then
+			if [ "$mesh_mac_forced_forwarding" -eq 1 ] && [ -f "$tmpdir/active_mesh_ifname" ]; then
 				. $tmpdir/active_mesh_ifname
 				echo 1 > /proc/sys/net/ipv4/conf/$active_mesh_ifname/proxy_arp_pvlan
 			fi
