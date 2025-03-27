@@ -899,6 +899,10 @@ get_current_setup () {
 		apmond_cgi_dir="$apmond_cgi_dir/"
 	fi
 
+	if [ ! -e "$apmond_cgi_dir" ]; then
+		mkdir -p "$apmond_cgi_dir"
+	fi
+
 	syslogmessage="option apmond_cgi_dir [ $apmond_cgi_dir ]"
 	debugtype="info"
 	mute="$mutestate"
