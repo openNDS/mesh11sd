@@ -4601,13 +4601,25 @@ elif [ "$1" = "commit_all" ]; then
 
 	elif [ "$2" = "commit" ] && [ "$auto_config" -eq 1 ]; then
 
-		configs="mesh11sd wireless dhcp network firewall"
+		echo "    Dynamic auto_configure options will be written to non volatile storage and LuCi UI will be enabled..... "
+		echo "    This is for advanced users, continue at your own risk."
+		echo "    This process can be reverted with the \"revert_all\" command."
+		echo
+		echo "    Do you want to continue? [yes/no] "
 
-		for config in $configs; do
-			uci commit "$config"
-		done
+		read reply
 
-		restore_luci_cgi
+		if [ "$reply" = "yes" ]; then
+			configs="mesh11sd wireless dhcp network firewall"
+
+			for config in $configs; do
+				uci commit "$config"
+			done
+
+			restore_luci_cgi
+		else
+			echo "Aborting commit_all"
+		fi
 	fi
 
 	echo "=========================================================================================================="
@@ -4653,7 +4665,7 @@ elif [ "$1" = "revert_all" ]; then
 			echo "Revert complete, auto configuration will rebuild - restarting......"
 			reboot
 		else
-			echo "Aborting revert"
+			echo "Aborting revert_all"
 		fi
 	fi
 
