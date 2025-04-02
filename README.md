@@ -302,7 +302,7 @@ uci commit mesh11sd
 rootpassword="myrootpassword"
 /bin/passwd root << EOF
 $rootpassword
-$root password
+$rootpassword
 EOF
 ```
 
