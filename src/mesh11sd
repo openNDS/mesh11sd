@@ -169,6 +169,18 @@ get_current_setup () {
 	write_to_syslog
 
 	#####
+	commit_all=$(uci get mesh11sd.setup.commit_all 2> /dev/null)
+
+	if [ -z "$commit_all" ]; then
+		commit_all=0
+	fi
+
+	syslogmessage="option commit_all [ $commit_all ]"
+	debugtype="info"
+	mute="$mutestate"
+	write_to_syslog
+
+	#####
 	checkinterval=$(uci get mesh11sd.setup.checkinterval 2> /dev/null)
 
 	if [ -z "$checkinterval" ] || [ "$checkinterval" -lt 10 ]; then
@@ -1594,7 +1606,7 @@ check_dns_server() {
 		if [ ! -z "$gw_ip" ]; then
 			dns_server_config=$(uci get dhcp.@dnsmasq[0].server &> /dev/null; echo -n "$?")
 
-			if [ "$dns_server_config" -eq 1 ]; then
+			if [ "$dns_server_config" -eq 1 ] && [ "$commit_all" -eq 0 ]; then
 				echo "add_list dhcp.@dnsmasq[0].server='$gw_ip'" | uci batch
 				uci set dhcp.@dnsmasq[0].authoritative='0'
 				/sbin/service dnsmasq reload
@@ -1674,7 +1686,7 @@ check_portal() {
 					fi
 				done
 
-				if [ ! -z "$gw_ip" ]; then
+				if [ ! -z "$gw_ip" ] && [ "$commit_all" -eq 0 ]; then
 					echo "add_list dhcp.@dnsmasq[0].server='$gw_ip'" | uci batch
 					uci set dhcp.@dnsmasq[0].authoritative='0'
 				fi
@@ -2922,7 +2934,11 @@ check_vtunnel() {
 			uci set network.vtunnel=device
 			echo "set network.vtunnel.name='br-tun$tun_id'" | uci batch
 			uci set network.vtunnel.type='bridge'
-			echo "add_list network.vtunnel.ports='vxlan$tun_id'" | uci batch
+
+			if [ "$commit_all" -eq 0 ]; then
+				echo "add_list network.vtunnel.ports='vxlan$tun_id'" | uci batch
+			fi
+
 			uci set network.vtunlan=interface
 			echo "set network.vtunlan.device='br-tun$tun_id'" | uci batch
 			echo "set network.vtunlan.ipaddr='$vtun_ip'" | uci batch
@@ -2936,8 +2952,12 @@ check_vtunnel() {
 			uci set dhcp.vtunlan.limit='150'
 			uci set dhcp.vtunlan.leasetime='12h'
 			uci set dhcp.vtunlan.ra_slaac='1'
-			uci add_list dhcp.vtunlan.ra_flags='managed-config'
-			uci add_list dhcp.vtunlan.ra_flags='other-config'
+
+			if [ "$commit_all" -eq 0 ]; then
+				uci add_list dhcp.vtunlan.ra_flags='managed-config'
+				uci add_list dhcp.vtunlan.ra_flags='other-config'
+			fi
+
 			uci set dhcp.vtunlan.ignore='1'
 			uci set dhcp.vtunlan.ra_default='2'
 
@@ -2975,7 +2995,7 @@ check_vtunnel() {
 			uci set firewall.vxlan_fwd.src='vtunlan'
 			uci set firewall.vxlan_fwd.dest='wan'
 
-			if [ "$portal_detect" -eq 4 ]; then
+			if [ "$portal_detect" -eq 4 ] && [ "$commit_all" -eq 0 ]; then
 				echo "set network.wan.disabled='1'" | uci batch
 				echo "set network.wan6.disabled='1'" | uci batch
 				wanif=$(uci get network.wan.device)
@@ -2984,7 +3004,7 @@ check_vtunnel() {
 				uci set firewall.vtunlan.forward='ACCEPT'
 			fi
 
-			if [ "$portal_detect" -eq 5 ]; then
+			if [ "$portal_detect" -eq 5 ] && [ "$commit_all" -eq 0 ]; then
 				echo "set network.wan.disabled='1'" | uci batch
 				echo "set network.wan6.disabled='1'" | uci batch
 				wanif=$(uci get network.wan.device)
@@ -3549,12 +3569,14 @@ set_led() {
 
 			if [ "$ledaction" = "none" ] || [ "$ledaction" = "heartbeat" ]; then
 				echo "default-on" > "/sys/class/leds/$led/trigger"
+
 				sleep 1
 				echo "none" > "/sys/class/leds/$led/trigger"
 			fi
 		done
 
-		sleep 1
+		sleep 3
+		return 0
 	fi
 
 
@@ -3695,7 +3717,11 @@ generate_ipv4_base() {
 restart_opennds () {
 
 	if [ ! -z "$1" ] && [ "$opennds_installed" -eq 0 ]; then
-		/sbin/service opennds "$1"
+		opennds_running=$(service opennds info | grep -A2 "instance1" | grep "running" | grep "true" &> /dev/null ; echo $?)
+
+		if [ "$opennds_running" -eq 0 ] && [ "$1" = "stop" ]; then
+			/sbin/service opennds stop
+		fi
 	fi
 }
 
@@ -4612,6 +4638,8 @@ elif [ "$1" = "commit_all" ]; then
 		if [ "$reply" = "yes" ]; then
 			configs="mesh11sd wireless dhcp network firewall"
 
+			echo "set mesh11sd.setup.commit_all='1'" | uci batch
+
 			for config in $configs; do
 				uci commit "$config"
 			done
@@ -4913,27 +4941,29 @@ elif [ "$1" = "daemon" ]; then
 	debugtype="notice"
 	syslogmessage="mesh11sd is in startup"
 	write_to_syslog
-
+echo "network reload"
 	/sbin/service network reload
+echo "leds init"
 	set_led init
+echo "leds on"
 	set_led on
 
 	get_kernel_version
 	cpe_conf=0
-
+echo "rm active_mesh_ifname"
 	if [ -f "$tmpdir/active_mesh_ifname" ]; then
 		rm "$tmpdir/active_mesh_ifname"
 	fi
 
 	# Is opennnds installed?
 	opennds_installed=$(is_installed "opennds"; echo -n $?)
-
+echo "opennds_installed=$opennds_installed!"
 	if [ "$opennds_installed" -eq 0 ]; then
 		debugtype="notice"
 		syslogmessage="openNDS is installed, unconditionally stopping it"
 		write_to_syslog
 
-		# unconditionally trt to stop openNDS
+		# unconditionally try to stop openNDS
 		restart_opennds stop
 		sleep 10
 	fi
@@ -4992,7 +5022,7 @@ elif [ "$1" = "daemon" ]; then
 
 
 		# Before restarting the network, check if CPE mode is requested
-		if [ "$portal_detect" -eq 3 ]; then
+		if [ "$portal_detect" -eq 3 ] && [ "$commit_all" -eq 0 ]; then
 			#CPE mode, so setup network config accordingly
 			wanif=$(uci get network.wan.device)
 			wan6if=$(uci get network.wan6.device)
@@ -5327,10 +5357,10 @@ elif [ "$1" = "daemon" ]; then
 
 			if [ "$auto_config" -eq 1 ] || [ -e "$tmpdir/auto_config_test" ]; then
 
-				if [ "$portal_detect" -ge 1 ] && [ "$portal_detect" -lt 4 ]; then
+				if [ "$portal_detect" -ge 1 ] && [ "$portal_detect" -lt 4 ] && [ "$commit_all" -eq 0 ]; then
 					check_portal
 
-				elif [ "$portal_detect" -eq 0 ] || [ "$portal_detect" -eq 4 ]; then
+				elif [ "$portal_detect" -eq 0 ] || [ "$portal_detect" -eq 4 ] && [ "$commit_all" -eq 0 ]; then
 					# portal_detect is not enabled - 0 force portal mode, 4 force portal bridge mode:
 					authoritative=$(uci get dhcp.@dnsmasq[0].authoritative 2>/dev/null | awk '{printf "%d", $1}')
 
@@ -5394,7 +5424,7 @@ elif [ "$1" = "daemon" ]; then
 						restart_mesh
 					fi
 
-				elif [ "$portal_detect" -eq 3 ]; then
+				elif [ "$portal_detect" -eq 3 ] && [ "$commit_all" -eq 0 ]; then
 
 					if [ "$cpe_conf" -eq 0 ]; then
 
