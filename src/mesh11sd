@@ -3156,6 +3156,14 @@ hex_to_str() {
 	local hexstr=""
 	local inputlen=$((${#input}))
 
+	is_hex "$input"
+	retval=$?
+
+	if [ "$retval" -ne 0 ]; then
+		str=""
+		return 1
+	fi
+
 	while true; do
 		hex="\x${input:$i:2}"
 		hexstr="$hexstr$hex"
@@ -3167,6 +3175,22 @@ hex_to_str() {
 	done
 
 	str=$(printf "$hexstr")
+}
+
+is_hex() {
+	local input="$1"
+	# Check if input is empty
+
+	if [ -z "$input" ]; then
+		return 1
+	fi
+
+	# Check if input contains only valid hex characters (0-9, a-f, A-F)
+	echo "$input" | grep -E '^[0-9a-fA-F]+$' >/dev/null
+
+	if [ $? -ne 0 ]; then
+		return 1
+	fi
 }
 
 write_node_data() {
@@ -4830,6 +4854,10 @@ elif [ "$1" = "hex_to_str" ]; then
 	hex_to_str "$2"
 	echo -n "$str"
 	exit 0
+
+elif [ "$1" = "is_hex" ]; then
+	is_hex "$2"
+	exit $?
 
 elif [ "$1" = "is_ipv4addr_valid" ]; then
 	is_ipv4addr_valid "$2"
