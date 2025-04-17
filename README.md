@@ -138,13 +138,21 @@ On the Firmware Selector Window, it will be similar to this screenshot (changes 
 Now, in the lower text box, labelled "Script to run on first boot (uci-defaults)", add the following:
 
 ```
-uci set mesh11sd.setup.auto_config='1' # Note: Set to 0 for Confidence Testing
-uci set mesh11sd.setup.auto_mesh_id='MyMeshID'
-uci set mesh11sd.setup.mesh_gate_base_ssid='MyNetwork'
-uci set mesh11sd.setup.mesh_gate_encryption='1'
-uci set mesh11sd.setup.mesh_gate_key='MyWifiCode'
+# WARNING:
+# Setting auto_config to 1 enables auto_config.
+# Do this when you are CONFIDENT your hardware/config combination works.
+# Make sure you have read and understand the documentation.
+# Otherwise, in the worst case, you might soft brick your router into a tight boot loop.
+
+uci set mesh11sd.setup.auto_config='0' # Note: This is set to 0 for Confidence Testing
+
+uci set mesh11sd.setup.auto_mesh_id='MyMeshID' # This is a secret mesh ID string of your choice.
+uci set mesh11sd.setup.mesh_gate_base_ssid='MyNetwork' # This is your AP SSID string
+uci set mesh11sd.setup.mesh_gate_encryption='1' # This selects the encryption type to use on your AP
+uci set mesh11sd.setup.mesh_gate_key='MyWifiCode' # This is the WiFi code to use when connecting to your AP
 uci commit mesh11sd
-uci commit network
+
+# For security, set your root password:
 rootpassword="myrootpassword"
 /bin/passwd root << EOF
 $rootpassword
