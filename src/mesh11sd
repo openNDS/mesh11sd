@@ -169,6 +169,18 @@ get_current_setup () {
 	write_to_syslog
 
 	#####
+	commit_all=$(uci get mesh11sd.setup.commit_all 2> /dev/null)
+
+	if [ -z "$commit_all" ]; then
+		commit_all=0
+	fi
+
+	syslogmessage="option commit_all [ $commit_all ]"
+	debugtype="info"
+	mute="$mutestate"
+	write_to_syslog
+
+	#####
 	checkinterval=$(uci get mesh11sd.setup.checkinterval 2> /dev/null)
 
 	if [ -z "$checkinterval" ] || [ "$checkinterval" -lt 10 ]; then
@@ -339,7 +351,7 @@ get_current_setup () {
 	auto_mesh_network=$(uci get mesh11sd.setup.auto_mesh_network 2> /dev/null)
 
 	# Get the default lan mac address
-	auto_mesh_network=lan
+	auto_mesh_network="lan"
 	refresh_bridgemac
 	. $tmpdir/devicemac
 
@@ -897,6 +909,10 @@ get_current_setup () {
 
 	if [ "$lastchar" != "/" ]; then
 		apmond_cgi_dir="$apmond_cgi_dir/"
+	fi
+
+	if [ ! -e "$apmond_cgi_dir" ]; then
+		mkdir -p "$apmond_cgi_dir"
 	fi
 
 	syslogmessage="option apmond_cgi_dir [ $apmond_cgi_dir ]"
@@ -1590,7 +1606,7 @@ check_dns_server() {
 		if [ ! -z "$gw_ip" ]; then
 			dns_server_config=$(uci get dhcp.@dnsmasq[0].server &> /dev/null; echo -n "$?")
 
-			if [ "$dns_server_config" -eq 1 ]; then
+			if [ "$dns_server_config" -eq 1 ] && [ "$commit_all" -eq 0 ]; then
 				echo "add_list dhcp.@dnsmasq[0].server='$gw_ip'" | uci batch
 				uci set dhcp.@dnsmasq[0].authoritative='0'
 				/sbin/service dnsmasq reload
@@ -1670,13 +1686,17 @@ check_portal() {
 					fi
 				done
 
-				if [ ! -z "$gw_ip" ]; then
+				if [ ! -z "$gw_ip" ] && [ "$commit_all" -eq 0 ]; then
 					echo "add_list dhcp.@dnsmasq[0].server='$gw_ip'" | uci batch
 					uci set dhcp.@dnsmasq[0].authoritative='0'
 				fi
 
 				/sbin/service dnsmasq reload
 				/sbin/service system restart
+
+				# Just become a peer so stop opennds if it is installed and enabled
+				restart_opennds stop
+
 			fi
 
 			check_dns_server
@@ -1738,6 +1758,9 @@ check_portal() {
 				if [ "$daemon_startup" -eq 1 ]; then
 					daemon_startup=0
 				fi
+
+				# Just become a portal so start opennds if it is installed and enabled
+				restart_opennds start
 			fi
 		fi
 	fi
@@ -2040,8 +2063,32 @@ get_wiphys() {
 refresh_bridgemac() {
 	# get the device device mac and write it to $tmpdir/devicemac
 	device=$(uci get network.$auto_mesh_network.device)
+	configured_mac=$(uci get network.$auto_mesh_network.macaddr 2>/dev/null)
+
+	if [ -z "$device" ]; then
+		device="br-lan"
+	fi
+
 	wait_for_interface "$device"
 	devicemac=$(ip link | grep -A 1 "$device:" | grep -w "link/ether" | awk '{printf "%s", $2}')
+
+	if [ ! -f "/etc/factory_mac" ]; then
+		echo "factory_mac=\"$devicemac\"" > /etc/factory_mac
+
+		if [ -z "$configured_mac" ]; then
+			echo "set network.$auto_mesh_network.macaddr='$devicemac'" | uci batch
+			uci commit network
+		fi
+
+	fi
+
+	. /etc/factory_mac
+
+	if [ "$factory_mac" != "$devicemac" ]; then
+		devicemac="$factory_mac"
+		ip link set $device down; ip link set $device up address $devicemac
+	fi
+
 	echo "device=\"$device\" ; devicemac=\"$devicemac\"" > $tmpdir/devicemac
 }
 
@@ -2851,6 +2898,10 @@ create_vxlan_if() {
 check_vtunnel() {
 	# Check if vxlan tunnel is required and set it up
 
+	if [ ! -f "$tmpdir/active_mesh_ifname" ]; then
+		return
+	fi
+
 	if [ "$vtun_enable" = 1 ]; then
 		debugtype="debug"
 		syslogmessage="check_vtunnel"
@@ -2883,7 +2934,11 @@ check_vtunnel() {
 			uci set network.vtunnel=device
 			echo "set network.vtunnel.name='br-tun$tun_id'" | uci batch
 			uci set network.vtunnel.type='bridge'
-			echo "add_list network.vtunnel.ports='vxlan$tun_id'" | uci batch
+
+			if [ "$commit_all" -eq 0 ]; then
+				echo "add_list network.vtunnel.ports='vxlan$tun_id'" | uci batch
+			fi
+
 			uci set network.vtunlan=interface
 			echo "set network.vtunlan.device='br-tun$tun_id'" | uci batch
 			echo "set network.vtunlan.ipaddr='$vtun_ip'" | uci batch
@@ -2897,8 +2952,12 @@ check_vtunnel() {
 			uci set dhcp.vtunlan.limit='150'
 			uci set dhcp.vtunlan.leasetime='12h'
 			uci set dhcp.vtunlan.ra_slaac='1'
-			uci add_list dhcp.vtunlan.ra_flags='managed-config'
-			uci add_list dhcp.vtunlan.ra_flags='other-config'
+
+			if [ "$commit_all" -eq 0 ]; then
+				uci add_list dhcp.vtunlan.ra_flags='managed-config'
+				uci add_list dhcp.vtunlan.ra_flags='other-config'
+			fi
+
 			uci set dhcp.vtunlan.ignore='1'
 			uci set dhcp.vtunlan.ra_default='2'
 
@@ -2936,7 +2995,7 @@ check_vtunnel() {
 			uci set firewall.vxlan_fwd.src='vtunlan'
 			uci set firewall.vxlan_fwd.dest='wan'
 
-			if [ "$portal_detect" -eq 4 ]; then
+			if [ "$portal_detect" -eq 4 ] && [ "$commit_all" -eq 0 ]; then
 				echo "set network.wan.disabled='1'" | uci batch
 				echo "set network.wan6.disabled='1'" | uci batch
 				wanif=$(uci get network.wan.device)
@@ -2945,7 +3004,7 @@ check_vtunnel() {
 				uci set firewall.vtunlan.forward='ACCEPT'
 			fi
 
-			if [ "$portal_detect" -eq 5 ]; then
+			if [ "$portal_detect" -eq 5 ] && [ "$commit_all" -eq 0 ]; then
 				echo "set network.wan.disabled='1'" | uci batch
 				echo "set network.wan6.disabled='1'" | uci batch
 				wanif=$(uci get network.wan.device)
@@ -3097,6 +3156,14 @@ hex_to_str() {
 	local hexstr=""
 	local inputlen=$((${#input}))
 
+	is_hex "$input"
+	retval=$?
+
+	if [ "$retval" -ne 0 ]; then
+		str=""
+		return 1
+	fi
+
 	while true; do
 		hex="\x${input:$i:2}"
 		hexstr="$hexstr$hex"
@@ -3108,6 +3175,22 @@ hex_to_str() {
 	done
 
 	str=$(printf "$hexstr")
+}
+
+is_hex() {
+	local input="$1"
+	# Check if input is empty
+
+	if [ -z "$input" ]; then
+		return 1
+	fi
+
+	# Check if input contains only valid hex characters (0-9, a-f, A-F)
+	echo "$input" | grep -E '^[0-9a-fA-F]+$' >/dev/null
+
+	if [ $? -ne 0 ]; then
+		return 1
+	fi
 }
 
 write_node_data() {
@@ -3491,7 +3574,7 @@ is_default() {
 
 set_led() {
 
-	if [ "$mesh_backhaul_led" = "none" ]; then
+	if [ "$mesh_backhaul_led" = "none" ] || [ "$auto_config" -eq 0 ]; then
 		return 0
 	fi
 
@@ -3510,12 +3593,14 @@ set_led() {
 
 			if [ "$ledaction" = "none" ] || [ "$ledaction" = "heartbeat" ]; then
 				echo "default-on" > "/sys/class/leds/$led/trigger"
+
 				sleep 1
 				echo "none" > "/sys/class/leds/$led/trigger"
 			fi
 		done
 
-		sleep 1
+		sleep 3
+		return 0
 	fi
 
 
@@ -3547,6 +3632,11 @@ set_led() {
 }
 
 check_mesh_active_led() {
+
+	if [ ! -f "$tmpdir/active_mesh_ifname" ]; then
+		return
+	fi
+
 	. $tmpdir/active_mesh_ifname
 	active_peers=$(iw dev $active_mesh_ifname mpath dump | grep -c -w $active_mesh_ifname)
 
@@ -3647,6 +3737,18 @@ generate_ipv4_base() {
 	debugtype="debug"
 	write_to_syslog
 }
+
+restart_opennds () {
+
+	if [ ! -z "$1" ] && [ "$opennds_installed" -eq 0 ]; then
+		opennds_running=$(service opennds info | grep -A2 "instance1" | grep "running" | grep "true" &> /dev/null ; echo $?)
+
+		if [ "$opennds_running" -eq 0 ] && [ "$1" = "stop" ]; then
+			/sbin/service opennds stop
+		fi
+	fi
+}
+
 
 ##############
 # Start point
@@ -4549,13 +4651,27 @@ elif [ "$1" = "commit_all" ]; then
 
 	elif [ "$2" = "commit" ] && [ "$auto_config" -eq 1 ]; then
 
-		configs="mesh11sd wireless dhcp network firewall"
+		echo "    Dynamic auto_configure options will be written to non volatile storage and LuCi UI will be enabled..... "
+		echo "    This is for advanced users, continue at your own risk."
+		echo "    This process can be reverted with the \"revert_all\" command."
+		echo
+		echo "    Do you want to continue? [yes/no] "
 
-		for config in $configs; do
-			uci commit "$config"
-		done
+		read reply
 
-		restore_luci_cgi
+		if [ "$reply" = "yes" ]; then
+			configs="mesh11sd wireless dhcp network firewall"
+
+			echo "set mesh11sd.setup.commit_all='1'" | uci batch
+
+			for config in $configs; do
+				uci commit "$config"
+			done
+
+			restore_luci_cgi
+		else
+			echo "Aborting commit_all"
+		fi
 	fi
 
 	echo "=========================================================================================================="
@@ -4601,7 +4717,7 @@ elif [ "$1" = "revert_all" ]; then
 			echo "Revert complete, auto configuration will rebuild - restarting......"
 			reboot
 		else
-			echo "Aborting revert"
+			echo "Aborting revert_all"
 		fi
 	fi
 
@@ -4739,6 +4855,10 @@ elif [ "$1" = "hex_to_str" ]; then
 	echo -n "$str"
 	exit 0
 
+elif [ "$1" = "is_hex" ]; then
+	is_hex "$2"
+	exit $?
+
 elif [ "$1" = "is_ipv4addr_valid" ]; then
 	is_ipv4addr_valid "$2"
 	retval=$?
@@ -4849,17 +4969,33 @@ elif [ "$1" = "daemon" ]; then
 	debugtype="notice"
 	syslogmessage="mesh11sd is in startup"
 	write_to_syslog
-
+echo "network reload"
 	/sbin/service network reload
+echo "leds init"
 	set_led init
+echo "leds on"
 	set_led on
 
 	get_kernel_version
 	cpe_conf=0
-
+echo "rm active_mesh_ifname"
 	if [ -f "$tmpdir/active_mesh_ifname" ]; then
 		rm "$tmpdir/active_mesh_ifname"
 	fi
+
+	# Is opennnds installed?
+	opennds_installed=$(is_installed "opennds"; echo -n $?)
+echo "opennds_installed=$opennds_installed!"
+	if [ "$opennds_installed" -eq 0 ]; then
+		debugtype="notice"
+		syslogmessage="openNDS is installed, unconditionally stopping it"
+		write_to_syslog
+
+		# unconditionally try to stop openNDS
+		restart_opennds stop
+		sleep 10
+	fi
+
 
 
 	if [ "$auto_config" -gt 0 ]; then
@@ -4914,7 +5050,7 @@ elif [ "$1" = "daemon" ]; then
 
 
 		# Before restarting the network, check if CPE mode is requested
-		if [ "$portal_detect" -eq 3 ]; then
+		if [ "$portal_detect" -eq 3 ] && [ "$commit_all" -eq 0 ]; then
 			#CPE mode, so setup network config accordingly
 			wanif=$(uci get network.wan.device)
 			wan6if=$(uci get network.wan6.device)
@@ -4972,7 +5108,7 @@ elif [ "$1" = "daemon" ]; then
 			ip link delete dev "$br_tun"
 		fi
 
-		/sbin/service network reload
+		/sbin/service network restart
 		/sbin/service dnsmasq restart
 		/sbin/service firewall restart
 		sleep 5
@@ -5033,6 +5169,8 @@ elif [ "$1" = "daemon" ]; then
 	arp_setup
 
 	setup_apmon_cgi
+
+	refresh_bridgemac
 
 	# Start the main loop
 	while true; do
@@ -5247,10 +5385,10 @@ elif [ "$1" = "daemon" ]; then
 
 			if [ "$auto_config" -eq 1 ] || [ -e "$tmpdir/auto_config_test" ]; then
 
-				if [ "$portal_detect" -ge 1 ] && [ "$portal_detect" -lt 4 ]; then
+				if [ "$portal_detect" -ge 1 ] && [ "$portal_detect" -lt 4 ] && [ "$commit_all" -eq 0 ]; then
 					check_portal
 
-				elif [ "$portal_detect" -eq 0 ] || [ "$portal_detect" -eq 4 ]; then
+				elif [ "$portal_detect" -eq 0 ] || [ "$portal_detect" -eq 4 ] && [ "$commit_all" -eq 0 ]; then
 					# portal_detect is not enabled - 0 force portal mode, 4 force portal bridge mode:
 					authoritative=$(uci get dhcp.@dnsmasq[0].authoritative 2>/dev/null | awk '{printf "%d", $1}')
 
@@ -5314,7 +5452,7 @@ elif [ "$1" = "daemon" ]; then
 						restart_mesh
 					fi
 
-				elif [ "$portal_detect" -eq 3 ]; then
+				elif [ "$portal_detect" -eq 3 ] && [ "$commit_all" -eq 0 ]; then
 
 					if [ "$cpe_conf" -eq 0 ]; then
 
@@ -5352,9 +5490,12 @@ elif [ "$1" = "daemon" ]; then
 						/sbin/service dnsmasq restart
 						/sbin/service odhcpd restart
 						restart_mesh
-
+						restart_opennds restart
 						cpe_conf=1
 					fi
+
+				elif [ "$portal_detect" -eq 0 ]; then
+					restart_opennds restart
 				fi
 			fi
 
@@ -5363,7 +5504,7 @@ elif [ "$1" = "daemon" ]; then
 			check_hwmp
 			wait_for_mesh
 
-			if [ "$mesh_mac_forced_forwarding" -eq 1 ]; then
+			if [ "$mesh_mac_forced_forwarding" -eq 1 ] && [ -f "$tmpdir/active_mesh_ifname" ]; then
 				. $tmpdir/active_mesh_ifname
 				echo 1 > /proc/sys/net/ipv4/conf/$active_mesh_ifname/proxy_arp_pvlan
 			fi
