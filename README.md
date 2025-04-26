@@ -31,13 +31,14 @@ Mesh11sd is an OpenWrt package that autonomously manages all aspects of an 802.1
 The package acts as a service daemon, dynamically configuring network parameters across multiple mesh nodes and is particularly useful for simplifying setup, reducing manual configuration, and improving network reliability.
 
 ## 3. Major Features:
- 1. Auto configuration of 802.11s mesh backhaul
- 2. Optional Bridge Portal mode supporting VLAN trunking over the mesh backhaul.
- 3. Optional Trunk Peer Mode providing ethernet downstream VLAN support.
- 4. Optional Customer/Client Premises Mode (CPE)
- 5. Default support for Opportunistic Wireless Encryption (OWE), with OWE Transition.
- 6. Optional portal node to multi point peer group, enabling "guest" networking over mesh backhaul without the need for setting up a VLAN.
- 7. Centralised Access Point usage database, enabling connected client statistics to be viewed.
+ 1. **Auto configuration** of 802.11s mesh backhaul (Default)
+ 2. **Bridge Portal Mode** Configures a bridged portal (ie no ipv4 routing) and supports tunnelling of a VLAN trunk over the mesh backhaul (Optional).
+ 3. **Trunk Peer Mode** providing ethernet downstream VLAN support from connections to remote peers (Optional).
+ 4. **Customer Premises Equipment Mode (CPE)** (AKA Client Premises Equipment Mode), providing a routed peer with an upstream Internet connection via the mesh backhaul (Optional). Ideal for WISP or Community Network use cases.
+ 5. **Opportunistic Wireless Encryption (OWE)**, with OWE Transition. It provides encryption for open Wi-Fi networks without requiring user authentication, enhancing security for public or guest networks (Default).
+ 6. **Portal-Node to Peer-Group Mode**, enabling "guest" networking over mesh backhaul without the need for setting up a VLAN (Default).
+ 7. **Access Point Monitoring** (AKA Mesh Gate Monitoring). Incorporates the code and functionality of the apmond package. A centralised Access Point usage database is created, enabling access point statistics, such as client connections, client data volumes etc., to be viewed on the Mesh Portal in json format (Default).
+ 8. **Leech Mode Peer**, enables a special type of peer that can join the mesh backhaul without contributing to the backhaul infrastructure. Useful for providing coverage "fill in" where access point signals are too weak for client devices. The Leech Mode peer forwards only the traffic of clients that are connected to it, it does not forward the traffic of other peers.
 
 ## 4. Getting Started:
 To get started, you will need at least two mesh capable devices to use as meshnodes. These meshnodes should have:
