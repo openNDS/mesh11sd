@@ -1091,6 +1091,7 @@ check_config_params() {
 		echo "set mesh11sd.mesh_params.mesh_max_peer_links='$mesh_max_peer_links'" | uci batch
 	fi
 
+	config_max_peer_links="$mesh_max_peer_links"
 	syslogmessage="option mesh_max_peer_links [ $mesh_max_peer_links ]"
 	debugtype="info"
 	write_to_syslog
@@ -2779,6 +2780,10 @@ probe_interface_mac() {
 check_mesh_gate_only() {
 	current_mgo_option=$(uci get mesh11sd.setup.mesh_leechmode_enable 2> /dev/null | awk '{printf "%s", $1}')
 
+	debugtype="debug"
+	syslogmessage="mesh_leechmode status [ $current_mgo_option ]"
+	write_to_syslog
+
 	if [ -z "$current_mgo_option" ]; then
 		current_mgo_option="$mesh_gate_only"
 	fi
@@ -2790,6 +2795,7 @@ check_mesh_gate_only() {
 			echo "set mesh11sd.mesh_params.mesh_fwding='0'" | uci batch
 			echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='0'" | uci batch
 			echo "set mesh11sd.mesh_params.mesh_gate_announcements='0'" | uci batch
+			echo "set mesh11sd.mesh_params.mesh_max_peer_links='1'" | uci batch
 		elif [ "$current_mgo_option" -eq 0 ]; then
 
 			if [ -z "$is_portal" ]; then
@@ -2801,6 +2807,7 @@ check_mesh_gate_only() {
 
 			echo "set mesh11sd.mesh_params.mesh_fwding='1'" | uci batch
 			echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='$rootmode'" | uci batch
+			echo "set mesh11sd.mesh_params.mesh_max_peer_links='$config_max_peer_links'" | uci batch
 
 			current_ctg_option=$(uci get mesh11sd.mesh_params.mesh_connected_to_gate 2> /dev/null | awk '{printf "%s", $1}')
 
@@ -2812,7 +2819,10 @@ check_mesh_gate_only() {
 		mesh_gate_only=$current_mgo_option
 
 	elif [ "$current_mgo_option" -eq 1 ]; then
+		echo "set mesh11sd.mesh_params.mesh_fwding='0'" | uci batch
 		echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='0'" | uci batch
+		echo "set mesh11sd.mesh_params.mesh_gate_announcements='0'" | uci batch
+		echo "set mesh11sd.mesh_params.mesh_max_peer_links='1'" | uci batch
 
 	elif [ "$current_mgo_option" -eq 0 ]; then
 
@@ -2824,6 +2834,7 @@ check_mesh_gate_only() {
 		fi
 
 		echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='$rootmode'" | uci batch
+		echo "set mesh11sd.mesh_params.mesh_max_peer_links='$config_max_peer_links'" | uci batch
 	fi
 }
 
