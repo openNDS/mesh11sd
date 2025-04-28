@@ -812,7 +812,7 @@ get_current_setup () {
 	reactive_path_stabilisation_threshold=$(uci get mesh11sd.setup.reactive_path_stabilisation_threshold 2> /dev/null)
 
 	if [ -z "$reactive_path_stabilisation_threshold" ] || [ "$reactive_path_stabilisation_threshold" -eq 0 ]; then
-		reactive_path_stabilisation_threshold="10"
+		reactive_path_stabilisation_threshold="5"
 	fi
 
 	syslogmessage="option reactive_path_stabilisation_threshold [ $reactive_path_stabilisation_threshold ]"
