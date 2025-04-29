@@ -812,7 +812,7 @@ get_current_setup () {
 	reactive_path_stabilisation_threshold=$(uci get mesh11sd.setup.reactive_path_stabilisation_threshold 2> /dev/null)
 
 	if [ -z "$reactive_path_stabilisation_threshold" ] || [ "$reactive_path_stabilisation_threshold" -eq 0 ]; then
-		reactive_path_stabilisation_threshold="10"
+		reactive_path_stabilisation_threshold="5"
 	fi
 
 	syslogmessage="option reactive_path_stabilisation_threshold [ $reactive_path_stabilisation_threshold ]"
@@ -1091,6 +1091,7 @@ check_config_params() {
 		echo "set mesh11sd.mesh_params.mesh_max_peer_links='$mesh_max_peer_links'" | uci batch
 	fi
 
+	config_max_peer_links="$mesh_max_peer_links"
 	syslogmessage="option mesh_max_peer_links [ $mesh_max_peer_links ]"
 	debugtype="info"
 	write_to_syslog
@@ -1474,7 +1475,12 @@ get_portal_state() {
 			elif [ "$portal_detect_threshold" -le "$ip4pingfailcount" ]; then
 				# we have reached the portal detect threshold. This either means there is no portal, or something has stopped working
 
-				if [ "$network_restart" -eq 0 ]; then
+				if [ "$leechmode" -eq 1 ]; then
+					uci set mesh11sd.setup.mesh_leechmode_enable='0'
+					leechmode=0
+					debugtype="err"
+					syslogmessage="portal detect threshold reached, enabling HWMP announcments						"
+				elif [ "$network_restart" -eq 0 ]; then
 					dhcpdevice=$(echo "get network.$auto_mesh_network.device" | uci batch | awk '{printf "%s", $1}')
 					debugtype="err"
 					syslogmessage="portal detect threshold reached, watchdog is monitoring"
@@ -1715,6 +1721,12 @@ check_portal() {
 			fi
 
 			if [ "$detected_state" = "portal" ] && [ "$last_state" = "peer" ]; then
+
+				if [ "$leechmode" -eq 1 ]; then
+					uci set mesh11sd.setup.mesh_leechmode_enable='0'
+					leechmode=0
+				fi
+
 				last_state="portal"
 				debugtype="debug"
 				syslogmessage="This meshnode is an upstream portal"
@@ -2584,6 +2596,9 @@ check_path_changes() {
 
 								if [ "$mesh_path_stabilisation" -eq 1 ]; then
 									mrstloopcount=$(eval echo "\$node$peermac_id")
+									debugtype="debug"
+									syslogmessage="mrstloopcount [ $mrstloopcount ]"
+									write_to_syslog
 
 									if [ -z "$mrstloopcount"]; then
 										mrstloopcount=0
@@ -2595,6 +2610,11 @@ check_path_changes() {
 										write_to_syslog
 										iw dev $iface station del $peermac
 										eval "node$peermac_id"="0"
+
+										if [ -z "$is_portal" ]; then
+											uci set mesh11sd.setup.mesh_leechmode_enable='1'
+											leechmode=1
+										fi
 									else
 										debugtype="notice"
 										syslogmessage="Mesh Reactive Stabilisation Threshold counter [ $mrstloopcount/$reactive_path_stabilisation_threshold ]"
@@ -2779,6 +2799,10 @@ probe_interface_mac() {
 check_mesh_gate_only() {
 	current_mgo_option=$(uci get mesh11sd.setup.mesh_leechmode_enable 2> /dev/null | awk '{printf "%s", $1}')
 
+	debugtype="debug"
+	syslogmessage="mesh_leechmode status [ $current_mgo_option ]"
+	write_to_syslog
+
 	if [ -z "$current_mgo_option" ]; then
 		current_mgo_option="$mesh_gate_only"
 	fi
@@ -2790,6 +2814,7 @@ check_mesh_gate_only() {
 			echo "set mesh11sd.mesh_params.mesh_fwding='0'" | uci batch
 			echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='0'" | uci batch
 			echo "set mesh11sd.mesh_params.mesh_gate_announcements='0'" | uci batch
+			echo "set mesh11sd.mesh_params.mesh_max_peer_links='1'" | uci batch
 		elif [ "$current_mgo_option" -eq 0 ]; then
 
 			if [ -z "$is_portal" ]; then
@@ -2801,6 +2826,7 @@ check_mesh_gate_only() {
 
 			echo "set mesh11sd.mesh_params.mesh_fwding='1'" | uci batch
 			echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='$rootmode'" | uci batch
+			echo "set mesh11sd.mesh_params.mesh_max_peer_links='$config_max_peer_links'" | uci batch
 
 			current_ctg_option=$(uci get mesh11sd.mesh_params.mesh_connected_to_gate 2> /dev/null | awk '{printf "%s", $1}')
 
@@ -2812,9 +2838,14 @@ check_mesh_gate_only() {
 		mesh_gate_only=$current_mgo_option
 
 	elif [ "$current_mgo_option" -eq 1 ]; then
+		echo "set mesh11sd.mesh_params.mesh_fwding='0'" | uci batch
 		echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='0'" | uci batch
+		echo "set mesh11sd.mesh_params.mesh_gate_announcements='0'" | uci batch
+		echo "set mesh11sd.mesh_params.mesh_max_peer_links='1'" | uci batch
+		leechmode=1
 
 	elif [ "$current_mgo_option" -eq 0 ]; then
+		leechmode=0
 
 		if [ -z "$is_portal" ]; then
 			# This IS NOT a layer 3 mesh portal
@@ -2824,6 +2855,7 @@ check_mesh_gate_only() {
 		fi
 
 		echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='$rootmode'" | uci batch
+		echo "set mesh11sd.mesh_params.mesh_max_peer_links='$config_max_peer_links'" | uci batch
 	fi
 }
 
