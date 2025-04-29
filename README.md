@@ -464,19 +464,25 @@ Power up all nodes in any order, having one only connected to your isp router as
 
 The mesh can have numerous types of meshnodes.
 
-  a. **Peer Node** - the basic mesh peer - capable of mac-routing layer 2 packets in the mesh network.
-  b. **Gateway Node** - a peer node that also hosts an access point (AP) radio for normal client devices to connect to. Also known as a gate. A gate can also function as a CPE (Customer [or Client] Premises Equipment), hosting a downstream layer 3 network with its own unique ipv4 subnet.
-  c. **Gateway Leech Node** - a special type of Gateway Node that connects to the mesh backhaul but neither contributes to it nor advertises itself on it.
-  d. **Portal Node** - a peer node that also hosts a layer 3 routed upstream connection (eg an Internet feed)
-  e. **CPE Gateway Node**
-  f. **Portal Bridge Node**
-  g. **Trunk Node**
+  * **Peer Node** - the basic mesh peer - capable of mac-routing layer 2 packets in the mesh network.
 
-It is possible for a Portal node to also be a Gateway node (ie it hosts an AP as well as an upstream connection) as well as other combinations.
+  * **Gateway Node** - a peer node that also hosts an access point (AP) radio for normal client devices to connect to. Also known as a gate.
+
+  * **Gateway Leech Node** - a special type of Gateway Node that connects to the mesh backhaul but neither contributes to it nor advertises itself on it.
+
+  * **Portal Node** - a peer node that also hosts a layer 3 routed upstream connection (eg an Internet feed)
+
+  * **CPE Gateway Node** A special type of Gateway Node can also function as a CPE (Customer [or Client] Premises Equipment), hosting a downstream layer 3 network with its own unique ipv4 subnet.
+
+  * **Bridge Portal Node** A special type of Portal Node that functions as a bridge rather than a layer 3 router. The WAN port functions as a Trunk port connected to the WAN ports of all the Trunk Peer Nodes on the mesh backhaul.
+
+  * **Trunk Peer Node** A special kind of Peer node That provides a trunk connection from its WAN port to the WAN port of a Bridge Portal Node.
+
+Various combinations are possible, for example it is possible for a Portal node to also be a Gateway node (ie it hosts an AP as well as an upstream connection).
 
 ## 8. Auto Channel Tracking:
 
-All Peer and Gateway nodes will track the wireless channel that the Portal node is using. If the Portal node changes its working channel, this will be detected and tracked autonomously by downstream meshnodes.
+All Peer nodes will track the wireless channel that the Portal node is using. If the Portal node changes its working channel, this will be detected and tracked autonomously by downstream meshnodes.
 
 The default radio will be on 2.4 GHz but can be changed by means of a simple config option.
 
