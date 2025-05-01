@@ -3838,7 +3838,7 @@ if [ -z "$1" ] || [ "$1" = "-h" ] || [ $1 = "--help" ] || [ $1 = "help" ]; then
     If the remote meshnode mac address is omitted, a list of meshnode mac addresses available for connection is listed
 
   Option: copy
-  Copy a file to /tmp on a remote meshnode
+  Copy a file to $tmpdir/ on a remote meshnode
   Usage: mesh11sd copy [remote_meshnode_macaddress] [path_of_source_file]
     If the remote meshnode mac address is null, or both arguments are omitted, a list of meshnode mac addresses available for copy is listed
 
@@ -4430,7 +4430,7 @@ elif [ "$1" = "copy" ]; then
 
 	echo "==========================================================================="
 
-	echo " Copy a file to /tmp on a remote meshnode"
+	echo " Copy a file to $tmpdir/ on a remote meshnode"
 	echo "    Usage: mesh11sd copy [remote_meshnode_macaddress] [path_of_source_file]"
 	echo
 	wait_for_nodes
@@ -4464,7 +4464,7 @@ elif [ "$1" = "copy" ]; then
 
 				if [ "$nodeaddr" = "$ndpmac" ] && [ ! -z "$filepath" ]; then
 					echo
-					echo "Trying to copy to meshnode \"$ndpmacf\"....."
+					echo "Trying to copy [ $tmpdir/$filename ] to meshnode [ $ndpmacf ]....."
 					scp "$filepath" "root@[$linklocal]:$tmpdir/$filename"
 					echo
 					echo "Disconnected from meshnode \"$ndpmacf\""
