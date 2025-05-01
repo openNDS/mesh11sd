@@ -1624,7 +1624,7 @@ Mesh11sd is an OpenWrt service daemon and runs continuously in the background. I
  		 	If the remote meshnode mac address is omitted, a list of meshnode mac addresses available for connection is listed.
 
         Option: copy
-		  Copy a file to /tmp/ on a remote meshnode
+		  Copy a file to the mesh11sd temporary storage area (default /tmp/mesh11sd/) on a remote meshnode
 		  Usage: mesh11sd copy [remote_meshnode_macaddress] [path_of_source_file]
 			If the remote meshnode mac address is null, or both arguments are omitted, a list of meshnode mac addresses available for copy is listed.
 
