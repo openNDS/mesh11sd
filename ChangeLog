@@ -1,3 +1,22 @@
+mesh11sd (5.1.0)
+
+  * Fix - correctly indicate the target path of a copy command [bluewavenet]
+  * Fix - change default reactive_path_stabilisation_threshold to 5 from 10 [bluewavenet]
+  * Add - auto leechmode to mesh path stabilisation [bluewavenet]
+  * Fix - procd procd_set_param stdout 0 [bluewavenet]
+  * Add - mesh_leechmode sets mesh_max_peerlinks to 1 [bluewavenet]
+  * Add - warning to ucidefaults about auto_config and confidence test [bluewavenet]
+  * Add - is_hex() and cli test if a string is valid hex number [bluewavenet]
+  * Fix - some issues with commit_all and opennds cp compatibility [bluewavenet]
+  * Add - response check for revert_all command [bluewavenet]
+  * Fix - ensure apmon_cgi_dir exists [bluewavenet]
+  * Add - restart opennds if installed and check presence of active_mesh_ifname file [bluewavenet]
+  * Fix - clarify portal_detect modes [bluewavenet]
+  * Fix - add missing option portal_use_default_ipv4 in documentation [bluewavenet]
+  * Fix - typo in README.md documentation [bluewavenet]
+
+ -- Rob White <dot@blue-wave.net>  Mon, 05 May 2025 07:09:34 +0000
+
 mesh11sd (5.0.1)
 
   * Fix - vtunlan forwarding over non mesh backhaul segments [bluewavenet]
