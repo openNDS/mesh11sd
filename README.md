@@ -1,6 +1,6 @@
 ## 1. The mesh11sd project
 
-Mesh11sd is a tool for OpenWrt users looking to create and manage wireless mesh networks using the 802.11s standard. (1)
+Mesh11sd is a tool for OpenWrt users looking to create and manage wireless mesh networks using the 802.11s standard. [^1]
 
 It helps automate the process, which can be complex, especially for those new to networking or for the more experienced wanting to rapidly deploy larger networks.
 
@@ -22,11 +22,11 @@ For example, some Wi-Fi systems use mesh technology with multiple units working 
 
 They’re also common in things like IoT (Internet of Things) devices, where gadgets need to talk to each other efficiently.
 
-The beauty of it is the self-healing nature: the network adapts as nodes join or drop out, keeping things running smoothly. It’s less centralized, more cooperative—like a team passing a ball around until it reaches the goal. (2)
+The beauty of it is the self-healing nature: the network adapts as nodes join or drop out, keeping things running smoothly. It’s less centralized, more cooperative—like a team passing a ball around until it reaches the goal. [^2]
 
 ### What is Mesh11sd
 
-Mesh11sd is an OpenWrt package that autonomously manages all aspects of an 802.11s mesh network and its connected nodes. (3)
+Mesh11sd is an OpenWrt package that autonomously manages all aspects of an 802.11s mesh network and its connected nodes. [^3]
 
 The package acts as a service daemon, dynamically configuring network parameters across multiple mesh nodes and is particularly useful for simplifying setup, reducing manual configuration, and improving network reliability.
 
@@ -1993,22 +1993,20 @@ drwxr-xr-x    3 root     root            60 Jan 19 18:54 usr/
 root@meshnode-1483:~#
 ```
 
+![openNDS-Mesh11sd](https://github.com/openNDS/mesh11sd/blob/master/docs/images/avatarsmall.png)
+
 ### Footnotes
 
-1. Mesh11sd was originally designed to leverage 802.11s mesh networking at Captive Portal venues but has now been open sourced. It enables easy and automated mesh network operation with multiple mesh nodes. It has a comprehensive CLI based API allowing it to be integrated into typical Captive Portal operations but does not require a Captive Portal to be running.
+[^1]: Mesh11sd was originally designed to leverage 802.11s mesh networking at Captive Portal venues but has now been open sourced. It enables easy and automated mesh network operation with multiple mesh nodes. It has a comprehensive CLI based API allowing it to be integrated into typical Captive Portal operations but does not require a Captive Portal to be running.
 
-2. A normally configured user device, such as a phone, tablet, laptop etc., cannot connect to a mesh network. Instead, connection is achieved via a mesh gateway, a special type of mesh device.
+[^2]: A normally configured user device, such as a phone, tablet, laptop etc., cannot connect to a mesh network. Instead, connection is achieved via a mesh gateway, a special type of mesh device.
 
-3. A mesh is not a solution to enable your user devices to seamlessly roam from one access point to another.
-
-    *It is unfortunate that some manufacturers have used the word “Mesh” for marketing purposes to describe their non-standard, closed source, proprietary “roaming” functionality and this causes great confusion to many people when they enter the world of international standards and open source firmware for their network infrastructure.*
-
-    The accepted standard for mesh networks is ieee802.11s.
-
-    The accepted standard for fast roaming of user devices is ieee802.11r.
-
+[^3]: A mesh is not a solution to enable your user devices to seamlessly roam from one access point to another.  
+*It is unfortunate that some manufacturers have used the word “Mesh” for marketing purposes to describe their non-standard, closed source, proprietary “roaming” functionality and this causes great confusion to many people when they enter the world of international standards and open source firmware for their network infrastructure.*  
+  
+    The accepted standard for mesh networks is ieee802.11s.  
+  
+    The accepted standard for fast roaming of user devices is ieee802.11r.  
+  
     ***These are two completely unrelated standards.***
-
-
-![openNDS-Mesh11sd](https://github.com/openNDS/mesh11sd/blob/master/docs/images/avatarsmall.png)
 
