@@ -2003,7 +2003,7 @@ root@meshnode-1483:~#
 
 [^3]: A mesh is not a solution to enable your user devices to seamlessly roam from one access point to another.  
 *It is unfortunate that some manufacturers have used the word “Mesh” for marketing purposes to describe their non-standard, closed source, proprietary “roaming” functionality and this causes great confusion to many people when they enter the world of international standards and open source firmware for their network infrastructure.*  
- * The accepted standard for mesh networks is ieee802.11s.  
- * The accepted standard for fast roaming of user devices is ieee802.11r.  
+***The accepted standard for mesh networks is ieee802.11s.***  
+***The accepted standard for fast roaming of user devices is ieee802.11r.***  
 ***These are two completely unrelated standards.***
 
