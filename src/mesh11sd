@@ -5001,23 +5001,23 @@ elif [ "$1" = "daemon" ]; then
 	debugtype="notice"
 	syslogmessage="mesh11sd is in startup"
 	write_to_syslog
-echo "network reload"
+
 	/sbin/service network reload
-echo "leds init"
+
 	set_led init
-echo "leds on"
+
 	set_led on
 
 	get_kernel_version
 	cpe_conf=0
-echo "rm active_mesh_ifname"
+
 	if [ -f "$tmpdir/active_mesh_ifname" ]; then
 		rm "$tmpdir/active_mesh_ifname"
 	fi
 
 	# Is opennnds installed?
 	opennds_installed=$(is_installed "opennds"; echo -n $?)
-echo "opennds_installed=$opennds_installed!"
+
 	if [ "$opennds_installed" -eq 0 ]; then
 		debugtype="notice"
 		syslogmessage="openNDS is installed, unconditionally stopping it"
