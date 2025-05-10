@@ -320,6 +320,37 @@ get_current_setup () {
 
 	syslogmessage="option auto_mesh_band [ $auto_mesh_band ]"
 	debugtype="info"
+
+	mute="$mutestate"
+	write_to_syslog
+
+	#####
+	mesh_phyindex=$(uci get mesh11sd.setup.mesh_phyindex 2> /dev/null)
+
+	if [ ! -z "$mesh_phyindex" ]; then
+		is_num=$(echo "$mesh_phyindex" | grep -E '^[0-9]+$' &>/dev/null; echo $?)
+		if [ "$is_num" -ne 0 ]; then
+			syslogmessage="option mesh_phyindex must be an integer - ignoring setup value of [ $mesh_phyindex ]"
+			debugtype="info"
+			mute="$mutestate"
+			write_to_syslog
+			mesh_phyindex=""
+		else
+			num_wiphys=$(iw list | grep -c "Wiphy")
+
+			if [ "$mesh_phyindex" -ge "$num_wiphys" ]; then
+				syslogmessage="option mesh_phyindex is invalid, phy does not exist - ignoring setup value of [ $mesh_phyindex ]"
+				debugtype="info"
+				mute="$mutestate"
+				write_to_syslog
+				mesh_phyindex=""
+			fi
+		fi
+
+	fi
+
+	syslogmessage="option mesh_phyindex [ $mesh_phyindex ]"
+	debugtype="info"
 	mute="$mutestate"
 	write_to_syslog
 
@@ -379,7 +410,7 @@ get_current_setup () {
 		auto_mesh_network="wan"
 	fi
 
-	zone_status=$(uci show firewall | grep -w "name='$auto_mesh_network'" &>/dev/null ; echo -n "$?")
+	zone_status=$(uci show firewall | grep -w "name='$auto_mesh_network'" &> /dev/null ; echo -n "$?")
 
 	if [ "$zone_status" -eq 1 ]; then
 		syslogmessage="network zone [ $auto_mesh_network ] does not exist"
@@ -387,11 +418,6 @@ get_current_setup () {
 		mute="$mutestate"
 		write_to_syslog
 		auto_mesh_network="lan"
-	else
-		syslogmessage="option auto_mesh_network [ $auto_mesh_network ]"
-		debugtype="info"
-		mute="$mutestate"
-		write_to_syslog
 	fi
 
 	syslogmessage="option auto_mesh_network [ $auto_mesh_network ]"
@@ -2053,10 +2079,11 @@ get_wiphys() {
 
 	for wiphy in $wiphys; do
 		radioindex=${wiphy:3:10}
+		band=$(echo "get wireless.radio$radioindex.band" | uci batch)
 		mesh_capable=$(iw phy "$wiphy" info | grep -w -q  "mesh point"; echo -n "$?")
 		total_ifaces=$(iw phy $wiphy info | grep -w "total <=" | awk -F"," '{print $1}' | awk '{print $3}')
 
-		echo "mesh_capable=$mesh_capable; total_ifaces=$total_ifaces" > "$tmpdir/radios/radio$radioindex"
+		echo "mesh_capable=$mesh_capable; total_ifaces=$total_ifaces; radioindex=$radioindex; band=$band" > "$tmpdir/radios/radio$radioindex"
 
 		if [ $mesh_capable -gt 0 ]; then
 			debugtype="info"
@@ -2178,6 +2205,15 @@ auto_config() {
 					phyindex=$(echo "$wiphy" | awk -F "phy" '{printf "%s", $2}')
 
 					phyindex=$(printf "%x" $phyindex)
+
+					if [ ! -z "$mesh_phyindex" ] && [ "$phyindex" != "$mesh_phyindex" ]; then
+						syslogmessage="option mesh_phyindex [ $mesh_phyindex ] does not match phyindex [ $phyindex ] - skipping this phy"
+						debugtype="info"
+						mute="$mutestate"
+						write_to_syslog
+						continue
+					fi
+
 					mesh_ifname="$mesh_basename""$phyindex"
 
 
@@ -4117,6 +4153,11 @@ elif [ "$1" = "status" ]; then
 	echo "    \"auto_config\":\"$auto_config\","
 	echo "    \"auto_mesh_network\":\"$auto_mesh_network\","
 	echo "    \"auto_mesh_band\":\"$auto_mesh_band\","
+
+	if [ ! -z "$mesh_phyindex" ]; then
+		echo "    \"mesh_phyindex\":\"$mesh_phyindex\","
+	fi
+
 	echo "    \"auto_mesh_id\":\"$auto_mesh_id\","
 	echo "    \"mesh_gate_enable\":\"$mesh_gate_enable\","
 	echo "    \"mesh_leechmode_enable\":\"$mesh_gate_only\","
