@@ -1,5 +1,8 @@
 mesh11sd (5.1.0)
 
+  * Add - option mesh_phyindex to force selection of phy for mesh interface [bluewavenet]
+  * Fix - remove redundant debug information [bluewavenet]
+  * Add - footnote links to README.md, using double spaces for newlines [bluewavenet]
   * Fix - correctly indicate the target path of a copy command [bluewavenet]
   * Fix - change default reactive_path_stabilisation_threshold to 5 from 10 [bluewavenet]
   * Add - auto leechmode to mesh path stabilisation [bluewavenet]
@@ -15,7 +18,7 @@ mesh11sd (5.1.0)
   * Fix - add missing option portal_use_default_ipv4 in documentation [bluewavenet]
   * Fix - typo in README.md documentation [bluewavenet]
 
- -- Rob White <dot@blue-wave.net>  Mon, 05 May 2025 07:09:34 +0000
+ -- Rob White <dot@blue-wave.net>  Sat, 10 May 2025 20:25:54 +0000
 
 mesh11sd (5.0.1)
 

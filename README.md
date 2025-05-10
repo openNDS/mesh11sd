@@ -686,6 +686,22 @@ config mesh11sd 'setup'
 	#option auto_mesh_band '5g'
 
 	###########################################################################################
+	# mesh_phyindex (optional)
+	#
+	# Force use of a particular radio for the mesh interface
+	# Must be an interger value corresponding to the physical radio hardware (eg. phy0, phy1 etc.).
+	# Default - Not Set
+	#
+	# Useful for devices with more than one phy on a particular band
+	# allowing use of a particular radio to be forced
+	#
+	# If not set, the first phy in the configured auto_mesh_band that the daemon encounters
+	# will be used for the mesh interface.
+	#
+	# Example - Use the second 5GHz radio (phy2) of a three radio device:
+	#option mesh_phyindex '2'
+
+	###########################################################################################
 	# country (optional)
 	#
 	# Set a valid country code for all radios
@@ -1194,6 +1210,21 @@ Access to the remote meshnode peers will not be possible using the default ipv4 
              If set, it must also be set to the same value on every mesh node
 
              All mesh peer and mesh gate nodes will autonomously track the mesh portal channel regardless of the configured auto_mesh_band.
+
+* mesh_phyindex (optional)
+
+             Force use of a particular radio for the mesh interface
+
+             Must be an interger value corresponding to the physical radio hardware (eg. phy0, phy1 etc.).
+
+             Default - Not Set
+
+             Useful for devices with more than one phy on a particular band allowing use of a particular radio to be forced
+
+             If not set, the first phy in the configured auto_mesh_band that the daemon encounters will be used for the mesh interface.
+
+             Example - Use the second 5GHz radio (phy2) of a three radio device, set option to the value 2
+
 
 * country (optional)
 
