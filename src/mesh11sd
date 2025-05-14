@@ -1502,10 +1502,16 @@ get_portal_state() {
 				# we have reached the portal detect threshold. This either means there is no portal, or something has stopped working
 
 				if [ "$leechmode" -eq 1 ]; then
-					uci set mesh11sd.setup.mesh_leechmode_enable='0'
+					echo "set mesh11sd.setup.mesh_leechmode_enable='0'" | uci batch
 					leechmode=0
+					# Reset ip4pingfailcount to go around again to the portal_detect_threshold, giving HWMP some cycles to establish a path
+					ip4pingfailcount=0
+
 					debugtype="err"
-					syslogmessage="portal detect threshold reached, enabling HWMP announcments						"
+					syslogmessage="portal detect threshold reached, enabling HWMP announcments"
+					write_to_syslog
+					write_to_watchdog_nonvolatile_log
+
 				elif [ "$network_restart" -eq 0 ]; then
 					dhcpdevice=$(echo "get network.$auto_mesh_network.device" | uci batch | awk '{printf "%s", $1}')
 					debugtype="err"
