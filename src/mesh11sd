@@ -325,31 +325,31 @@ get_current_setup () {
 	write_to_syslog
 
 	#####
-	mesh_phyindex=$(uci get mesh11sd.setup.mesh_phyindex 2> /dev/null)
+	mesh_phy_index=$(uci get mesh11sd.setup.mesh_phy_index 2> /dev/null)
 
-	if [ ! -z "$mesh_phyindex" ]; then
-		is_num=$(echo "$mesh_phyindex" | grep -E '^[0-9]+$' &>/dev/null; echo $?)
+	if [ ! -z "$mesh_phy_index" ]; then
+		is_num=$(echo "$mesh_phy_index" | grep -E '^[0-9]+$' &>/dev/null; echo $?)
 		if [ "$is_num" -ne 0 ]; then
-			syslogmessage="option mesh_phyindex must be an integer - ignoring setup value of [ $mesh_phyindex ]"
+			syslogmessage="option mesh_phy_index must be an integer - ignoring setup value of [ $mesh_phy_index ]"
 			debugtype="info"
 			mute="$mutestate"
 			write_to_syslog
-			mesh_phyindex=""
+			mesh_phy_index=""
 		else
 			num_wiphys=$(iw list | grep -c "Wiphy")
 
-			if [ "$mesh_phyindex" -ge "$num_wiphys" ]; then
-				syslogmessage="option mesh_phyindex is invalid, phy does not exist - ignoring setup value of [ $mesh_phyindex ]"
+			if [ "$mesh_phy_index" -ge "$num_wiphys" ]; then
+				syslogmessage="option mesh_phy_index is invalid, phy does not exist - ignoring setup value of [ $mesh_phy_index ]"
 				debugtype="info"
 				mute="$mutestate"
 				write_to_syslog
-				mesh_phyindex=""
+				mesh_phy_index=""
 			fi
 		fi
 
 	fi
 
-	syslogmessage="option mesh_phyindex [ $mesh_phyindex ]"
+	syslogmessage="option mesh_phy_index [ $mesh_phy_index ]"
 	debugtype="info"
 	mute="$mutestate"
 	write_to_syslog
@@ -747,6 +747,7 @@ get_current_setup () {
 	write_to_syslog
 
 	#####
+	# mesh_leechmode_enable
 	# mesh_gate_only deprecated as a config option - use mesh_leechmode_enable instead as the config option
 	mesh_gate_only=$(uci get mesh11sd.setup.mesh_leechmode_enable 2> /dev/null)
 
@@ -2199,8 +2200,8 @@ auto_config() {
 
 					phyindex=$(printf "%x" $phyindex)
 
-					if [ ! -z "$mesh_phyindex" ] && [ "$phyindex" != "$mesh_phyindex" ]; then
-						syslogmessage="option mesh_phyindex [ $mesh_phyindex ] does not match phyindex [ $phyindex ] - skipping this phy"
+					if [ ! -z "$mesh_phy_index" ] && [ "$phyindex" != "$mesh_phy_index" ]; then
+						syslogmessage="option mesh_phy_index [ $mesh_phy_index ] does not match phyindex [ $phyindex ] - skipping this phy"
 						debugtype="info"
 						mute="$mutestate"
 						write_to_syslog
@@ -4172,8 +4173,8 @@ elif [ "$1" = "status" ]; then
 	echo "    \"auto_mesh_network\":\"$auto_mesh_network\","
 	echo "    \"auto_mesh_band\":\"$auto_mesh_band\","
 
-	if [ ! -z "$mesh_phyindex" ]; then
-		echo "    \"mesh_phyindex\":\"$mesh_phyindex\","
+	if [ ! -z "$mesh_phy_index" ]; then
+		echo "    \"mesh_phy_index\":\"$mesh_phy_index\","
 	fi
 
 	echo "    \"auto_mesh_id\":\"$auto_mesh_id\","
