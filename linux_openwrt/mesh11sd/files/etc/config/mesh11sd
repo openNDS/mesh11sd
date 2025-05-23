@@ -66,17 +66,6 @@ config mesh11sd 'setup'
 	#option portal_detect '0'
 
 	###########################################################################################
-	# portal_use_default_ipv4 (optional)
-	# Effective only if node is a portal
-	#
-	# Default 0
-	#
-	# When set to 1, the default ipv4 address found in /etc/config/network is used
-	# When set to 0 or not set, an ip subnet address is calulated based on the label mac address
-	#
-	#option portal_use_default_ipv4 '1'
-
-	###########################################################################################
 	# portal_channel (optional) Applies to 2.4 GHz band only
 	#
 	# If portal_detect is disabled (0), portal_channel can be set to:
@@ -92,6 +81,17 @@ config mesh11sd 'setup'
 	#option portal_channel 'auto'
 	# or
 	#option portal_channel '4'
+
+	###########################################################################################
+	# portal_use_default_ipv4 (optional)
+	# Effective only if node is a portal
+	#
+	# Default 0
+	#
+	# When set to 1, the default ipv4 address found in /etc/config/network is used
+	# When set to 0 or not set, an ip subnet address is calulated based on the label mac address
+	#
+	#option portal_use_default_ipv4 '1'
 
 	###########################################################################################
 	# channel_tracking_checkinterval (optional)
@@ -184,10 +184,10 @@ config mesh11sd 'setup'
 	#option auto_mesh_band '5g'
 
 	###########################################################################################
-	# mesh_phyindex (optional)
+	# mesh_phy_index (optional)
 	#
 	# Force use of a particular radio for the mesh interface
-	# Must be an interger value corresponding to the physical radio hardware (eg. phy0, phy1 etc.).
+	# Must be an integer value corresponding to the physical radio hardware (eg. phy0, phy1 etc.).
 	# Default - Not Set
 	#
 	# Useful for devices with more than one phy on a particular band
@@ -197,7 +197,7 @@ config mesh11sd 'setup'
 	# will be used for the mesh interface.
 	#
 	# Example - Use the second 5GHz radio (phy2) of a three radio device:
-	#option mesh_phyindex '2'
+	#option mesh_phy_index '2'
 
 	###########################################################################################
 	# country (optional)
@@ -280,121 +280,12 @@ config mesh11sd 'setup'
 	#option mesh_gate_key 'mysecretencryptionkey'
 
 	###########################################################################################
-	# mesh_gate_enable (optional)
-	# Determines whether this node will be a gate
-	#
-	# Default: 1 (enabled)
-	# Set to 0 to disable (turns off the node's gate interface ie its access point and SSID)
-	#
-	#option mesh_gate_enable '0'
-
-	###########################################################################################
-	# mesh_leechmode_enable (optional)
-	# Determines whether this node will be a gate only leech node
-	# A gate only leech node acts as an access point with a mesh backhaul connection, but does not contribute to the mesh
-	#
-	# This is useful when a node is well within the coverage of 2 or more peer nodes,
-	# as otherwise it could create unstable multi hop paths within the backhaul.
-	#
-	# Can also be set dynamically using the command line option 'mesh11sd mesh_leechmode [enable/disable]'
-	#	See the documentation for further information (Hint: try 'mesh11sd --help')
-	#
-	# Default: 0 (disabled)
-	# Set to 1 to enable (turns off the node's mesh forwarding and active HWMP mac-routing)
-	#
-	# Example - enable leach mode
-	#option mesh_leechmode_enable '1'
-
-	###########################################################################################
-	# txpower (optional)
-	# Set the mesh radio transmit power in dBm.
-
-	# Default - use driver default or value set in wireless config
-	# Values outside the limits defined by the regulatory domain will be ignored
-	#
-	# Example - Set tx power to 15 dBm:
-	#option txpower '15'
-
-	###########################################################################################
 	# ssid_suffix_enable (optional)
 	# Add a 4 digit suffix to the ssid
 	# The 4 digits are the last 4 digits of the mac address of the mesh interface
 	# Default 1 (enabled)
 	#
 	#option ssid_suffix_enable '0'
-
-	###########################################################################################
-	# watchdog_nonvolatile_log (optional - FOR DEBUGGING PURPOSES ONLY)
-	#
-	# This enables logging of the portal detect watchdog actions in non-volatile storage.
-	# The log file /mesh11sd_log/mesh11sd.log is created
-	#
-	# ##########WARNING##########
-	# THIS OPTION IS FOR PORTAL DETECT WATCHDOG DEBUGGING PURPOSES ONLY
-	# IF LEFT ENABLED FOR A LENGTH OF TIME IT MAY CAUSE NONE REPAIRABLE FLASH MEMORY WEAR AND USE UP FREE STORAGE SPACE
-	# DISABLE IMMEDIATELY AFTER DEBUGGING OPERATIONS ARE COMPLETE
-	# ##########WARNING##########
-
-	###########################################################################################
-	# mesh_path_stabilisation (optional)
-	#
-	# This enables mesh path stabilisation, preventing multi hop path changes due to multipath signal strength jitter
-	#
-	# Default: 1 (enabled)
-	#
-	# To disable, set to zero:
-	#option mesh_path_stabilisation '0'
-
-	###########################################################################################
-	# reactive_path_stabilisation_threshold (optional)
-	#
-	# If an unstable path to an immediate neighbour node is detected, a counter is incremented each checkinterval while the unstable condition continues.
-	# 	Mesh path stabilisation is activated once the counter exceeds the threshold.
-	#
-	# Default: 10 checkinterval periods.
-	#
-	#option reactive_path_stabilisation_threshold '5'
-
-	###########################################################################################
-	# mesh_mac_forced_forwarding (optional)
-	#
-	# This enables mac forced forwarding on the mesh interface
-	#
-	# Default: 1 (enabled)
-	#
-	# To disable, set to zero:
-	#option mesh_mac_forced_forwarding '0'
-
-	###########################################################################################
-	# gateway_proxy_arp (optional)
-	#
-	# This enables proxy arp on the gateway bridge interface
-	#
-	# Default: 1 (enabled)
-	#
-	# To disable, set to zero:
-	#option gateway_proxy_arp '0'
-
-	###########################################################################################
-	# stop_on_error (optional)
-	#
-	# If the watchdog detects a failure of ipv4 communication with a portal, the daemon will go into idle mode
-	# This is useful if the meshnode does not have a reset button and a critical error occurs, blocking access
-	#
-	# Default: 0 (disabled)
-	#
-	# To enable, set to 1. This setting will overide the reboot_on_error setting
-	#option stop_on_error '0'
-
-	###########################################################################################
-	# reboot_on_error (optional)
-	#
-	# If the watchdog detects a failure of ipv4 communication with a portal, the daemon will reboot the node
-	#
-	# Default: 1 (enabled)
-	#
-	# To disable, set to zero:
-	#option reboot_on_error '0'
 
 	###########################################################################################
 	# vtun_enable (optional)
@@ -495,6 +386,115 @@ config mesh11sd 'setup'
 	#option vtun_path_cost '100'
 
 	###########################################################################################
+	# mesh_gate_enable (optional)
+	# Determines whether this node will be a gate
+	#
+	# Default: 1 (enabled)
+	# Set to 0 to disable (turns off the node's gate interface ie its access point and SSID)
+	#
+	#option mesh_gate_enable '0'
+
+	###########################################################################################
+	# mesh_leechmode_enable (optional)
+	# Determines whether this node will be a gate only leech node
+	# A gate only leech node acts as an access point with a mesh backhaul connection, but does not contribute to the mesh
+	#
+	# This is useful when a node is well within the coverage of 2 or more peer nodes,
+	# as otherwise it could create unstable multi hop paths within the backhaul.
+	#
+	# Can also be set dynamically using the command line option 'mesh11sd mesh_leechmode [enable/disable]'
+	#	See the documentation for further information (Hint: try 'mesh11sd --help')
+	#
+	# Default: 0 (disabled)
+	# Set to 1 to enable (turns off the node's mesh forwarding and active HWMP mac-routing)
+	#
+	# Example - enable leach mode
+	#option mesh_leechmode_enable '1'
+
+	###########################################################################################
+	# txpower (optional)
+	# Set the mesh radio transmit power in dBm.
+
+	# Default - use driver default or value set in wireless config
+	# Values outside the limits defined by the regulatory domain will be ignored
+	#
+	# Example - Set tx power to 15 dBm:
+	#option txpower '15'
+
+	###########################################################################################
+	# watchdog_nonvolatile_log (optional - FOR DEBUGGING PURPOSES ONLY)
+	#
+	# This enables logging of the portal detect watchdog actions in non-volatile storage.
+	# The log file /mesh11sd_log/mesh11sd.log is created
+	#
+	# ##########WARNING##########
+	# THIS OPTION IS FOR PORTAL DETECT WATCHDOG DEBUGGING PURPOSES ONLY
+	# IF LEFT ENABLED FOR A LENGTH OF TIME IT MAY CAUSE NONE REPAIRABLE FLASH MEMORY WEAR AND USE UP FREE STORAGE SPACE
+	# DISABLE IMMEDIATELY AFTER DEBUGGING OPERATIONS ARE COMPLETE
+	# ##########WARNING##########
+
+	###########################################################################################
+	# mesh_path_stabilisation (optional)
+	#
+	# This enables mesh path stabilisation, preventing multi hop path changes due to multipath signal strength jitter
+	#
+	# Default: 1 (enabled)
+	#
+	# To disable, set to zero:
+	#option mesh_path_stabilisation '0'
+
+	###########################################################################################
+	# reactive_path_stabilisation_threshold (optional)
+	#
+	# If an unstable path to an immediate neighbour node is detected, a counter is incremented each checkinterval while the unstable condition continues.
+	# 	Mesh path stabilisation is activated once the counter exceeds the threshold.
+	#
+	# Default: 10 checkinterval periods.
+	#
+	#option reactive_path_stabilisation_threshold '5'
+
+	###########################################################################################
+	# mesh_mac_forced_forwarding (optional)
+	#
+	# This enables mac forced forwarding on the mesh interface
+	#
+	# Default: 1 (enabled)
+	#
+	# To disable, set to zero:
+	#option mesh_mac_forced_forwarding '0'
+
+	###########################################################################################
+	# gateway_proxy_arp (optional)
+	#
+	# This enables proxy arp on the gateway bridge interface
+	#
+	# Default: 1 (enabled)
+	#
+	# To disable, set to zero:
+	#option gateway_proxy_arp '0'
+
+	###########################################################################################
+	# stop_on_error (optional)
+	#
+	# If the watchdog detects a failure of ipv4 communication with a portal, the daemon will go into idle mode
+	# This is useful if the meshnode does not have a reset button and a critical error occurs, blocking access
+	#
+	# Default: 0 (disabled)
+	#
+	# To enable, set to 1. This setting will overide the reboot_on_error setting
+	#option stop_on_error '0'
+
+	###########################################################################################
+	# reboot_on_error (optional)
+	#
+	# If the watchdog detects a failure of ipv4 communication with a portal, the daemon will reboot the node
+	#
+	# Default: 1 (enabled)
+	#
+	# To disable, set to zero:
+	#option reboot_on_error '0'
+
+	###########################################################################################
 	# apmond_enable (optional)
 	#
 	# Enables the access point monitoring daemon
@@ -521,7 +521,7 @@ config mesh11sd 'setup'
 	# mesh_backhaul_led (optional)
 	#
 	# Enables the mesh backhaul heartbeat led indicator
-	#	The led indicator will be on when the mesh inteface is up, changing to the Linux heartbeat signal when peer nodes are connected
+	#	The led indicator will be on when the mesh interface is up, changing to the Linux heartbeat signal when peer nodes are connected
 	# Default: auto
 	#	By default, the power or system led will be used if present.
 	#
@@ -533,6 +533,18 @@ config mesh11sd 'setup'
 	#
 	# Example, disable the mesh backhaul led:
 	#option mesh_backhaul_led 'none'
+
+	###########################################################################################
+	# manage_opennds_startup (optional)
+	#
+	# Enables management of opennds startup
+	#	If opennds is installed, mesh11sd will manage its startup.
+	# Default: 1 Enabled
+	#
+	# Synchronizes nft rulesets of opennds and mesh11sd
+	# Disabling may cause crash loops because the opennds gatewayinterface may not be up as mesh11sd starts.
+	#
+	#option manage_opennds_startup '0'
 
 config mesh11sd 'mesh_params'
 	# A minimum set of parameters is automatically set for initial startup and do not have to be configured here

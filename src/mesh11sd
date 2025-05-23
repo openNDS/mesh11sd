@@ -325,31 +325,31 @@ get_current_setup () {
 	write_to_syslog
 
 	#####
-	mesh_phyindex=$(uci get mesh11sd.setup.mesh_phyindex 2> /dev/null)
+	mesh_phy_index=$(uci get mesh11sd.setup.mesh_phy_index 2> /dev/null)
 
-	if [ ! -z "$mesh_phyindex" ]; then
-		is_num=$(echo "$mesh_phyindex" | grep -E '^[0-9]+$' &>/dev/null; echo $?)
+	if [ ! -z "$mesh_phy_index" ]; then
+		is_num=$(echo "$mesh_phy_index" | grep -E '^[0-9]+$' &>/dev/null; echo $?)
 		if [ "$is_num" -ne 0 ]; then
-			syslogmessage="option mesh_phyindex must be an integer - ignoring setup value of [ $mesh_phyindex ]"
+			syslogmessage="option mesh_phy_index must be an integer - ignoring setup value of [ $mesh_phy_index ]"
 			debugtype="info"
 			mute="$mutestate"
 			write_to_syslog
-			mesh_phyindex=""
+			mesh_phy_index=""
 		else
 			num_wiphys=$(iw list | grep -c "Wiphy")
 
-			if [ "$mesh_phyindex" -ge "$num_wiphys" ]; then
-				syslogmessage="option mesh_phyindex is invalid, phy does not exist - ignoring setup value of [ $mesh_phyindex ]"
+			if [ "$mesh_phy_index" -ge "$num_wiphys" ]; then
+				syslogmessage="option mesh_phy_index is invalid, phy does not exist - ignoring setup value of [ $mesh_phy_index ]"
 				debugtype="info"
 				mute="$mutestate"
 				write_to_syslog
-				mesh_phyindex=""
+				mesh_phy_index=""
 			fi
 		fi
 
 	fi
 
-	syslogmessage="option mesh_phyindex [ $mesh_phyindex ]"
+	syslogmessage="option mesh_phy_index [ $mesh_phy_index ]"
 	debugtype="info"
 	mute="$mutestate"
 	write_to_syslog
@@ -546,35 +546,11 @@ get_current_setup () {
 	# vxlan configs
 
 	#####
-	vtun_enable=$(uci get mesh11sd.setup.vtun_enable 2> /dev/null)
-
-	if [ -z "$vtun_enable" ]; then
-		vtun_enable=1
-	elif [ "$vtun_enable" -gt 1 ]; then
-		vtun_enable=1
-	else
-		vtun_enable=0
-	fi
-
-	if [ "$portal_detect" -eq 3 ]; then
-		uci set mesh11sd.setup.vtun_enable='0'
-		vtun_enable=0
-		syslogmessage="option vtun_enable is disabled because cpe mode is enabled"
-		debugtype="info"
-		mute="$mutestate"
-		write_to_syslog
-	else
-		syslogmessage="option vtun_enable [ $vtun_enable ]"
-		debugtype="info"
-		mute="$mutestate"
-		write_to_syslog
-	fi
-
 
 	package_list="ip-full vxlan"
 	check_package_list
 
-	if [ "$ip_full" -eq 0 ] && [ "$vxlan" -eq 0 ] & [ "$vtun_enable" -eq 1 ]; then # we have the required packages for vxlan and it is enabled
+	if [ "$ip_full" -eq 0 ] && [ "$vxlan" -eq 0 ]; then # we have the required packages for vxlan and it is enabled
 
 		#####
 		vtun_enable=$(uci get mesh11sd.setup.vtun_enable 2> /dev/null)
@@ -746,6 +722,10 @@ get_current_setup () {
 
 	else
 		vtun_enable=0
+		syslogmessage="option vtun_enable is disabled because required dependencies [ ip-full vxlan ] are not met"
+		debugtype="info"
+		mute="$mutestate"
+		write_to_syslog
 	fi
 
 	#####
@@ -767,6 +747,7 @@ get_current_setup () {
 	write_to_syslog
 
 	#####
+	# mesh_leechmode_enable
 	# mesh_gate_only deprecated as a config option - use mesh_leechmode_enable instead as the config option
 	mesh_gate_only=$(uci get mesh11sd.setup.mesh_leechmode_enable 2> /dev/null)
 
@@ -951,6 +932,13 @@ get_current_setup () {
 
 	if [ -z "$mesh_backhaul_led" ]; then
 		mesh_backhaul_led="auto"
+	fi
+
+	#####
+	manage_opennds_startup=$(uci get mesh11sd.setup.manage_opennds_startup 2> /dev/null)
+
+	if [ -z "$manage_opennds_startup" ]; then
+		manage_opennds_startup="1"
 	fi
 }
 
@@ -1733,7 +1721,7 @@ check_portal() {
 				/sbin/service system restart
 
 				# Just become a peer so stop opennds if it is installed and enabled
-				restart_opennds stop
+				manage_opennds stop
 
 			fi
 
@@ -1804,7 +1792,7 @@ check_portal() {
 				fi
 
 				# Just become a portal so start opennds if it is installed and enabled
-				restart_opennds start
+				manage_opennds start
 			fi
 		fi
 	fi
@@ -2212,8 +2200,8 @@ auto_config() {
 
 					phyindex=$(printf "%x" $phyindex)
 
-					if [ ! -z "$mesh_phyindex" ] && [ "$phyindex" != "$mesh_phyindex" ]; then
-						syslogmessage="option mesh_phyindex [ $mesh_phyindex ] does not match phyindex [ $phyindex ] - skipping this phy"
+					if [ ! -z "$mesh_phy_index" ] && [ "$phyindex" != "$mesh_phy_index" ]; then
+						syslogmessage="option mesh_phy_index [ $mesh_phy_index ] does not match phyindex [ $phyindex ] - skipping this phy"
 						debugtype="info"
 						mute="$mutestate"
 						write_to_syslog
@@ -3096,12 +3084,6 @@ check_vtunnel() {
 			link_local_addr=$(ip addr show "$device" | grep "inet6 fe80" | awk '{printf "%s", $2}' | awk -F "/" '{printf "%s", $1}')
 			create_vxlan_if
 			vxlan_if="created"
-		fi
-
-		if [ "$ip_full" ] && [ "$vxlan" ] &&  [ "$vxlan_status" -eq 1 ] && [ "$vxlan_if" = "created" ]; then
-			. $tmpdir/active_mesh_ifname
-			. $tmpdir/devicemac
-			create_vxlan_if
 			vtunnel="configured"
 		fi
 
@@ -3812,13 +3794,44 @@ generate_ipv4_base() {
 	write_to_syslog
 }
 
-restart_opennds () {
+manage_opennds () {
 
-	if [ ! -z "$1" ] && [ "$opennds_installed" -eq 0 ]; then
-		opennds_running=$(service opennds info | grep -A2 "instance1" | grep "running" | grep "true" &> /dev/null ; echo $?)
+	if [ "$manage_opennds_startup" -eq 1 ]; then
+		# Is opennnds installed?
+		opennds_installed=$(is_installed "opennds"; echo -n $?)
 
-		if [ "$opennds_running" -eq 0 ] && [ "$1" = "stop" ]; then
-			/sbin/service opennds stop
+		if [ "$opennds_installed" -eq 0 ]; then
+			local action=$1
+			# action  can be stop, start, restart
+
+			if [ ! -z "$action" ]; then
+
+				if [ "$action" = "stop" ]; then
+					opennds_enabled=$(/sbin/service | grep "opennds" | grep "enabled" &> /dev/null ; echo $?)
+					opennds_running=$(/sbin/service opennds info | grep -A2 "instance1" | grep "running" | grep "true" &> /dev/null ; echo $?)
+
+					if [ "$opennds_enabled" -eq 0 ]; then
+						syslogmessage="Disabling auto-startup of opennds"
+						debugtype="debug"
+						write_to_syslog
+						/sbin/service opennds disable
+					fi
+
+					if [ "$opennds_running" -eq 0 ]; then
+						syslogmessage="The opennds daemon is running, stopping it"
+						debugtype="debug"
+						write_to_syslog
+						/sbin/service opennds stop
+					fi
+				fi
+
+				if [ "$action" = "start" ] || [ "$action" = "restart" ]; then
+						syslogmessage="Restarting the opennds daemon"
+						debugtype="debug"
+						write_to_syslog
+						/sbin/service opennds restart
+				fi
+			fi
 		fi
 	fi
 }
@@ -4160,8 +4173,8 @@ elif [ "$1" = "status" ]; then
 	echo "    \"auto_mesh_network\":\"$auto_mesh_network\","
 	echo "    \"auto_mesh_band\":\"$auto_mesh_band\","
 
-	if [ ! -z "$mesh_phyindex" ]; then
-		echo "    \"mesh_phyindex\":\"$mesh_phyindex\","
+	if [ ! -z "$mesh_phy_index" ]; then
+		echo "    \"mesh_phy_index\":\"$mesh_phy_index\","
 	fi
 
 	echo "    \"auto_mesh_id\":\"$auto_mesh_id\","
@@ -4170,6 +4183,13 @@ elif [ "$1" = "status" ]; then
 	echo "    \"mesh_gate_encryption\":\"$mesh_gate_encryption\","
 	echo "    \"mesh_backhaul_led\":\"$mesh_backhaul_led\","
 
+	# check if opennds is installed:
+	type opennds &>/dev/null
+	opennds_installed=$?
+
+	if [ "$opennds_installed" -eq 0 ]; then
+		echo "    \"manage_opennds_startup\":\"$manage_opennds_startup\","
+	fi
 
 	# vxlan configs
 	package_list="ip-full vxlan"
@@ -5062,20 +5082,8 @@ elif [ "$1" = "daemon" ]; then
 		rm "$tmpdir/active_mesh_ifname"
 	fi
 
-	# Is opennnds installed?
-	opennds_installed=$(is_installed "opennds"; echo -n $?)
-
-	if [ "$opennds_installed" -eq 0 ]; then
-		debugtype="notice"
-		syslogmessage="openNDS is installed, unconditionally stopping it"
-		write_to_syslog
-
-		# unconditionally try to stop openNDS
-		restart_opennds stop
-		sleep 10
-	fi
-
-
+	# unconditionally try to stop openNDS
+	manage_opennds stop
 
 	if [ "$auto_config" -gt 0 ]; then
 		# redirect luci web ui
@@ -5569,12 +5577,12 @@ elif [ "$1" = "daemon" ]; then
 						/sbin/service dnsmasq restart
 						/sbin/service odhcpd restart
 						restart_mesh
-						restart_opennds restart
+						manage_opennds restart
 						cpe_conf=1
 					fi
 
 				elif [ "$portal_detect" -eq 0 ]; then
-					restart_opennds restart
+					manage_opennds restart
 				fi
 			fi
 
