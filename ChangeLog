@@ -1,3 +1,11 @@
+mesh11sd (5.1.2)
+
+  * Fix - Update uci config file and README.md [bluewavenet]
+  * Fix - use mesh_phy_index rather than mesh_phyindex [bluewavenet]
+  * Fix - get_current_setup improved and fixed reading of config file [bluewavenet]
+
+ -- Rob White <dot@blue-wave.net>  Fri, 23 May 2025 15:44:11 +0000
+
 mesh11sd (5.1.1)
 
   * Fix - Reset ip4pingfailcount, giving HWMP some cycles to establish a path [bluewavenet]
