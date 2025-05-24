@@ -1692,6 +1692,13 @@ check_portal() {
 
 				echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='$non_portal_mesh_hwmp_rootmode'" | uci batch
 
+				if [ "$vtunnel" = "configured" ]; then
+					uci set dhcp.vtunlan.dhcpv4='disabled'
+					uci set dhcp.vtunlan.dhcpv6='disabled'
+					uci set dhcp.vtunlan.ra='disabled'
+					uci set dhcp.vtunlan.ignore='1'
+				fi
+
 				/sbin/service dnsmasq restart
 				/sbin/service odhcpd restart
 
@@ -2979,6 +2986,7 @@ check_vtunnel() {
 		check_package_list
 
 		if [ "$ip_full" -eq 0 ] && [ "$vxlan" -eq 0 ] && [ -z "$vtunnel" ] && [ -z "$vxlan_if" ]; then
+
 			# we have ip-full and vxlan packages
 			debugtype="debug"
 			syslogmessage="vxtunnel configuration"
@@ -3084,11 +3092,6 @@ check_vtunnel() {
 			link_local_addr=$(ip addr show "$device" | grep "inet6 fe80" | awk '{printf "%s", $2}' | awk -F "/" '{printf "%s", $1}')
 			create_vxlan_if
 			vxlan_if="created"
-			vtunnel="configured"
-		fi
-
-		if [ "$ip_full" ] && [ "$vxlan" ]; then
-			device="br-tun$tun_id"
 
 			if [ "$portal_detect" -eq 0 ] || [ "$portal_detect" -eq 4 ] || [ ! -z "$is_portal" ]; then
 				uci set dhcp.vtunlan.dhcpv4='server'
