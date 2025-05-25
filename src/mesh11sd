@@ -1890,6 +1890,11 @@ convert_to_la() {
 		octet="$p1"
 	fi
 
+	local len=${#octet}
+	if [ "$len" -eq 1 ]; then
+		octet="0$octet"
+	fi
+
 	mac_la="$octet:$p2:$p3:$p4:$p5:$p6"
 }
 
@@ -1904,6 +1909,11 @@ convert_from_la() {
 		octet=$(printf '%x\n' "$(( 0x2 ^ 0x$p1 ))")
 	else
 		octet="$p1"
+	fi
+
+	local len=${#octet}
+	if [ "$len" -eq 1 ]; then
+		octet="0$octet"
 	fi
 
 	mac_from_la="$octet:$p2:$p3:$p4:$p5:$p6"
