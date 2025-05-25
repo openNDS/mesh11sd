@@ -1382,21 +1382,46 @@ get_portal_state() {
 	syslogmessage="In get_portal_state. firstloop=$firstloop..."
 	write_to_syslog
 	. $tmpdir/devicemac
+	default_gw=$(ip route | grep "default via")
 
-	if [ "$firstloop" -eq 1 ] && [ "$portal_detect" -ge 1 ]; then
+	if [ "$portal_detect" -ge 1 ]; then
 		# - check if portal
 		local retries=10
 
 		for retry in $(seq $retries); do
-			default_gw=$(ip route | grep "default via")
 
 			if [ -z "$default_gw" ]; then
 				debugtype="debug"
-				syslogmessage="In Startup - portal upstream link check - iteration [ $retry ] ...."
+
+				if [ "$firstloop" -eq 1 ]; then
+					syslogmessage="In Startup - portal upstream link check [$zone] - iteration [ $retry ] ...."
+				elif [ "$firstloop" -eq 0 ]; then
+					syslogmessage="Portal upstream link check  [$zone] - iteration [ $retry ] ...."
+				fi
+
 				write_to_syslog
 				sleep 1
+
+				case $portal_detect in
+					"0") zone="wan";;
+					"1") zone="wan";;
+					"3") zone="wan";;
+					"4") zone="lan";;
+					"5") zone="lan";;
+					*) zone="";;
+				esac
+
+
+				if [ ! -z "$zone" ]; then
+					dhcpdevice=$(uci get network."$zone".device | awk '{printf "%s", $1}')
+					dhcp4_renew
+				fi
+
+				default_gw=$(ip route | grep "default via")
 				continue
 			fi
+
+			break
 		done
 
 	elif [ "$portal_detect" -eq 3 ]; then
