@@ -1,3 +1,12 @@
+mesh11sd (5.1.3)
+
+  * Fix - Octet calculations when converting from/to la [porbas]
+  * Fix - improve get_portal_state() ensuring correct detection of state changes [bluewavenet]
+  * Fix - mute unnecessary messages sent to syslog [bluewavenet]
+  * Fix - set disable dhcp on vtunnel when changing to peer mode [bluewavenet]
+
+ -- Rob White <dot@blue-wave.net>  Mon, 26 May 2025 09:10:24 +0000
+
 mesh11sd (5.1.2)
 
   * Fix - Update uci config file and README.md [bluewavenet]
