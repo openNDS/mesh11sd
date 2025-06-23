@@ -302,7 +302,7 @@ For CPE mode, enter the following into the Firmware Selector lower text box:
 
 ```
 uci set mesh11sd.setup.auto_config='1'
-uci set portal_detect='3'
+uci set mesh11sd.setup.portal_detect='3'
 uci set mesh11sd.setup.mesh_gate_base_ssid='MyNetwork'
 uci set mesh11sd.setup.auto_mesh_id='MyMeshID'
 uci set mesh11sd.setup.mesh_gate_encryption='1'
