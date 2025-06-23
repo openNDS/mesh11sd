@@ -2872,12 +2872,12 @@ probe_interface_mac() {
 check_mesh_gate_only() {
 	current_mgo_option=$(uci get mesh11sd.setup.mesh_leechmode_enable 2> /dev/null | awk '{printf "%s", $1}')
 
-	debugtype="debug"
-	syslogmessage="mesh_leechmode status [ $current_mgo_option ]"
-	write_to_syslog
-
 	if [ -z "$current_mgo_option" ]; then
 		current_mgo_option="$mesh_gate_only"
+	else
+		debugtype="debug"
+		syslogmessage="mesh_leechmode status [ $current_mgo_option ]"
+		write_to_syslog
 	fi
 
 	if [ "$current_mgo_option" -ne "$mesh_gate_only" ]; then
