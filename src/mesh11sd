@@ -2264,7 +2264,7 @@ auto_config() {
 					echo "set wireless.m11s$phyindex.ifname='$mesh_ifname'" | uci batch
 					echo "set wireless.m11s$phyindex.mesh_rssi_threshold='$mesh_rssi_threshold'" | uci batch
 					echo "set wireless.radio$phyindex.disabled='0'" | uci batch
-					echo "set wireless.radio$phyindex.log_level='0'" | uci batch
+					echo "set wireless.radio$phyindex.log_level='2'" | uci batch
 
 					ucicountry=$(uci get wireless.radio$phyindex.country 2> /dev/null | awk '{printf "%s", $1}')
 
@@ -2872,12 +2872,12 @@ probe_interface_mac() {
 check_mesh_gate_only() {
 	current_mgo_option=$(uci get mesh11sd.setup.mesh_leechmode_enable 2> /dev/null | awk '{printf "%s", $1}')
 
-	debugtype="debug"
-	syslogmessage="mesh_leechmode status [ $current_mgo_option ]"
-	write_to_syslog
-
 	if [ -z "$current_mgo_option" ]; then
 		current_mgo_option="$mesh_gate_only"
+	else
+		debugtype="debug"
+		syslogmessage="mesh_leechmode status [ $current_mgo_option ]"
+		write_to_syslog
 	fi
 
 	if [ "$current_mgo_option" -ne "$mesh_gate_only" ]; then
