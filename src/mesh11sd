@@ -5628,7 +5628,12 @@ elif [ "$1" = "daemon" ]; then
 			check_gate
 			check_mesh_gate_only
 			check_hwmp
-			wait_for_mesh
+
+			if [ "$portal_detect" -eq 1 ]; then
+				restart_mesh
+			else
+				wait_for_mesh
+			fi
 
 			if [ "$mesh_mac_forced_forwarding" -eq 1 ] && [ -f "$tmpdir/active_mesh_ifname" ]; then
 				. $tmpdir/active_mesh_ifname
