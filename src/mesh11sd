@@ -2998,6 +2998,8 @@ create_vxlan_if() {
 	ip link set "$active_mesh_ifname" mtu 1600
 	ip link set "$device" mtu 1600
 	ip link set "vxlan$tun_id" mtu 1500
+
+	wait_for_interface "vxlan$tun_id"
 }
 
 check_vtunnel() {
@@ -3022,7 +3024,6 @@ check_vtunnel() {
 		check_package_list
 
 		if [ "$ip_full" -eq 0 ] && [ "$vxlan" -eq 0 ] && [ -z "$vtunnel" ] && [ -z "$vxlan_if" ]; then
-
 			# we have ip-full and vxlan packages
 			debugtype="debug"
 			syslogmessage="vxtunnel configuration"
@@ -3142,6 +3143,7 @@ check_vtunnel() {
 
 			fi
 
+			device="br-tun$tun_id"
 			echo 1 > /proc/sys/net/ipv4/conf/$device/proxy_arp
 			/sbin/service dnsmasq reload
 
@@ -3154,7 +3156,6 @@ check_vtunnel() {
 			done
 
 			set_iface_path_cost "$vtun_path_cost" "$device" "vxlan$tun_id"
-
 			. $tmpdir/devicemac
 		fi
 	fi
@@ -5623,28 +5624,21 @@ elif [ "$1" = "daemon" ]; then
 				elif [ "$portal_detect" -eq 0 ]; then
 					manage_opennds restart
 				fi
+
+				if [ "$mesh_mac_forced_forwarding" -eq 1 ] && [ -f "$tmpdir/active_mesh_ifname" ]; then
+					. $tmpdir/active_mesh_ifname
+					echo 1 > /proc/sys/net/ipv4/conf/$active_mesh_ifname/proxy_arp_pvlan
+				fi
+
+				if [ "$gateway_proxy_arp" -eq 0 ]; then
+					. $tmpdir/devicemac
+					echo 0 > /proc/sys/net/ipv4/conf/$device/proxy_arp
+				fi
 			fi
 
 			check_gate
 			check_mesh_gate_only
 			check_hwmp
-
-			if [ "$portal_detect" -eq 1 ]; then
-				restart_mesh
-			else
-				wait_for_mesh
-			fi
-
-			if [ "$mesh_mac_forced_forwarding" -eq 1 ] && [ -f "$tmpdir/active_mesh_ifname" ]; then
-				. $tmpdir/active_mesh_ifname
-				echo 1 > /proc/sys/net/ipv4/conf/$active_mesh_ifname/proxy_arp_pvlan
-			fi
-
-			if [ "$gateway_proxy_arp" -eq 0 ]; then
-				. $tmpdir/devicemac
-				echo 0 > /proc/sys/net/ipv4/conf/$device/proxy_arp
-			fi
-
 			block_bridge_loops
 			check_path_changes
 
