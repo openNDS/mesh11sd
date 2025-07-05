@@ -2980,7 +2980,7 @@ check_package_list() {
 
 create_vxlan_if() {
 	debugtype="debug"
-	syslogmessage="create_vxlan_if [ vxlan$tun_id ], address [ $vxmac_indexed ], local [ $link_local_addr ], group [ ff02::$tun_id ]"
+	syslogmessage="create_vxlan_if [ vxlan$tun_id ], address [ $vxmac_indexed ], local [ $link_local_addr ], group [ ff02::$tun_id ], device [ $device ]"
 	write_to_syslog
 
 	ip -6 link add "vxlan$tun_id" \
@@ -3010,26 +3010,118 @@ check_vtunnel() {
 	fi
 
 	if [ "$vtun_enable" = 1 ]; then
-		debugtype="debug"
-		syslogmessage="check_vtunnel"
-		write_to_syslog
-
 		vxlan_status=$(ip link show vxlan$tun_id &> /dev/null; echo $?)
+		debugtype="debug"
+		syslogmessage="check_vtunnel. Vxlan Status [ $vxlan_status ]"
+		write_to_syslog
 
 		if [ "$vxlan_status" -eq 0 ]; then
 			vtunnel=""
 		fi
 
-		package_list="ip-full vxlan"
-		check_package_list
+		if [ "$commit_all" -eq 0 ]; then
+			package_list="ip-full vxlan"
+			check_package_list
 
-		if [ "$ip_full" -eq 0 ] && [ "$vxlan" -eq 0 ] && [ -z "$vtunnel" ] && [ -z "$vxlan_if" ]; then
-			# we have ip-full and vxlan packages
-			debugtype="debug"
-			syslogmessage="vxtunnel configuration"
-			write_to_syslog
+			if [ "$ip_full" -eq 0 ] && [ "$vxlan" -eq 0 ] && [ -z "$vtunnel" ] && [ -z "$vxlan_if" ]; then
+				# we have ip-full and vxlan packages
+				debugtype="debug"
+				syslogmessage="vxtunnel configuration"
+				write_to_syslog
 
-			. $tmpdir/active_mesh_ifname
+				. $tmpdir/active_mesh_ifname
+				. $tmpdir/devicemac
+
+				uci set dhcp.vtunlan=dhcp
+				uci set dhcp.vtunlan.interface='vtunlan'
+				uci set dhcp.vtunlan.start='100'
+				uci set dhcp.vtunlan.limit='150'
+				uci set dhcp.vtunlan.leasetime='12h'
+				uci set dhcp.vtunlan.ra_slaac='1'
+
+				if [ "$commit_all" -eq 0 ]; then
+					uci add_list dhcp.vtunlan.ra_flags='managed-config'
+					uci add_list dhcp.vtunlan.ra_flags='other-config'
+				fi
+
+				uci set dhcp.vtunlan.ignore='1'
+				uci set dhcp.vtunlan.ra_default='2'
+
+				uci set firewall.vtunlan='zone'
+				uci set firewall.vtunlan.name='vtunlan'
+				uci set firewall.vtunlan.network='vtunlan'
+				uci set firewall.vtunlan.input='ACCEPT'
+				uci set firewall.vtunlan.output='ACCEPT'
+				uci set firewall.vtunlan.forward='ACCEPT'
+
+				uci set firewall.dhcptun$tun_id=rule
+				uci set firewall.dhcptun$tun_id.name='VTUN-DHCP-Renew'
+				uci set firewall.dhcptun$tun_id.src='vtunlan'
+				uci set firewall.dhcptun$tun_id.proto='udp'
+				uci set firewall.dhcptun$tun_id.dest_port='67'
+				uci set firewall.dhcptun$tun_id.target='ACCEPT'
+				uci set firewall.dhcptun$tun_id.family='ipv4'
+
+				uci set firewall.dnstun$tun_id=rule
+				uci set firewall.dnstun$tun_id.name='VTUN-Allow-DNS'
+				uci set firewall.dnstun$tun_id.src='vtunlan'
+				uci set firewall.dnstun$tun_id.proto='udp tcp'
+				uci set firewall.dnstun$tun_id.dest_port='53'
+				uci set firewall.dnstun$tun_id.target='ACCEPT'
+				uci set firewall.dnstun$tun_id.family='ipv4'
+
+				uci set firewall.vxlan=rule
+				uci set firewall.vxlan.name='Allow-vxlan'
+				uci set firewall.vxlan.src='lan'
+				uci set firewall.vxlan.proto='udp'
+				uci set firewall.vxlan.dest_port='4789'
+				uci set firewall.vxlan.target='ACCEPT'
+
+				uci set firewall.vxlan_fwd=forwarding
+				uci set firewall.vxlan_fwd.src='vtunlan'
+				uci set firewall.vxlan_fwd.dest='wan'
+
+				if [ "$portal_detect" -eq 4 ] && [ "$commit_all" -eq 0 ]; then
+					echo "set network.wan.disabled='1'" | uci batch
+					echo "set network.wan6.disabled='1'" | uci batch
+					wanif=$(uci get network.wan.device)
+					echo "add_list network.vtunnel.ports='$wanif'" | uci batch
+					echo "set network.vtunlan.proto='dhcp'" | uci batch
+					uci set firewall.vtunlan.forward='ACCEPT'
+				fi
+
+				if [ "$portal_detect" -eq 5 ] && [ "$commit_all" -eq 0 ]; then
+					echo "set network.wan.disabled='1'" | uci batch
+					echo "set network.wan6.disabled='1'" | uci batch
+					wanif=$(uci get network.wan.device)
+					echo "add_list network.vtunnel.ports='$wanif'" | uci batch
+				fi
+
+				vtunnel="configured"
+				/sbin/service firewall restart
+				/sbin/service network reload
+
+				convert_to_la "$devicemac"
+				index=$(($index + 1))
+				make_indexed_mac "$mac_la" "$index"
+				vxmac_indexed="$mac_indexed"
+				link_local_addr=$(ip addr show "$device" | grep "inet6 fe80" | awk '{printf "%s", $2}' | awk -F "/" '{printf "%s", $1}')
+
+				if [ "$portal_detect" -eq 0 ] || [ "$portal_detect" -eq 4 ] || [ ! -z "$is_portal" ]; then
+					uci set dhcp.vtunlan.dhcpv4='server'
+					uci set dhcp.vtunlan.dhcpv6='server'
+					uci set dhcp.vtunlan.ra='server'
+					uci set dhcp.vtunlan.ignore='0'
+				else
+					uci set dhcp.vtunlan.dhcpv4='disabled'
+					uci set dhcp.vtunlan.dhcpv6='disabled'
+					uci set dhcp.vtunlan.ra='disabled'
+					uci set dhcp.vtunlan.ignore='1'
+				fi
+			fi
+		fi
+
+		if [ "$vxlan_status" -eq 1 ]; then
 			. $tmpdir/devicemac
 
 			if [ "$portal_detect" -eq 0 ] || [ "$portal_detect" -eq 4 ] || [ ! -z "$is_portal" ]; then
@@ -3053,71 +3145,6 @@ check_vtunnel() {
 			echo "set network.vtunlan.proto='$proto'" | uci batch
 			uci set network.vtunlan.ip6assign='60'
 
-			uci set dhcp.vtunlan=dhcp
-			uci set dhcp.vtunlan.interface='vtunlan'
-			uci set dhcp.vtunlan.start='100'
-			uci set dhcp.vtunlan.limit='150'
-			uci set dhcp.vtunlan.leasetime='12h'
-			uci set dhcp.vtunlan.ra_slaac='1'
-
-			if [ "$commit_all" -eq 0 ]; then
-				uci add_list dhcp.vtunlan.ra_flags='managed-config'
-				uci add_list dhcp.vtunlan.ra_flags='other-config'
-			fi
-
-			uci set dhcp.vtunlan.ignore='1'
-			uci set dhcp.vtunlan.ra_default='2'
-
-			uci set firewall.vtunlan='zone'
-			uci set firewall.vtunlan.name='vtunlan'
-			uci set firewall.vtunlan.network='vtunlan'
-			uci set firewall.vtunlan.input='ACCEPT'
-			uci set firewall.vtunlan.output='ACCEPT'
-			uci set firewall.vtunlan.forward='ACCEPT'
-
-			uci set firewall.dhcptun$tun_id=rule
-			uci set firewall.dhcptun$tun_id.name='VTUN-DHCP-Renew'
-			uci set firewall.dhcptun$tun_id.src='vtunlan'
-			uci set firewall.dhcptun$tun_id.proto='udp'
-			uci set firewall.dhcptun$tun_id.dest_port='67'
-			uci set firewall.dhcptun$tun_id.target='ACCEPT'
-			uci set firewall.dhcptun$tun_id.family='ipv4'
-
-			uci set firewall.dnstun$tun_id=rule
-			uci set firewall.dnstun$tun_id.name='VTUN-Allow-DNS'
-			uci set firewall.dnstun$tun_id.src='vtunlan'
-			uci set firewall.dnstun$tun_id.proto='udp tcp'
-			uci set firewall.dnstun$tun_id.dest_port='53'
-			uci set firewall.dnstun$tun_id.target='ACCEPT'
-			uci set firewall.dnstun$tun_id.family='ipv4'
-
-			uci set firewall.vxlan=rule
-			uci set firewall.vxlan.name='Allow-vxlan'
-			uci set firewall.vxlan.src='lan'
-			uci set firewall.vxlan.proto='udp'
-			uci set firewall.vxlan.dest_port='4789'
-			uci set firewall.vxlan.target='ACCEPT'
-
-			uci set firewall.vxlan_fwd=forwarding
-			uci set firewall.vxlan_fwd.src='vtunlan'
-			uci set firewall.vxlan_fwd.dest='wan'
-
-			if [ "$portal_detect" -eq 4 ] && [ "$commit_all" -eq 0 ]; then
-				echo "set network.wan.disabled='1'" | uci batch
-				echo "set network.wan6.disabled='1'" | uci batch
-				wanif=$(uci get network.wan.device)
-				echo "add_list network.vtunnel.ports='$wanif'" | uci batch
-				echo "set network.vtunlan.proto='dhcp'" | uci batch
-				uci set firewall.vtunlan.forward='ACCEPT'
-			fi
-
-			if [ "$portal_detect" -eq 5 ] && [ "$commit_all" -eq 0 ]; then
-				echo "set network.wan.disabled='1'" | uci batch
-				echo "set network.wan6.disabled='1'" | uci batch
-				wanif=$(uci get network.wan.device)
-				echo "add_list network.vtunnel.ports='$wanif'" | uci batch
-			fi
-
 			vtunnel="configured"
 			/sbin/service firewall restart
 			/sbin/service network reload
@@ -3127,26 +3154,13 @@ check_vtunnel() {
 			make_indexed_mac "$mac_la" "$index"
 			vxmac_indexed="$mac_indexed"
 			link_local_addr=$(ip addr show "$device" | grep "inet6 fe80" | awk '{printf "%s", $2}' | awk -F "/" '{printf "%s", $1}')
+
+
 			create_vxlan_if
 			vxlan_if="created"
-
-			if [ "$portal_detect" -eq 0 ] || [ "$portal_detect" -eq 4 ] || [ ! -z "$is_portal" ]; then
-				uci set dhcp.vtunlan.dhcpv4='server'
-				uci set dhcp.vtunlan.dhcpv6='server'
-				uci set dhcp.vtunlan.ra='server'
-				uci set dhcp.vtunlan.ignore='0'
-			else
-				uci set dhcp.vtunlan.dhcpv4='disabled'
-				uci set dhcp.vtunlan.dhcpv6='disabled'
-				uci set dhcp.vtunlan.ra='disabled'
-				uci set dhcp.vtunlan.ignore='1'
-
-			fi
-
 			device="br-tun$tun_id"
 			echo 1 > /proc/sys/net/ipv4/conf/$device/proxy_arp
 			/sbin/service dnsmasq reload
-
 
 			vxiflist=$(uci show wireless | grep "network='vtunlan'" | awk -F "." '{printf "%s.%s ", $1, $2}')
 
@@ -3506,6 +3520,27 @@ luci_cgi() {
 	chmod 755 "$cgi"
 }
 
+luci_add_custom() {
+
+	if [ "$auto_config" -eq 1 ] && [ "$auto_commit" -eq 1 ]; then
+
+		uci del luci.mesh11sd_status 2> /dev/null
+		uci set luci.mesh11sd_status=command
+		uci set luci.mesh11sd_status.name='Status of This MeshNode'
+		uci set luci.mesh11sd_status.command='mesh11sd status'
+
+		uci del luci.mesh11sd_stations 2> /dev/null
+		uci set luci.mesh11sd_stations=command
+		uci set luci.mesh11sd_stations.name='MeshNode Stations 1 Hop Away'
+		uci set luci.mesh11sd_stations.command='mesh11sd stations'
+
+		uci del luci.mesh11sd_ap_data 2> /dev/null
+		uci set luci.mesh11sd_ap_data=command
+		uci set luci.mesh11sd_ap_data.name='Mesh Gate (AP) Data'
+		uci set luci.mesh11sd_ap_data.command='mesh11sd show_ap_data all'
+	fi
+}
+
 send_ap_data() {
 
 	if [ "$apmond_enable" -eq 0 ]; then
@@ -3647,9 +3682,9 @@ is_default() {
 
 	for config in $configs; do
 
-		if [ -f "/etc/config/$config.mesh11sd.default" ]; then
+		if [ -f "/etc/config/$config""_mesh11sd_default" ]; then
 			currenthash=$(sha256sum "/etc/config/$config" | awk '{printf "%s", $1}')
-			defaulthash=$(sha256sum "/etc/config/$config.mesh11sd.default" | awk '{printf "%s", $1}')
+			defaulthash=$(sha256sum "/etc/config/$config""_mesh11sd_default" | awk '{printf "%s", $1}')
 
 			if [ "$currenthash" = "$defaulthash" ]; then
 				is_default="$is_default $config"
@@ -4774,47 +4809,79 @@ elif [ "$1" = "commit_changes" ]; then
 
 elif [ "$1" = "commit_all" ]; then
 
+	if [ -z "$3" ] || [ "$3" != "silent" ]; then
+		output="verbose"
+	else
+		output="silent"
+	fi
+
 	if [ "$auto_config" -eq 0 ]; then
-		echo "Auto config is not enabled - aborting..."
+
+		if [ "$output" = "verbose" ]; then
+			echo "Auto config is not enabled - aborting..."
+		fi
+
 		exit 1
 	fi
 
-	echo "=========================================================================================================="
+	commit_all_status=$(echo "get mesh11sd.setup.commit_all" | uci batch 2>/dev/null)
 
-	echo "Commit ***ALL*** changes, including auto_configuration changes, making them non volatile on restart/reboot"
+	if [ -z "$commit_all_status" ]; then
+		commit_all_status=0
+	fi
 
-	if [ -z "$2" ] || [ "$2" != "commit" ]; then
-		echo "    Usage: mesh11sd commit_all commit "
-		echo "    Writes changes to configuration file "
-		echo "    Active only when auto_config is enabled "
+	if [ "$commit_all_status" -eq 1 ]; then
 
-	elif [ "$2" = "commit" ] && [ "$auto_config" -eq 1 ]; then
+		if [ "$output" = "verbose" ]; then
+			echo "A commit_all command has already been run. Use revert_all to revert."
+		fi
 
-		echo "    Dynamic auto_configure options will be written to non volatile storage and LuCi UI will be enabled..... "
-		echo "    This is for advanced users, continue at your own risk."
-		echo "    This process can be reverted with the \"revert_all\" command."
-		echo
-		echo "    Do you want to continue? [yes/no] "
+		exit 1
+	fi
 
-		read reply
+	if [ "$output" = "verbose" ]; then
+		echo "=========================================================================================================="
+		echo "Commit ***ALL*** changes, including auto_configuration changes, making them non volatile on restart/reboot"
 
-		if [ "$reply" = "yes" ]; then
-			configs="mesh11sd wireless dhcp network firewall"
+		if [ -z "$2" ] || [ "$2" != "commit" ]; then
+			echo "    Usage: mesh11sd commit_all commit "
+			echo "    Writes changes to configuration file "
+			echo "    Active only when auto_config is enabled "
 
-			echo "set mesh11sd.setup.commit_all='1'" | uci batch
+		elif [ "$2" = "commit" ] && [ "$auto_config" -eq 1 ]; then
 
-			for config in $configs; do
-				uci commit "$config"
-			done
+			echo "    Dynamic auto_configure options will be written to non volatile storage and LuCi UI will be enabled..... "
+			echo "    This is for advanced users, continue at your own risk."
+			echo "    This process can be reverted with the \"revert_all\" command."
+			echo
+			echo "    Do you want to continue? [yes/no] "
 
-			restore_luci_cgi
-		else
-			echo "Aborting commit_all"
+			read reply
 		fi
 	fi
 
-	echo "=========================================================================================================="
-	echo
+	if [ "$reply" = "yes" ] || [ "$output" = "silent" ]; then
+		configs="mesh11sd wireless dhcp network firewall"
+		echo "set mesh11sd.setup.commit_all='1'" | uci batch
+		echo "set mesh11sd.setup.portal_use_default_ipv4='1'" | uci batch
+		echo "del network.vtunnel" | uci batch 2>/dev/null
+		echo "del network.vtunlan" | uci batch 2>/dev/null
+
+		for config in $configs; do
+			uci commit "$config"
+		done
+
+		restore_luci_cgi
+
+	elif [ "$reply" != "yes" ] && [ "$output" = "verbose" ]; then
+		echo "Aborting commit_all"
+	fi
+
+	if [ "$output" = "verbose" ]; then
+		echo "=========================================================================================================="
+		echo
+	fi
+
 	exit 0
 
 elif [ "$1" = "revert_all" ]; then
@@ -4846,14 +4913,25 @@ elif [ "$1" = "revert_all" ]; then
 
 			for config in $configs; do
 
-				if [ -f "/etc/config/$config.mesh11sd.default" ]; then
-					cp "/etc/config/$config.mesh11sd.default" "/etc/config/$config"
+				if [ -f "/etc/config/$config""_mesh11sd_default" ]; then
+					cp "/etc/config/$config""_mesh11sd_default" "/etc/config/$config"
 				fi
 
 			done
 
 			setup_luci_cgi
 			echo "Revert complete, auto configuration will rebuild - restarting......"
+
+			tics=5
+
+			for tic in $(seq $tics); do
+				sleep 1
+				echo -n "* "
+			done
+
+			echo
+			echo "=========================================================================================================="
+
 			reboot
 		else
 			echo "Aborting revert_all"
@@ -5138,8 +5216,8 @@ elif [ "$1" = "daemon" ]; then
 		for config in $configs; do
 			uci revert "$config"
 
-			if [ ! -f "/etc/config/$config.mesh11sd.default" ]; then
-				cp "/etc/config/$config" "/etc/config/$config.mesh11sd.default"
+			if [ ! -f "/etc/config/$config""_mesh11sd_default" ]; then
+				cp "/etc/config/$config" "/etc/config/$config""_mesh11sd_default"
 			fi
 
 		done
@@ -5512,10 +5590,10 @@ elif [ "$1" = "daemon" ]; then
 
 			if [ "$auto_config" -eq 1 ] || [ -e "$tmpdir/auto_config_test" ]; then
 
-				if [ "$portal_detect" -ge 1 ] && [ "$portal_detect" -lt 4 ] && [ "$commit_all" -eq 0 ]; then
+				if [ "$portal_detect" -ge 1 ] && [ "$portal_detect" -lt 4 ]; then
 					check_portal
 
-				elif [ "$portal_detect" -eq 0 ] || [ "$portal_detect" -eq 4 ] && [ "$commit_all" -eq 0 ]; then
+				elif [ "$portal_detect" -eq 0 ] || [ "$portal_detect" -eq 4 ] && [ "$commit_all" -eq 0; then
 					# portal_detect is not enabled - 0 force portal mode, 4 force portal bridge mode:
 					authoritative=$(uci get dhcp.@dnsmasq[0].authoritative 2>/dev/null | awk '{printf "%d", $1}')
 
