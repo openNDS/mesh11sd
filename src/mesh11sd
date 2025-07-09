@@ -1166,7 +1166,7 @@ wait_for_interface () {
 # $debugtype contains the debug level string: debug, info, warn, notice, err, emerg.
 write_to_syslog() {
 
-	if [ "$mute" = 0 ]; then
+	if [ -z "$mute" ] || [ "$mute" -eq 0 ]; then
 		debuglevel=$(uci get mesh11sd.setup.debuglevel 2> /dev/null)
 
 		if [ -z "$debuglevel" ]; then
@@ -1189,9 +1189,9 @@ write_to_syslog() {
 				logger -p "daemon.$debugtype" "$log_to_stderr" -t "mesh11sd[$mesh11sdpid]" "$syslogmessage"
 			fi
 		fi
-	else
-		mute=0
 	fi
+
+	mute=0
 }
 
 write_to_watchdog_nonvolatile_log() {
@@ -1379,6 +1379,7 @@ scan_channel() {
 }
 
 get_portal_state() {
+	local muteorg=$mute
 	debugtype="debug"
 	syslogmessage="In get_portal_state. firstloop=$firstloop..."
 	write_to_syslog
@@ -1400,6 +1401,7 @@ get_portal_state() {
 					syslogmessage="Portal upstream link check  [$zone] - iteration [ $retry ] ...."
 				fi
 
+				mute=$muteorg
 				write_to_syslog
 				sleep 1
 
@@ -1450,6 +1452,7 @@ get_portal_state() {
 
 	debugtype="debug"
 	syslogmessage="default_gw=$default_gw...."
+	mute=$muteorg
 	write_to_syslog
 
 	config_ipaddr=$(uci get network.$auto_mesh_network.ipaddr)
@@ -1497,6 +1500,7 @@ get_portal_state() {
 
 		debugtype="debug"
 		syslogmessage="ipV4 gateway status [ $pingresult ]"
+		mute=$muteorg
 		write_to_syslog
 
 
@@ -1508,6 +1512,7 @@ get_portal_state() {
 
 				debugtype="debug"
 				syslogmessage="ipV4 link to portal fail, attempting to (re)establish via device [ $dhcpdevice ], iteration [ $ip4pingfailcount ]"
+				mute=$muteorg
 				write_to_syslog
 
 				dhcp4_renew
@@ -1523,6 +1528,7 @@ get_portal_state() {
 
 					debugtype="err"
 					syslogmessage="portal detect threshold reached, enabling HWMP announcments"
+					mute=$muteorg
 					write_to_syslog
 					write_to_watchdog_nonvolatile_log
 
@@ -1530,6 +1536,7 @@ get_portal_state() {
 					dhcpdevice=$(echo "get network.$auto_mesh_network.device" | uci batch | awk '{printf "%s", $1}')
 					debugtype="err"
 					syslogmessage="portal detect threshold reached, watchdog is monitoring"
+					mute=$muteorg
 					write_to_syslog
 					write_to_watchdog_nonvolatile_log
 					network_restart=1
@@ -1538,6 +1545,7 @@ get_portal_state() {
 					dhcpdevice=$(echo "get network.$auto_mesh_network.device" | uci batch | awk '{printf "%s", $1}')
 					debugtype="notice"
 					syslogmessage="portal detect threshold exceeded, watchdog continuing to monitor..."
+					mute=$muteorg
 					write_to_syslog
 					write_to_watchdog_nonvolatile_log
 					network_restart=2
@@ -1546,6 +1554,7 @@ get_portal_state() {
 					dhcpdevice=$(echo "get network.$auto_mesh_network.device" | uci batch | awk '{printf "%s", $1}')
 					debugtype="notice"
 					syslogmessage="portal detect threshold exceeded, watchdog is restarting the network..."
+					mute=$muteorg
 					write_to_syslog
 					write_to_watchdog_nonvolatile_log
 					network_restart=3
@@ -1560,10 +1569,12 @@ get_portal_state() {
 					if [ "$stop_on_error" -gt 0 ]; then
 						syslogmessage="portal detect threshold exceeded, restarting network did not work... disabling mesh management, changing to mesh status mode"
 						enabled=0
+						mute=$muteorg
 						write_to_syslog
 						write_to_watchdog_nonvolatile_log
 					elif [ "$reboot_on_error" -gt 0 ]; then
 						syslogmessage="portal detect threshold exceeded, restarting network did not work... rebooting node"
+						mute=$muteorg
 						write_to_syslog
 						write_to_watchdog_nonvolatile_log
 						reboot
@@ -1589,11 +1600,13 @@ get_portal_state() {
 		detected_state="cpe_peer"
 		debugtype="debug"
 		syslogmessage="CPE mode..."
+		mute=$muteorg
 		write_to_syslog
 	fi
 
 	debugtype="debug"
 	syslogmessage="leaving get_portal_state - is_portal=$is_portal.. gwstatus=$gwstatus.. gw_ip=$gw_ip.."
+	mute=$muteorg
 	write_to_syslog
 
 	if [ -z "$is_portal" ] && [ -e "$tmpdir/is_portal" ]; then
@@ -2264,7 +2277,8 @@ auto_config() {
 					echo "set wireless.m11s$phyindex.ifname='$mesh_ifname'" | uci batch
 					echo "set wireless.m11s$phyindex.mesh_rssi_threshold='$mesh_rssi_threshold'" | uci batch
 					echo "set wireless.radio$phyindex.disabled='0'" | uci batch
-					echo "set wireless.radio$phyindex.log_level='2'" | uci batch
+					echo "set wireless.radio$phyindex.beacon_int='500'" | uci batch
+					echo "set wireless.radio$phyindex.log_level='3'" | uci batch
 
 					ucicountry=$(uci get wireless.radio$phyindex.country 2> /dev/null | awk '{printf "%s", $1}')
 
@@ -3441,7 +3455,7 @@ restore_luci_cgi() {
 			cgiorghash=$(sha256sum "$cgioriginal" | awk '{printf "%s", $1}')
 			cgihash=$(sha256sum "$cgiuhttp" | awk '{printf "%s", $1}')
 
-			if [ "$cgitmphash" != "$cgihash" ]; then
+			if [ "$cgiorghash" != "$cgihash" ]; then
 				cp "$cgioriginal" "$cgiuhttp"
 				chmod 755 "$cgiuhttp"
 				luci_cgi_status=0
@@ -3456,7 +3470,7 @@ restore_luci_cgi() {
 
 }
 
-setup_luci_cgi() {
+replace_luci_cgi() {
 	luci_cgi_status=127
 
 	if [ -e "$apmond_cgi_dir" ]; then
@@ -3522,7 +3536,7 @@ luci_cgi() {
 
 luci_add_custom() {
 
-	if [ "$auto_config" -eq 1 ] && [ "$auto_commit" -eq 1 ]; then
+	if [ "$auto_config" -eq 1 ]; then
 
 		uci del luci.mesh11sd_status 2> /dev/null
 		uci set luci.mesh11sd_status=command
@@ -3531,8 +3545,13 @@ luci_add_custom() {
 
 		uci del luci.mesh11sd_stations 2> /dev/null
 		uci set luci.mesh11sd_stations=command
-		uci set luci.mesh11sd_stations.name='MeshNode Stations 1 Hop Away'
+		uci set luci.mesh11sd_stations.name='MeshNodes 1 Hop Away'
 		uci set luci.mesh11sd_stations.command='mesh11sd stations'
+
+		uci del luci.mesh11sd_connect 2> /dev/null
+		uci set luci.mesh11sd_connect=command
+		uci set luci.mesh11sd_connect.name='MeshNode List'
+		uci set luci.mesh11sd_connect.command='mesh11sd connect'
 
 		uci del luci.mesh11sd_ap_data 2> /dev/null
 		uci set luci.mesh11sd_ap_data=command
@@ -4496,6 +4515,8 @@ elif [ "$1" = "status" ]; then
 	echo "}"
 
 elif [ "$1" = "connect" ]; then
+	mute=1
+	get_portal_state
 
 	if [ "$auto_config" -eq 0 ]; then
 		echo "======================================================================"
@@ -4516,7 +4537,7 @@ elif [ "$1" = "connect" ]; then
 
 	if [ -z "$nodeaddr" ]; then
 		echo " If the node you are looking for is not in the list - re-run this command."
-		echo "==========================================================================="
+		echo "=========================================================================================="
 		echo " The following meshnodes are available for remote connection:"
 	fi
 
@@ -4537,7 +4558,9 @@ elif [ "$1" = "connect" ]; then
 			ip6addr=$(echo "$linklocal" | awk -F "%" '{printf "%s", $1}')
 
 			if [ -z "$nodeaddr" ]; then
-				echo "	$ndpmacf	[ ip address: $ip6addr ]"
+				ula_pref=$(uci get network.globals.ula_prefix 2>/dev/null | awk -F ":" '{printf "%s:%s:%s", $1, $2, $3}')
+				node_ula=$(ip -6 neigh | grep "$ula_pref" | grep "$ndpmac" | awk -F " " '{printf "%s", $1}')
+				echo "$ndpmacf [ ipaddress: $ip6addr] [ web_ui: https://[$node_ula] ]"
 			elif [ ! -z "$nodeaddr" ]; then
 
 				if [ "$nodeaddr" = "$ndpmac" ]; then
@@ -4553,7 +4576,7 @@ elif [ "$1" = "connect" ]; then
 		done
 	fi
 
-	echo "==========================================================================="
+	echo "=========================================================================================="
 	echo
 
 	exit 0
@@ -4882,6 +4905,8 @@ elif [ "$1" = "commit_all" ]; then
 		echo
 	fi
 
+	luci_add_custom
+
 	exit 0
 
 elif [ "$1" = "revert_all" ]; then
@@ -4919,7 +4944,7 @@ elif [ "$1" = "revert_all" ]; then
 
 			done
 
-			setup_luci_cgi
+			replace_luci_cgi
 			echo "Revert complete, auto configuration will rebuild - restarting......"
 
 			tics=5
@@ -5204,8 +5229,12 @@ elif [ "$1" = "daemon" ]; then
 	manage_opennds stop
 
 	if [ "$auto_config" -gt 0 ]; then
-		# redirect luci web ui
-		setup_luci_cgi
+
+		if [ "$commit_all" -eq 0 ]; then 
+			# redirect luci web ui
+			replace_luci_cgi
+		fi
+
 		# We do not know the current state so reinitialise everything
 		debugtype="info"
 		syslogmessage="Initialising state for auto_config"
@@ -5376,6 +5405,8 @@ elif [ "$1" = "daemon" ]; then
 	setup_apmon_cgi
 
 	refresh_bridgemac
+
+	luci_add_custom
 
 	# Start the main loop
 	while true; do
