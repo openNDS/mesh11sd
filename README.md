@@ -224,7 +224,7 @@ However the ipv6 link local address will be unique to the node regardless of the
 
 Having reflashed the meshnode you want to be the portal node, ie the one that is going to have the upstream ethernet connection, connect the upstream ethernet to wan and your computer to lan and power it on. Wait for it to boot up, could be a minute or so....
 
-On your computer, It should request and receive an ipv4 address via DHCP. Look at the routing table.
+On your computer, It should either listen to router announcements or make dhcp requests. So we can look at the routing table.
 
 **On Linux this would be ip -6 route.** (See later for Windows)
 
