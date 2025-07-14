@@ -20,6 +20,13 @@ network_restart=0
 tmpdir="/tmp/mesh11sd"
 mkdir -p "$tmpdir"
 
+if [ "$1" = "daemon" ]; then
+	mutestate=0
+else
+	mutestate=1
+fi
+
+mute=""
 
 get_mesh_iflist () {
 	iflist=""
@@ -321,7 +328,6 @@ get_current_setup () {
 
 	syslogmessage="option auto_mesh_band [ $auto_mesh_band ]"
 	debugtype="info"
-
 	mute="$mutestate"
 	write_to_syslog
 
@@ -1142,12 +1148,13 @@ get_mesh_path_cost () {
 	write_to_syslog
 }
 
-wait_for_interface () {
+wait_for_interface() {
 	local ifname="$1"
 	local timeout=$interface_timeout
 
 	for i in $(seq $timeout); do
-		if [ $(ip link show $ifname 2> /dev/null | grep -c -w "state UP") -eq 1 ]; then
+		if [ $(ip link show $ifname 2> /dev/null | grep -c -w "state UP") -eq 1 ] || [ $(ip link show $ifname 2> /dev/null | grep -c -w "state UNKNOWN") -eq 1 ]; then
+			write_to_syslog
 			ifstatus="up"
 			break
 		fi
@@ -1166,7 +1173,11 @@ wait_for_interface () {
 # $debugtype contains the debug level string: debug, info, warn, notice, err, emerg.
 write_to_syslog() {
 
-	if [ -z "$mute" ] || [ "$mute" -eq 0 ]; then
+	if [ -z "$mute" ]; then
+		mute=$mutestate
+	fi
+
+	if [ "$mute" -eq 0 ]; then
 		debuglevel=$(uci get mesh11sd.setup.debuglevel 2> /dev/null)
 
 		if [ -z "$debuglevel" ]; then
@@ -1191,7 +1202,7 @@ write_to_syslog() {
 		fi
 	fi
 
-	mute=0
+	mute=$mutestate
 }
 
 write_to_watchdog_nonvolatile_log() {
@@ -1966,7 +1977,7 @@ wait_for_mesh() {
 			fi
 		done
 
-		if [ "$ifstatus" = "down" ] && [ "$fixup1" -eq 0 ]; then
+		if [ "$ifstatus" = "down" ] && [ "$fixup1" -eq 0 ] && [ "$commit_all" -eq 0 ]; then
 			fixup1=1
 			debugtype="err"
 			syslogmessage="First attempt at fixup: Mesh interface $iface failed - Possible wireless driver bug...."
@@ -2150,7 +2161,7 @@ get_wiphys() {
 }
 
 refresh_bridgemac() {
-	# get the device device mac and write it to $tmpdir/devicemac
+	# get the device mac and write it to $tmpdir/devicemac
 	device=$(uci get network.$auto_mesh_network.device)
 	configured_mac=$(uci get network.$auto_mesh_network.macaddr 2>/dev/null)
 
@@ -2164,7 +2175,7 @@ refresh_bridgemac() {
 	if [ ! -f "/etc/factory_mac" ]; then
 		echo "factory_mac=\"$devicemac\"" > /etc/factory_mac
 
-		if [ -z "$configured_mac" ]; then
+		if [ -z "$configured_mac" ] && [ "$commit_all" -eq 0 ]; then
 			echo "set network.$auto_mesh_network.macaddr='$devicemac'" | uci batch
 			uci commit network
 		fi
@@ -2173,9 +2184,10 @@ refresh_bridgemac() {
 
 	. /etc/factory_mac
 
-	if [ "$factory_mac" != "$devicemac" ]; then
+	if [ "$factory_mac" != "$devicemac" ] && [ "$commit_all" -eq 0 ]; then
 		devicemac="$factory_mac"
-		ip link set $device down; ip link set $device up address $devicemac
+		ip link set $device down
+		ip link set $device up address $devicemac
 	fi
 
 	echo "device=\"$device\" ; devicemac=\"$devicemac\"" > $tmpdir/devicemac
@@ -2783,7 +2795,7 @@ block_bridge_loops() {
 
 			# macfixenable=$kmajor # uncomment to only fixup macs if kernel is version 6 or greater
 
-			if [ "$macfixenable" -ge 6 ]; then
+			if [ "$macfixenable" -ge 6 ] && [ "$commit_all" -eq 0 ]; then
 				if [ $is_meshif -ne 0 ]; then
 					# This is not a mesh interface
 					local br_iface_mac=$(ip link | grep -A 1 "$br_iface" | grep "link/ether" | awk 'NR==1 {printf "%s", $2}')
@@ -3009,11 +3021,21 @@ create_vxlan_if() {
 
 	ip link set "vxlan$tun_id" up
 
-	ip link set "$active_mesh_ifname" mtu 1600
-	ip link set "$device" mtu 1600
-	ip link set "vxlan$tun_id" mtu 1500
+	local retries=16
 
-	wait_for_interface "vxlan$tun_id"
+	for retry in $(seq $retries); do
+		wait_for_interface "vxlan$tun_id"
+
+		if [ "$ifstatus" = "down" ]; then
+			sleep 1
+			continue
+		elif [ "$ifstatus" = "up" ]; then
+			ip link set "$active_mesh_ifname" mtu 1600
+			ip link set "$device" mtu 1600
+			ip link set "vxlan$tun_id" mtu 1500
+			break
+		fi
+	done
 }
 
 check_vtunnel() {
@@ -3112,9 +3134,8 @@ check_vtunnel() {
 				fi
 
 				vtunnel="configured"
-				/sbin/service firewall restart
 				/sbin/service network reload
-
+				/sbin/service firewall restart
 				convert_to_la "$devicemac"
 				index=$(($index + 1))
 				make_indexed_mac "$mac_la" "$index"
@@ -3135,7 +3156,7 @@ check_vtunnel() {
 			fi
 		fi
 
-		if [ "$vxlan_status" -eq 1 ]; then
+		if [ "$vxlan_status" -eq 1 ] && [ "$commit_all" -eq 0 ]; then
 			. $tmpdir/devicemac
 
 			if [ "$portal_detect" -eq 0 ] || [ "$portal_detect" -eq 4 ] || [ ! -z "$is_portal" ]; then
@@ -3147,6 +3168,7 @@ check_vtunnel() {
 			uci set network.vtunnel=device
 			echo "set network.vtunnel.name='br-tun$tun_id'" | uci batch
 			uci set network.vtunnel.type='bridge'
+			uci set network.vtunnel.bridge_empty='1'
 
 			if [ "$commit_all" -eq 0 ]; then
 				echo "add_list network.vtunnel.ports='vxlan$tun_id'" | uci batch
@@ -3159,9 +3181,11 @@ check_vtunnel() {
 			echo "set network.vtunlan.proto='$proto'" | uci batch
 			uci set network.vtunlan.ip6assign='60'
 
-			vtunnel="configured"
+			wifi down
 			/sbin/service firewall restart
-			/sbin/service network reload
+			/sbin/service network restart
+			wait_for_interface "$device"
+			vtunnel="configured"
 
 			convert_to_la "$devicemac"
 			index=$(($index + 1))
@@ -3172,9 +3196,32 @@ check_vtunnel() {
 
 			create_vxlan_if
 			vxlan_if="created"
+
 			device="br-tun$tun_id"
 			echo 1 > /proc/sys/net/ipv4/conf/$device/proxy_arp
 			/sbin/service dnsmasq reload
+
+			vxiflist=$(uci show wireless | grep "network='vtunlan'" | awk -F "." '{printf "%s.%s ", $1, $2}')
+
+			for vxif in $vxiflist; do
+				vxifname=$(echo "get $vxif.ifname" | uci batch | awk '{printf "%s", $1}')
+				brctl addif "$device" "$vxifname"
+			done
+
+			set_iface_path_cost "$vtun_path_cost" "$device" "vxlan$tun_id"
+			. $tmpdir/devicemac
+
+		elif [ "$vxlan_status" -eq 1 ] && [ "$commit_all" -eq 1 ]; then
+			. $tmpdir/devicemac
+			convert_to_la "$devicemac"
+			index=$(($index + 1))
+			make_indexed_mac "$mac_la" "$index"
+			vxmac_indexed="$mac_indexed"
+			link_local_addr=$(ip addr show "$device" | grep "inet6 fe80" | awk '{printf "%s", $2}' | awk -F "/" '{printf "%s", $1}')
+			create_vxlan_if
+			vxlan_if="created"
+			device="br-tun$tun_id"
+			echo 1 > /proc/sys/net/ipv4/conf/$device/proxy_arp
 
 			vxiflist=$(uci show wireless | grep "network='vtunlan'" | awk -F "." '{printf "%s.%s ", $1, $2}')
 
@@ -3320,6 +3367,11 @@ is_hex() {
 write_node_data() {
 	node_id="$1"
 	data_raw="$2"
+
+	if [ -z "$data_raw" ]; then
+		return 0
+	fi
+echo "$(date) node_id-$node_id! data_raw=$data_raw!" >> /tmp/wnd
 	maxchunksize=16
 	strindex=0
 	chunkstr=""
@@ -3341,10 +3393,9 @@ write_node_data() {
 			break
 		fi
 
+		hextest=$(printf "%d" "0x$chunk" &>/dev/null; echo -n $?)
 
-		hextest=$(printf "$chunksize" "0x$chunk")
-
-		if [ "$hextest" = "$chunk" ]; then
+		if [ "$hextest" -eq 0 ]; then
 			# Increment the pointer
 			strindex=$((strindex+$maxchunksize))
 
@@ -3374,6 +3425,7 @@ write_node_data() {
 			elif [ "$chunkstatus" = "end" ]; then
 				echo " $node_id" >> "$tmpdir/$node_type/ap/$node_mac"
 				debugtype="info"
+				mute=0
 				syslogmessage="apmond data received from node [$node_hostname] id [ $node_mac ]"
 				write_to_syslog
 				status="ack"
@@ -3392,6 +3444,7 @@ write_node_data() {
 	if [ "$retval" -gt 0 ]; then
 		debugtype="warn"
 		syslogmessage="WARNING! Invalid remote data format - rejecting..."
+		mute=0
 		write_to_syslog
 	fi
 
@@ -3578,9 +3631,11 @@ send_ap_data() {
 	hexencoded=$(cat "$tmpdir/apmond/hexencoded")
 	hexencoded_len=$((${#hexencoded}))
 
+	# If no data, Spider to force NDP update
 	if [ "$hexencoded_len" -le 10 ]; then
-		retcode=0
-		return 0
+		spider="-s"
+	else
+		spider=""
 	fi
 
 	debugtype="debug"
@@ -3596,7 +3651,7 @@ send_ap_data() {
 
 		if [ -z "$chunk" ]; then
 			chunkstatus="end"
-			send_status=$(wget -6 -q -O - -U "apmond;$hostname;$devicemac;$chunkstatus;$strindex" --no-check-certificate https://[$portal_ula]/cgi-bin/apmon.cgi)
+			send_status=$(wget "$spider" -6 -q -O - -U "apmond;$hostname;$devicemac;$chunkstatus;$strindex" --no-check-certificate https://[$portal_ula]/cgi-bin/apmon.cgi)
 			retcode=$?
 			echo "$send_status" | awk '{printf "%s", $1}'
 			break
@@ -3930,7 +3985,6 @@ manage_opennds () {
 	fi
 }
 
-
 ##############
 # Start point
 ##############
@@ -3939,12 +3993,6 @@ if [ -f "/var/run/mesh11sd.pid" ]; then
 	mesh11sdpid=$(cat /var/run/mesh11sd.pid)
 else
 	mesh11sdpid=$(pgrep -f "/bin/sh /usr/sbin/mesh11sd")
-fi
-
-if [ "$1" = "daemon" ]; then
-	mutestate=0
-else
-	mutestate=1
 fi
 
 get_current_setup 2> /dev/null
@@ -4887,8 +4935,8 @@ elif [ "$1" = "commit_all" ]; then
 		configs="mesh11sd wireless dhcp network firewall"
 		echo "set mesh11sd.setup.commit_all='1'" | uci batch
 		echo "set mesh11sd.setup.portal_use_default_ipv4='1'" | uci batch
-		echo "del network.vtunnel" | uci batch 2>/dev/null
-		echo "del network.vtunlan" | uci batch 2>/dev/null
+		#echo "del network.vtunnel" | uci batch 2>/dev/null
+		#echo "del network.vtunlan" | uci batch 2>/dev/null
 
 		for config in $configs; do
 			uci commit "$config"
@@ -5207,6 +5255,21 @@ elif [ "$1" = "show_ap_data" ]; then
 
 	exit 0
 
+elif [ "$1" = "write_to_syslog" ]; then
+	# Write debug message to syslog
+	# $2 contains the string to log
+	# $3 contains the debug level string: debug, info, warn, notice, err, emerg.
+
+	if [ -z "$2" ]; then
+		exit 1
+	else
+		syslogmessage="$2"
+		debugtype="$3"
+		write_to_syslog
+	fi
+
+	exit 0
+
 elif [ "$1" = "daemon" ]; then
 	debugtype="notice"
 	syslogmessage="mesh11sd is in startup"
@@ -5410,59 +5473,6 @@ elif [ "$1" = "daemon" ]; then
 
 	# Start the main loop
 	while true; do
-		mode=$(($startup + $statusmode + $enabled))
-
-		syslogmessage=""
-
-		if [ $mode -eq 5 ]; then
-			# startup=4, statusmode=0, enabled=1
-			startup=0
-			statusmode=0
-			mode=1
-			syslogmessage="mesh11sd v$version has started: mesh management mode $mode"
-
-		elif [ $mode -eq 4 ]; then
-			# startup=4, statusmode=0, enabled=0
-			startup=0
-			statusmode=2
-			mode=0
-			syslogmessage="mesh11sd v$version has started: mesh status mode $mode"
-
-		elif [ $mode -eq 3 ]; then
-			# startup=0, statusmode=2, enabled=1
-			startup=0
-			statusmode=0
-			mode=1
-			syslogmessage="mesh11sd v$version has started: mesh management mode $mode"
-
-		elif [ $mode -eq 2 ]; then
-			# startup=0, statusmode=2, enabled=0
-			startup=0
-			statusmode=2
-			mode=0
-			syslogmessage="mesh11sd v$version has started: mesh status mode $mode"
-
-		elif [ $mode -eq 1 ]; then
-			# startup=0, statusmode=0, enabled=1
-			startup=0
-			statusmode=0
-			mode=1
-			syslogmessage="mesh11sd v$version has started, mesh management mode $mode"
-
-		elif [ $mode -eq 0 ]; then
-			# startup=0, statusmode=0, enabled=0
-			startup=0
-			statusmode=2
-			mode=0
-			syslogmessage="mesh11sd v$version has started: mesh status mode $mode"
-		fi
-
-		if [ $mode -ne $lastmode ]; then
-			debugtype="notice"
-			write_to_syslog
-		fi
-
-		lastmode=$mode
 		meshindex=0
 		meshconfigs=""
 
@@ -5497,6 +5507,8 @@ elif [ "$1" = "daemon" ]; then
 
 			if [ ! -z "$meshconfigs" ]; then
 				# we have an existing mesh config
+				# check if the vtunnel is needed and if it is, is it configured
+				check_vtunnel
 
 				for meshconfig in $meshconfigs; do
 
@@ -5518,14 +5530,14 @@ elif [ "$1" = "daemon" ]; then
 
 				#### The mesh interface MUST have a unique mac address ie not duplicated from another interface.
 				# We will set it ip as a locally administered version of the bridge mac for facilitating connect/copy functionality
-				# If manually configured, let the user figure it out
+				# If manually configured, or after commit_all and changes have been made, let the user figure it out
 
-				if [ "$macfixup" -eq 0 ] && [ "$auto_config" -gt 0 ]; then
+				if [ "$macfixup" -eq 0 ] && [ "$auto_config" -gt 0 ] && [ "$commit_all" -eq 0 ]; then
 
 					for wiphy in $wiphys; do
 						ucimeshconfig=$(uci get $meshconfig.macaddr 2> /dev/null)
 
-						if [ -z "$ucimeshconfig" ]; then
+						if [ -z "$ucimeshconfig" ] && [ "$commit_all" -eq 0 ]; then
 							# No mac address fixup, so add one
 							phyindex=$(echo "$wiphy" | awk -F "phy" '{printf "%s", $2}')
 							phyindex=$(printf "%x" $phyindex)
@@ -5550,7 +5562,7 @@ elif [ "$1" = "daemon" ]; then
 
 						uciapconfig=$(uci get wireless.$ap.macaddr 2> /dev/null)
 
-						if [ -z "$uciapconfig" ]; then
+						if [ -z "$uciapconfig" ] && [ "$commit_all" -eq 0 ]; then
 							index=$(($index + 1))
 							make_indexed_mac "$mac_la" "$index"
 							echo "set wireless.$ap.macaddr=$mac_indexed" | uci batch
@@ -5624,7 +5636,7 @@ elif [ "$1" = "daemon" ]; then
 				if [ "$portal_detect" -ge 1 ] && [ "$portal_detect" -lt 4 ]; then
 					check_portal
 
-				elif [ "$portal_detect" -eq 0 ] || [ "$portal_detect" -eq 4 ] && [ "$commit_all" -eq 0; then
+				elif [ "$portal_detect" -eq 0 ] || [ "$portal_detect" -eq 4 ] && [ "$commit_all" -eq 0 ]; then
 					# portal_detect is not enabled - 0 force portal mode, 4 force portal bridge mode:
 					authoritative=$(uci get dhcp.@dnsmasq[0].authoritative 2>/dev/null | awk '{printf "%d", $1}')
 
@@ -5756,7 +5768,6 @@ elif [ "$1" = "daemon" ]; then
 				check_channel
 			fi
 
-			check_vtunnel
 			apmondloopcount=$((apmondloopcount + 1))
 
 			if [ "$apmondloopcount" -ge "$apmondloopstart" ]; then
