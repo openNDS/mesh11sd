@@ -42,21 +42,23 @@ get_mesh_iflist () {
 }
 
 check_mesh_phantom () {
-	nodelist=$(iw dev $iface mpath dump | awk '{printf "%s,%s ", $1, $2}')
+	local nodelist=$(iw dev $iface mpath dump | awk '{printf "%s,%s ", $1, $2}')
+	local mnode=""
+	local previous_mnode=""
 
-	for node in $nodelist; do
+	for mnode in $nodelist; do
 
-		debugtype="debug"
-		syslogmessage="node [$node]"
-		write_to_syslog
+		if [ -z $previous_mnode ] || [ "$previous_mnode" != "$mnode" ]; then
+			local phantom=$(echo "$mnode" | awk -F"," '$2 == "00:00:00:00:00:00" {printf "%s", $1}')
 
-		phantom=$(echo "$node" | awk -F"," '$2 == "00:00:00:00:00:00" {printf "%s", $1}')
+			if [ ! -z "$phantom" ]; then
+				debugtype="info"
+				syslogmessage="Phantom meshnode detected [$phantom] - deleting"
+				write_to_syslog
+				iw dev $iface mpath del $phantom
+			fi
 
-		if [ ! -z "$phantom" ]; then
-			debugtype="info"
-			syslogmessage="Phantom meshnode detected [$phantom] - deleting"
-			write_to_syslog
-			iw dev $iface mpath del $phantom
+			previous_mnode="$mnode"
 		fi
 	done
 }
@@ -1139,11 +1141,7 @@ get_mesh_path_cost () {
 	fi
 
 	syslogmessage="option mesh_path_cost [ $mesh_path_cost ]"
-
-	if [ "$mute" -eq  0 ]; then
-		mute="$mutestate"
-	fi
-
+	mute="$mutestate"
 	debugtype="info"
 	write_to_syslog
 }
@@ -1722,9 +1720,16 @@ check_portal() {
 				ip route flush default
 				hostname=$(uci get system.@system[0].hostname 2>/dev/null)
 
+				vxlan_status=$(ip link show vxlan$tun_id &> /dev/null; echo $?)
+
+				if [ "$vxlan_status" -eq 0 ]; then
+					echo "set network.vtunlan.proto='dhcp'" | uci batch
+				fi
+
 				echo "set network.$auto_mesh_network.proto='dhcp'" | uci batch
 				set_ula_prefix "revert"
 				/sbin/service network reload
+
 				uci set dhcp.@dnsmasq[0].authoritative='0'
 				echo "set dhcp.$auto_mesh_network.ignore='1'" | uci batch
 				echo "set dhcp.$auto_mesh_network.ra_default='2'" | uci batch
@@ -1734,6 +1739,16 @@ check_portal() {
 				uci set dhcp.@dnsmasq[0].logfacility='-'
 				uci set dhcp.@dnsmasq[0].quietdhcp='1'
 
+				vxlan_status=$(ip link show vxlan$tun_id &> /dev/null; echo $?)
+
+				if [ "$vxlan_status" -eq 0 ]; then
+					uci set dhcp.vtunlan.dhcpv4='disabled'
+					uci set dhcp.vtunlan.dhcpv6='disabled'
+					uci set dhcp.vtunlan.ra='disabled'
+					uci set dhcp.vtunlan.ignore='1'
+				fi
+
+
 				if [ "$mesh_gate_only" -eq 0 ]; then
 					non_portal_mesh_hwmp_rootmode="2"
 				else
@@ -1741,13 +1756,6 @@ check_portal() {
 				fi
 
 				echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='$non_portal_mesh_hwmp_rootmode'" | uci batch
-
-				if [ "$vtunnel" = "configured" ]; then
-					uci set dhcp.vtunlan.dhcpv4='disabled'
-					uci set dhcp.vtunlan.dhcpv6='disabled'
-					uci set dhcp.vtunlan.ra='disabled'
-					uci set dhcp.vtunlan.ignore='1'
-				fi
 
 				/sbin/service dnsmasq restart
 				/sbin/service odhcpd restart
@@ -1809,6 +1817,12 @@ check_portal() {
 				syslogmessage="This meshnode is an upstream portal"
 				write_to_syslog
 
+				vxlan_status=$(ip link show vxlan$tun_id &> /dev/null; echo $?)
+
+				if [ "$vxlan_status" -eq 0 ]; then
+					echo "set network.vtunlan.proto='static'" | uci batch
+				fi
+
 				echo "set network.$auto_mesh_network.proto='static'" | uci batch
 				set_ula_prefix "set"
 				/sbin/service network reload
@@ -1824,7 +1838,7 @@ check_portal() {
 				echo "del_list dhcp.@dnsmasq[0].server='$config_ipaddr'" | uci batch
 
 
-				if [ "$vtunnel" = "configured" ]; then
+				if [ "$vxlan_status" -eq 0 ]; then
 					uci set dhcp.vtunlan.dhcpv4='server'
 					uci set dhcp.vtunlan.dhcpv6='server'
 					uci set dhcp.vtunlan.ra='server'
@@ -2092,7 +2106,7 @@ get_peers() {
 		for peer in $macrouting; do
 			peermac=$(echo "$peer" | awk -F"/" '{printf "%s", $1}')
 			peerlist="$peerlist ""$peermac"
-			mute=1
+			mute=$mutestate
 			convert_from_la "$peermac"
 			peerlist="$peerlist ""$mac_from_la"
 		done
@@ -2741,7 +2755,7 @@ check_path_changes() {
 						echo "previous_path_change_count=$path_change_count" > $tmpdir/$peermac_id
 					else
 						debugtype="info"
-						syslogmessage="Path to station [ $peermac ] is stable"
+						syslogmessage="Path to station [ $peermac ] is stable and [ $hop_count ] hop(s) away via [ $next_hop ]"
 						write_to_syslog
 					fi
 				done
@@ -3047,15 +3061,17 @@ check_vtunnel() {
 
 	if [ "$vtun_enable" = 1 ]; then
 		vxlan_status=$(ip link show vxlan$tun_id &> /dev/null; echo $?)
-		debugtype="debug"
-		syslogmessage="check_vtunnel. Vxlan Status [ $vxlan_status ]"
-		write_to_syslog
 
 		if [ "$vxlan_status" -eq 0 ]; then
+			vtunnel="configured"
+		else
 			vtunnel=""
+			debugtype="debug"
+			syslogmessage="check_vtunnel. Vxlan Status [ $vxlan_status ]"
+			write_to_syslog
 		fi
 
-		if [ "$commit_all" -eq 0 ]; then
+		if [ "$vxlan_status" -eq 1 ] && [ "$commit_all" -eq 0 ]; then
 			package_list="ip-full vxlan"
 			check_package_list
 
@@ -3126,7 +3142,7 @@ check_vtunnel() {
 					uci set firewall.vtunlan.forward='ACCEPT'
 				fi
 
-				if [ "$portal_detect" -eq 5 ] && [ "$commit_all" -eq 0 ]; then
+				if [ "$portal_detect" -eq 5 ]; then
 					echo "set network.wan.disabled='1'" | uci batch
 					echo "set network.wan6.disabled='1'" | uci batch
 					wanif=$(uci get network.wan.device)
@@ -3169,11 +3185,7 @@ check_vtunnel() {
 			echo "set network.vtunnel.name='br-tun$tun_id'" | uci batch
 			uci set network.vtunnel.type='bridge'
 			uci set network.vtunnel.bridge_empty='1'
-
-			if [ "$commit_all" -eq 0 ]; then
-				echo "add_list network.vtunnel.ports='vxlan$tun_id'" | uci batch
-			fi
-
+			echo "add_list network.vtunnel.ports='vxlan$tun_id'" | uci batch
 			uci set network.vtunlan=interface
 			echo "set network.vtunlan.device='br-tun$tun_id'" | uci batch
 			echo "set network.vtunlan.ipaddr='$vtun_ip'" | uci batch
@@ -3208,9 +3220,6 @@ check_vtunnel() {
 				brctl addif "$device" "$vxifname"
 			done
 
-			set_iface_path_cost "$vtun_path_cost" "$device" "vxlan$tun_id"
-			. $tmpdir/devicemac
-
 		elif [ "$vxlan_status" -eq 1 ] && [ "$commit_all" -eq 1 ]; then
 			. $tmpdir/devicemac
 			convert_to_la "$devicemac"
@@ -3230,9 +3239,11 @@ check_vtunnel() {
 				brctl addif "$device" "$vxifname"
 			done
 
-			set_iface_path_cost "$vtun_path_cost" "$device" "vxlan$tun_id"
-			. $tmpdir/devicemac
 		fi
+
+		device="br-tun$tun_id"
+		set_iface_path_cost "$vtun_path_cost" "$device" "vxlan$tun_id"
+		. $tmpdir/devicemac
 	fi
 }
 
@@ -3870,32 +3881,38 @@ set_iface_path_cost() {
 	local path_cost="$1"
 	local device="$2"
 	local iface="$3"
+	local other_path_cost=$(( 65535 - $path_cost))
+	local current_path_cost=""
 
 	if [ "$path_cost" -gt 0 ] && [ "$path_cost" -lt 65535 ]; then
-	# Make sure STP is on
-		stpstatus=$(brctl show $device | grep "yes" | awk '{printf "%s", $3}')
+		# Make sure STP is on
+		stpstatus=$(cat "/sys/class/net/$device/bridge/stp_state")
 
-		if [ -z "$stpstatus" ] || [ "$stpstatus" != "yes" ]; then
-			brctl stp "$device" yes
+		if [ -z "$stpstatus" ] || [ "$stpstatus" -eq 0 ]; then
+			echo "1" > "/sys/class/net/$device/bridge/stp_state"
 		fi
-
-		brctl setpathcost "$device" "$iface" "$path_cost"
 
 		br_ifaces=$(brctl showstp "$device" | grep -B 1 -w "port id" | grep "(" | awk '{printf "%s ", $1}')
 
 		for br_iface in $br_ifaces; do
+			current_path_cost=$(cat "/sys/class/net/$br_iface/brport/path_cost")
 
 			if [ "$br_iface" = "$iface" ]; then
+
+				if [ "$current_path_cost" -ne "$path_cost" ]; then
+					echo "$path_cost" > "/sys/class/net/$br_iface/brport/path_cost"
+				fi
+
 				continue
 			fi
 
-			other_path_cost=$(( 65535 - $path_cost))
-			brctl setpathcost "$device" "$br_iface" "$other_path_cost"
-
+			if [ "$current_path_cost" -ne "$other_path_cost" ]; then
+				echo "$other_path_cost" > "/sys/class/net/$br_iface/brport/path_cost"
+			fi
 		done
 
 	elif [ "$path_cost" -eq 0 ]; then
-		brctl stp "$device" no
+		echo "0" > "/sys/class/net/$device/bridge/stp_state"
 	fi
 }
 
@@ -3943,7 +3960,7 @@ generate_ipv4_base() {
 	write_to_syslog
 }
 
-manage_opennds () {
+manage_opennds() {
 
 	if [ "$manage_opennds_startup" -eq 1 ]; then
 		# Is opennnds installed?
@@ -4563,7 +4580,7 @@ elif [ "$1" = "status" ]; then
 	echo "}"
 
 elif [ "$1" = "connect" ]; then
-	mute=1
+	mute=$mutestate
 	get_portal_state
 
 	if [ "$auto_config" -eq 0 ]; then
@@ -4935,8 +4952,16 @@ elif [ "$1" = "commit_all" ]; then
 		configs="mesh11sd wireless dhcp network firewall"
 		echo "set mesh11sd.setup.commit_all='1'" | uci batch
 		echo "set mesh11sd.setup.portal_use_default_ipv4='1'" | uci batch
-		#echo "del network.vtunnel" | uci batch 2>/dev/null
-		#echo "del network.vtunlan" | uci batch 2>/dev/null
+
+		if [ "$portal_detect" -eq 1 ]; then
+			ra=$(uci get dhcp.lan.ra)
+
+			if [ "$ra" = "server" ]; then
+				echo "set mesh11sd.setup.portal_detect='0'" | uci batch
+			else
+				echo "set mesh11sd.setup.portal_detect='4'" | uci batch
+			fi
+		fi
 
 		for config in $configs; do
 			uci commit "$config"
@@ -5507,8 +5532,6 @@ elif [ "$1" = "daemon" ]; then
 
 			if [ ! -z "$meshconfigs" ]; then
 				# we have an existing mesh config
-				# check if the vtunnel is needed and if it is, is it configured
-				check_vtunnel
 
 				for meshconfig in $meshconfigs; do
 
@@ -5590,12 +5613,12 @@ elif [ "$1" = "daemon" ]; then
 				wait_for_interface "$iface"
 
 				if [ "$ifstatus" = "down" ]; then
+					debugtype="notice"
+					syslogmessage="interface $iface is $ifstatus"
+					write_to_syslog
+
 					continue
 				fi
-
-				debugtype="debug"
-				syslogmessage="interface $iface is $ifstatus"
-				write_to_syslog
 
 				# get list of mesh parameters for this interface
 				get_params
@@ -5619,11 +5642,13 @@ elif [ "$1" = "daemon" ]; then
 					fi
 				fi
 
-				# Set stp path cost
-				mute=1
-				get_mesh_path_cost
+				#if [ "$firstloop" -eq 1 ]; then
+					# Set stp path cost
+					mute=$mutestate
+					get_mesh_path_cost
 
-				set_iface_path_cost "$mesh_path_cost" "$device" "$iface"
+					set_iface_path_cost "$mesh_path_cost" "$device" "$iface"
+				#fi
 
 				#Override wireless config and/or set parameters to those found in mesh11sd config
 				uciname="mesh11sd.mesh_params"
@@ -5743,7 +5768,11 @@ elif [ "$1" = "daemon" ]; then
 					fi
 
 				elif [ "$portal_detect" -eq 0 ]; then
-					manage_opennds restart
+
+					if [ -z "$opennds_conf" ] || [ "$opennds_conf" -eq 0 ]; then
+						opennds_conf=1
+						manage_opennds restart
+					fi
 				fi
 
 				if [ "$mesh_mac_forced_forwarding" -eq 1 ] && [ -f "$tmpdir/active_mesh_ifname" ]; then
@@ -5756,6 +5785,9 @@ elif [ "$1" = "daemon" ]; then
 					echo 0 > /proc/sys/net/ipv4/conf/$device/proxy_arp
 				fi
 			fi
+
+			# check if the vtunnel is needed and if it is, is it configured
+			check_vtunnel
 
 			check_gate
 			check_mesh_gate_only
