@@ -1133,7 +1133,7 @@ check_config_params() {
 	write_to_syslog
 }
 
-get_mesh_path_cost () {
+get_mesh_path_cost() {
 	mesh_path_cost=$(uci get mesh11sd.setup.mesh_path_cost 2> /dev/null)
 
 	if [ -z "$mesh_path_cost" ]; then
@@ -1141,9 +1141,9 @@ get_mesh_path_cost () {
 	fi
 
 	syslogmessage="option mesh_path_cost [ $mesh_path_cost ]"
-	mute="$mutestate"
 	debugtype="info"
 	write_to_syslog
+	mute="$mutestate"
 }
 
 wait_for_interface() {
@@ -1190,7 +1190,7 @@ write_to_syslog() {
 				"notice") debugnum=1; log_to_stderr="";;
 				"warn") debugnum=1; log_to_stderr="-s";;
 				"info") debugnum=2; log_to_stderr="";;
-				"debug") debugnum=3; log_to_stderr="-s";;
+				"debug") debugnum=3; log_to_stderr="";;
 				*) debugnum=1; debugtype="notice"; log_to_stderr="";;
 			esac
 
@@ -1201,6 +1201,7 @@ write_to_syslog() {
 	fi
 
 	mute=$mutestate
+	return 0
 }
 
 write_to_watchdog_nonvolatile_log() {
@@ -1397,7 +1398,7 @@ get_portal_state() {
 
 	if [ "$portal_detect" -ge 1 ]; then
 		# - check if portal
-		local retries=10
+		local retries=5
 
 		for retry in $(seq $retries); do
 
@@ -1691,9 +1692,6 @@ check_dns_server() {
 
 check_portal() {
 	is_portal=""
-	debugtype="debug"
-	syslogmessage="Entering check portal.... $auto_mesh_network"
-	write_to_syslog
 
 	if [ "$enabled" -eq 1 ]; then
 		get_portal_state
@@ -1760,7 +1758,7 @@ check_portal() {
 				/sbin/service dnsmasq restart
 				/sbin/service odhcpd restart
 
-				local retries=10
+				local retries=5
 
 				for retry in $(seq $retries); do
 					default_gw=$(ip route | grep "default via")
@@ -1867,11 +1865,6 @@ check_portal() {
 			fi
 		fi
 	fi
-
-	debugtype="debug"
-	syslogmessage="Leaving check portal...."
-	write_to_syslog
-
 }
 
 check_hwmp() {
@@ -5642,13 +5635,11 @@ elif [ "$1" = "daemon" ]; then
 					fi
 				fi
 
-				#if [ "$firstloop" -eq 1 ]; then
-					# Set stp path cost
-					mute=$mutestate
-					get_mesh_path_cost
 
-					set_iface_path_cost "$mesh_path_cost" "$device" "$iface"
-				#fi
+				# Set stp path cost
+				mute=1
+				get_mesh_path_cost
+				set_iface_path_cost "$mesh_path_cost" "$device" "$iface"
 
 				#Override wireless config and/or set parameters to those found in mesh11sd config
 				uciname="mesh11sd.mesh_params"
@@ -5788,7 +5779,6 @@ elif [ "$1" = "daemon" ]; then
 
 			# check if the vtunnel is needed and if it is, is it configured
 			check_vtunnel
-
 			check_gate
 			check_mesh_gate_only
 			check_hwmp
@@ -5815,10 +5805,11 @@ elif [ "$1" = "daemon" ]; then
 			write_to_syslog
 		fi
 
+		check_mesh_active_led
+
 		debugtype="debug"
 		syslogmessage="checkinterval $checkinterval seconds"
 		write_to_syslog
-		check_mesh_active_led
 		sleep $checkinterval
 	done
 	exit 0
