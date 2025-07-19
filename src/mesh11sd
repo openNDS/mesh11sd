@@ -282,7 +282,7 @@ get_current_setup () {
 
 	if [ -z "$auto_config" ]; then
 		auto_config=0
-	elif [ "$auto_config" -ne 0 ]; then
+	elif [ "$auto_config" -gt 2 ]; then
 		auto_config=1
 	fi
 
@@ -1176,7 +1176,6 @@ write_to_syslog() {
 	fi
 
 	if [ "$mute" -eq 0 ]; then
-		debuglevel=$(uci get mesh11sd.setup.debuglevel 2> /dev/null)
 
 		if [ -z "$debuglevel" ]; then
 			debuglevel=1
@@ -1195,7 +1194,7 @@ write_to_syslog() {
 			esac
 
 			if [ "$debuglevel" -ge "$debugnum" ]; then
-				logger -p "daemon.$debugtype" "$log_to_stderr" -t "mesh11sd[$mesh11sdpid]" "$syslogmessage"
+				logger -p "daemon.$debugtype" "$log_to_stderr" -t "mesh11sd[$mesh11sdpid]" "$syslogmessage" &
 			fi
 		fi
 	fi
@@ -1613,11 +1612,6 @@ get_portal_state() {
 		mute=$muteorg
 		write_to_syslog
 	fi
-
-	debugtype="debug"
-	syslogmessage="leaving get_portal_state - is_portal=$is_portal.. gwstatus=$gwstatus.. gw_ip=$gw_ip.."
-	mute=$muteorg
-	write_to_syslog
 
 	if [ -z "$is_portal" ] && [ -e "$tmpdir/is_portal" ]; then
 		if [ -e "/$tmpdir/is_portal" ]; then
@@ -3130,6 +3124,7 @@ check_vtunnel() {
 					echo "set network.wan.disabled='1'" | uci batch
 					echo "set network.wan6.disabled='1'" | uci batch
 					wanif=$(uci get network.wan.device)
+					echo "del_list network.vtunnel.ports='$wanif'" | uci batch 2>/dev/null
 					echo "add_list network.vtunnel.ports='$wanif'" | uci batch
 					echo "set network.vtunlan.proto='dhcp'" | uci batch
 					uci set firewall.vtunlan.forward='ACCEPT'
@@ -3139,6 +3134,7 @@ check_vtunnel() {
 					echo "set network.wan.disabled='1'" | uci batch
 					echo "set network.wan6.disabled='1'" | uci batch
 					wanif=$(uci get network.wan.device)
+					echo "del_list network.vtunnel.ports='$wanif'" | uci batch 2>/dev/null
 					echo "add_list network.vtunnel.ports='$wanif'" | uci batch
 				fi
 
@@ -3178,6 +3174,7 @@ check_vtunnel() {
 			echo "set network.vtunnel.name='br-tun$tun_id'" | uci batch
 			uci set network.vtunnel.type='bridge'
 			uci set network.vtunnel.bridge_empty='1'
+			echo "del_list network.vtunnel.ports='vxlan$tun_id'" | uci batch 2>/dev/null
 			echo "add_list network.vtunnel.ports='vxlan$tun_id'" | uci batch
 			uci set network.vtunlan=interface
 			echo "set network.vtunlan.device='br-tun$tun_id'" | uci batch
@@ -3375,7 +3372,7 @@ write_node_data() {
 	if [ -z "$data_raw" ]; then
 		return 0
 	fi
-echo "$(date) node_id-$node_id! data_raw=$data_raw!" >> /tmp/wnd
+
 	maxchunksize=16
 	strindex=0
 	chunkstr=""
@@ -3593,7 +3590,7 @@ luci_cgi() {
 
 luci_add_custom() {
 
-	if [ "$auto_config" -eq 1 ]; then
+	if [ "$auto_config" -ne 0 ]; then
 
 		uci del luci.mesh11sd_status 2> /dev/null
 		uci set luci.mesh11sd_status=command
@@ -4195,12 +4192,12 @@ elif [ "$1" = "auto_config" ]; then
 		exit 1
 	fi
 
-	if [ "$auto_config" -eq 1 ] && [ "$2" = "test" ];  then
+	if [ "$auto_config" -ne 0 ] && [ "$2" = "test" ];  then
 		echo "auto_config is already enabled"
 		exit 0
 	fi
 
-	if [ "$auto_config" -eq 1 ] && [ "$2" = "enable" ];  then
+	if [ "$auto_config" -ne 0 ] && [ "$2" = "enable" ];  then
 		echo "auto_config is already enabled"
 		exit 0
 	fi
@@ -4929,7 +4926,7 @@ elif [ "$1" = "commit_all" ]; then
 			echo "    Writes changes to configuration file "
 			echo "    Active only when auto_config is enabled "
 
-		elif [ "$2" = "commit" ] && [ "$auto_config" -eq 1 ]; then
+		elif [ "$2" = "commit" ] && [ "$auto_config" -ne 0 ]; then
 
 			echo "    Dynamic auto_configure options will be written to non volatile storage and LuCi UI will be enabled..... "
 			echo "    This is for advanced users, continue at your own risk."
@@ -4992,7 +4989,7 @@ elif [ "$1" = "revert_all" ]; then
 		echo "    Active only when auto_config is enabled "
 		echo "    Connection will be lost if you proceed as node will restart..... "
 
-	elif [ "$2" = "revert" ] && [ "$auto_config" -eq 1 ]; then
+	elif [ "$2" = "revert" ] && [ "$auto_config" -ne 0 ]; then
 
 		echo "    Connection will be lost if you proceed as node will restart..... "
 		echo "    Do you want to continue? [yes/no] "
@@ -5140,7 +5137,7 @@ elif [ "$1" = "dhcp4_renew" ]; then
 
 elif [ "$1" = "get_portal_ula" ]; then
 	get_portal_ula
-	echo -n "$portal_ula"
+	echo "$portal_ula"
 	exit 0
 
 elif [ "$1" = "set_ula_prefix" ]; then
@@ -5493,6 +5490,7 @@ elif [ "$1" = "daemon" ]; then
 	while true; do
 		meshindex=0
 		meshconfigs=""
+		debuglevel=$(uci get mesh11sd.setup.debuglevel 2> /dev/null)
 
 		if [ "$enabled" = 1 ]; then
 			#get list of mesh configs
@@ -5506,7 +5504,7 @@ elif [ "$1" = "daemon" ]; then
 
 				############# Autoconfig
 
-				if [ "$auto_config" -eq 1 ] || [ -e "$tmpdir/auto_config_test" ]; then
+				if [ "$auto_config" -ne 0 ] || [ -e "$tmpdir/auto_config_test" ]; then
 					auto_config
 				else
 					debugtype="err"
@@ -5647,7 +5645,7 @@ elif [ "$1" = "daemon" ]; then
 				check_mesh_phantom
 			done
 
-			if [ "$auto_config" -eq 1 ] || [ -e "$tmpdir/auto_config_test" ]; then
+			if [ "$auto_config" -ne 0 ] || [ -e "$tmpdir/auto_config_test" ]; then
 
 				if [ "$portal_detect" -ge 1 ] && [ "$portal_detect" -lt 4 ]; then
 					check_portal
@@ -5805,11 +5803,13 @@ elif [ "$1" = "daemon" ]; then
 			write_to_syslog
 		fi
 
-		check_mesh_active_led
+		check_mesh_active_led # sets heartbeatflag = 1 when mesh is active
 
-		debugtype="debug"
-		syslogmessage="checkinterval $checkinterval seconds"
-		write_to_syslog
+		if [ "$heartbeatflag" -eq 1 ] && [ "$commit_all" -eq 0 ] && [ "$auto_config" -eq 2 ]; then
+			/usr/sbin/mesh11sd commit_all commit silent &
+			commit_all=1
+		fi
+
 		sleep $checkinterval
 	done
 	exit 0
