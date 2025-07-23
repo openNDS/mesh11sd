@@ -943,12 +943,52 @@ get_current_setup () {
 		mesh_backhaul_led="auto"
 	fi
 
+	syslogmessage="option mesh_backhaul_led [ $mesh_backhaul_led ]"
+	debugtype="info"
+	mute="$mutestate"
+	write_to_syslog
+
 	#####
 	manage_opennds_startup=$(uci get mesh11sd.setup.manage_opennds_startup 2> /dev/null)
 
 	if [ -z "$manage_opennds_startup" ]; then
 		manage_opennds_startup="1"
 	fi
+
+	syslogmessage="option manage_opennds_startup [ $manage_opennds_startup ]"
+	debugtype="info"
+	mute="$mutestate"
+	write_to_syslog
+
+	#####
+	log_mountpoint=$(uci get mesh11sd.setup.log_mountpoint 2> /dev/null)
+
+	if [ -z "$log_mountpoint" ]; then
+		log_mountpoint="/tmp"
+	fi
+
+	mountcheck=$(df | grep -w  "$log_mountpoint")
+
+	if [ -z "$mountcheck" ]; then
+		log_mountpoint="/tmp"
+	fi
+
+	syslogmessage="option log_mountpoint [ $log_mountpoint ]"
+	debugtype="info"
+	mute="$mutestate"
+	write_to_syslog
+
+	#####
+	max_log_entries=$(uci get mesh11sd.setup.max_log_entries 2> /dev/null)
+
+	if [ -z "$max_log_entries" ]; then
+		max_log_entries="500"
+	fi
+
+	syslogmessage="option max_log_entries [ $max_log_entries ]"
+	debugtype="info"
+	mute="$mutestate"
+	write_to_syslog
 }
 
 check_config_params() {
@@ -1140,7 +1180,7 @@ get_mesh_path_cost() {
 		mesh_path_cost="65525"
 	fi
 
-	syslogmessage="option mesh_path_cost [ $mesh_path_cost ]"
+	syslogmessage="option mesh_path_cost [ mute=$mute! $mesh_path_cost ]"
 	debugtype="info"
 	write_to_syslog
 	mute="$mutestate"
@@ -1166,16 +1206,90 @@ wait_for_interface() {
 	done
 }
 
+# Write debug message to mesh11sd's log
+# $syslogmessage contains the string to log
+# $debugtype contains the debug level string: debug, info, warn, notice, err, emerg.
+write_log() {
+	local logdir="$log_mountpoint/mesh11sd"
+	local logfile="$logdir/mesh11sd_log.log"
+	local awkcmd="awk ""'\$6==""\"$log_mountpoint\"""{print \$4}'"
+
+	if [ ! -d "$logdir" ]; then
+		mkdir -p "$logdir"
+	fi
+
+	if [ ! -z "$mountcheck" ]; then
+		# Truncate the log file if max_log_entries is set
+
+		log_entries=$(wc -l "$logfile" 2>/dev/null | awk '{printf "%d", $1}')
+
+		if [ -z "$log_entries" ]; then
+			log_entries="0"
+		fi
+
+		if [ "$log_entries" -gt "$max_log_entries" ]; then
+			mv "$logfile" "$logfile.cut"
+			tail -n "$max_log_entries" "$logfile.cut" >> "$logfile"
+			rm "$logfile.cut"
+		fi
+
+		available=$(df | grep -w  "$log_mountpoint" | eval "$awkcmd")
+
+		if [ "$log_mountpoint" = "$mountpoint" ]; then
+			# Check the logfile is not too big
+			min_freespace_to_log_ratio=10
+			filesize=$(ls -s -1 $logfile | awk -F' ' '{print $1}')
+
+			if [ $filesize -eq 0 ]; then
+				filesize=1
+			fi
+			sizeratio=$(($available/$filesize))
+
+			if [ $sizeratio -ge $min_freespace_to_log_ratio ]; then
+				echo "$datetime""$loginfo" >> $logfile
+			else
+				echo "Log file too big, please archive contents and reduce max_log_entries" | logger -p "daemon.err" -s -t "mesh11sd[$mesh11sdpid]: "
+			fi
+		else
+			if [ "$available" > 10 ];then
+				datetime=$(date)
+				datetime="$datetime "
+
+				if [ ! -f "$logfile" ]; then
+					echo "$datetime""New log file created" > $logfile
+				fi
+
+				echo "$datetime""daemon.$debugtype mesh11sd[$mesh11sdpid]: $logmessage" >> $logfile
+			else
+				echo "Log file too big, please archive contents and reduce max_log_entries" | logger -p "daemon.err" -s -t "mesh11sd[$mesh11sdpid]: "
+			fi
+		fi
+	else
+		echo "Log location is NOT a mountpoint - logs would fill storage space - logging disabled" | logger -p "daemon.err" -s -t "mesh11sd[$mesh11sdpid]: "
+	fi
+}
+
 # Write debug message to syslog
 # $syslogmessage contains the string to log
 # $debugtype contains the debug level string: debug, info, warn, notice, err, emerg.
 write_to_syslog() {
+
+	if [ -z "$syslogmessage" ] || [ "$syslogmessage" = "$last_syslogmessage" ]; then
+		return 0
+	fi
 
 	if [ -z "$mute" ]; then
 		mute=$mutestate
 	fi
 
 	if [ "$mute" -eq 0 ]; then
+		entrynum=$((entrynum + 1))
+
+		if [ "$entrynum" -lt 0 ]; then
+			entrynum=1
+		fi
+
+		syslogmessage="[$entrynum] $syslogmessage"
 
 		if [ -z "$debuglevel" ]; then
 			debuglevel=1
@@ -1194,7 +1308,19 @@ write_to_syslog() {
 			esac
 
 			if [ "$debuglevel" -ge "$debugnum" ]; then
-				logger -p "daemon.$debugtype" "$log_to_stderr" -t "mesh11sd[$mesh11sdpid]" "$syslogmessage" &
+
+				if [ -z "$log_mountpoint" ]; then
+					logger -p "daemon.$debugtype" "$log_to_stderr" -t "mesh11sd[$mesh11sdpid]" "$syslogmessage"
+					return 0
+				fi
+
+				if [ "$debugtype" = "emerg" ] || [ "$debugtype" = "err" ] || [ "$debugtype" = "notice" ]; then
+					logger -p "daemon.$debugtype" "$log_to_stderr" -t "mesh11sd[$mesh11sdpid]" "$syslogmessage"
+				fi
+
+				logmessage="$syslogmessage"
+				write_log
+				last_syslogmessage="$syslogmessage"
 			fi
 		fi
 	fi
@@ -1442,6 +1568,7 @@ get_portal_state() {
 
 	elif [ "$portal_detect" -eq 0 ] || [ "$portal_detect" -eq 4 ]; then
 		# 0 - force portal mode, 4 - force portal bridge mode
+		echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='4'" | uci batch
 
 		if [ "$portal_detect" -eq 0 ]; then
 			zone="wan"
@@ -1685,6 +1812,9 @@ check_dns_server() {
 }
 
 check_portal() {
+	debugtype="debug"
+	syslogmessage="Checking portal status"
+	write_to_syslog
 	is_portal=""
 
 	if [ "$enabled" -eq 1 ]; then
@@ -1742,7 +1872,13 @@ check_portal() {
 
 
 				if [ "$mesh_gate_only" -eq 0 ]; then
-					non_portal_mesh_hwmp_rootmode="2"
+
+					if [ "$portal_detect" -eq 0 ] || [ "$portal_detect" -eq 4 ]; then
+						non_portal_mesh_hwmp_rootmode="4"
+					else
+						non_portal_mesh_hwmp_rootmode="2"
+					fi
+
 				else
 					non_portal_mesh_hwmp_rootmode="0"
 				fi
@@ -2896,7 +3032,13 @@ probe_interface_mac() {
 	write_to_syslog
 }
 
-check_mesh_gate_only() {
+check_mesh_gate_only() { # AKA leechmode
+
+	# No leechmode for a portal
+	if [ "$portal_detect" -gt 0 ] || [ "$portal_detect" -gt 4 ] || [ ! -z "$is_portal" ]; then
+		return 0
+	fi
+
 	current_mgo_option=$(uci get mesh11sd.setup.mesh_leechmode_enable 2> /dev/null | awk '{printf "%s", $1}')
 
 	if [ -z "$current_mgo_option" ]; then
@@ -2917,15 +3059,15 @@ check_mesh_gate_only() {
 			echo "set mesh11sd.mesh_params.mesh_max_peer_links='1'" | uci batch
 		elif [ "$current_mgo_option" -eq 0 ]; then
 
-			if [ -z "$is_portal" ]; then
-				# This IS NOT a layer 3 mesh portal
-				rootmode=2
+			if [ ! -z "$is_portal" ] || [ "$portal_detect" -eq 0 ] || [ "$portal_detect" -eq 4 ] ; then
+				mesh_hwmp_rootmode=4
 			else
-				rootmode=4
+				# This IS NOT a layer 3 mesh portal
+				mesh_hwmp_rootmode=2
 			fi
 
 			echo "set mesh11sd.mesh_params.mesh_fwding='1'" | uci batch
-			echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='$rootmode'" | uci batch
+			echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='$mesh_hwmp_rootmode'" | uci batch
 			echo "set mesh11sd.mesh_params.mesh_max_peer_links='$config_max_peer_links'" | uci batch
 
 			current_ctg_option=$(uci get mesh11sd.mesh_params.mesh_connected_to_gate 2> /dev/null | awk '{printf "%s", $1}')
@@ -2947,14 +3089,19 @@ check_mesh_gate_only() {
 	elif [ "$current_mgo_option" -eq 0 ]; then
 		leechmode=0
 
-		if [ -z "$is_portal" ]; then
-			# This IS NOT a layer 3 mesh portal
-			rootmode=2
+		if [ ! -z "$is_portal" ] || [ "$portal_detect" -eq 0 ] || [ "$portal_detect" -eq 4 ]; then
+			mesh_hwmp_rootmode=4
 		else
-			rootmode=4
+			# This IS NOT a layer 3 mesh portal
+			mesh_hwmp_rootmode=2
 		fi
 
-		echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='$rootmode'" | uci batch
+		current_rootmode=$(uci get mesh11sd.mesh_params.mesh_hwmp_rootmode 2>/dev/null)
+
+		if [ "$current_rootmode" != "$mesh_hwmp_rootmode" ]; then
+			echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='$mesh_hwmp_rootmode'" | uci batch
+		fi
+
 		echo "set mesh11sd.mesh_params.mesh_max_peer_links='$config_max_peer_links'" | uci batch
 	fi
 }
@@ -3611,6 +3758,16 @@ luci_add_custom() {
 		uci set luci.mesh11sd_ap_data=command
 		uci set luci.mesh11sd_ap_data.name='Mesh Gate (AP) Data'
 		uci set luci.mesh11sd_ap_data.command='mesh11sd show_ap_data all'
+
+		uci del luci.mesh11sd_get_portal_ula 2> /dev/null
+		uci set luci.mesh11sd_get_portal_ula=command
+		uci set luci.mesh11sd_get_portal_ula.name='Mesh Portal ULA'
+		uci set luci.mesh11sd_get_portal_ula.command='mesh11sd get_portal_ula'
+
+		uci del luci.mesh11sd_read_log 2> /dev/null
+		uci set luci.mesh11sd_read_log=command
+		uci set luci.mesh11sd_read_log.name='Read Mesh Log'
+		uci set luci.mesh11sd_read_log.command='mesh11sd read_log'
 	fi
 }
 
@@ -3995,6 +4152,8 @@ manage_opennds() {
 ##############
 # Start point
 ##############
+
+entrynum=0
 
 if [ -f "/var/run/mesh11sd.pid" ]; then
 	mesh11sdpid=$(cat /var/run/mesh11sd.pid)
@@ -5285,6 +5444,35 @@ elif [ "$1" = "write_to_syslog" ]; then
 
 	exit 0
 
+elif [ "$1" = "write_log" ]; then
+	# Write debug message to mesh11sd log
+	# $2 contains the string to log
+	# $3 contains the debug level string: debug, info, warn, notice, err, emerg.
+
+	if [ -z "$2" ]; then
+		exit 1
+	else
+		logmessage="$2"
+		debugtype="$3"
+		write_log
+	fi
+
+	exit 0
+
+elif [ "$1" = "read_log" ]; then
+	#Read the mesh11sd log
+	# $2 contains the follow flag
+
+	if [ -z "$2" ]; then
+		cat "$log_mountpoint/mesh11sd/mesh11sd_log.log"
+	elif [ "$2" = "-F" ]; then
+		rm "$log_mountpoint/mesh11sd/mesh11sd_log.log"
+		tail -F "$log_mountpoint/mesh11sd/mesh11sd_log.log" 2>/dev/null
+	fi
+
+	exit 0
+
+
 elif [ "$1" = "daemon" ]; then
 	debugtype="notice"
 	syslogmessage="mesh11sd is in startup"
@@ -5635,8 +5823,6 @@ elif [ "$1" = "daemon" ]; then
 
 
 				# Set stp path cost
-				mute=1
-				get_mesh_path_cost
 				set_iface_path_cost "$mesh_path_cost" "$device" "$iface"
 
 				#Override wireless config and/or set parameters to those found in mesh11sd config
@@ -5757,6 +5943,7 @@ elif [ "$1" = "daemon" ]; then
 					fi
 
 				elif [ "$portal_detect" -eq 0 ]; then
+					echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='4'" | uci batch
 
 					if [ -z "$opennds_conf" ] || [ "$opennds_conf" -eq 0 ]; then
 						opennds_conf=1
@@ -5809,6 +5996,10 @@ elif [ "$1" = "daemon" ]; then
 			/usr/sbin/mesh11sd commit_all commit silent &
 			commit_all=1
 		fi
+
+		debugtype="info"
+		syslogmessage="Checkinterval [$checkinterval]"
+		write_to_syslog
 
 		sleep $checkinterval
 	done
