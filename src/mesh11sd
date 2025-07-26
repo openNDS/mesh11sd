@@ -215,18 +215,6 @@ get_current_setup () {
 	write_to_syslog
 
 	#####
-	portal_channel=$(uci get mesh11sd.setup.portal_channel 2> /dev/null)
-
-	if [ -z "$portal_channel" ]; then
-		portal_channel="default"
-	fi
-
-	syslogmessage="option portal_channel [ $portal_channel ]"
-	debugtype="info"
-	mute="$mutestate"
-	write_to_syslog
-
-	#####
 	portal_use_default_ipv4=$(uci get mesh11sd.setup.portal_use_default_ipv4 2> /dev/null)
 
 	if [ -z "$portal_use_default_ipv4" ]; then
@@ -329,6 +317,18 @@ get_current_setup () {
 	fi
 
 	syslogmessage="option auto_mesh_band [ $auto_mesh_band ]"
+	debugtype="info"
+	mute="$mutestate"
+	write_to_syslog
+
+	#####
+	portal_channel=$(uci get mesh11sd.setup.portal_channel 2> /dev/null)
+
+	if [ -z "$portal_channel" ]; then
+		portal_channel="default"
+	fi
+
+	syslogmessage="option portal_channel [ $portal_channel ]"
 	debugtype="info"
 	mute="$mutestate"
 	write_to_syslog
@@ -4149,6 +4149,24 @@ manage_opennds() {
 	fi
 }
 
+get_valid_channels() {
+	valid_channels=$(iw list | grep "0 MHz \[" | grep -v "disabled" | grep -v "radar detection" | awk '{printf "%s ", $4}' | tr -d "[" | tr -d "]")
+}
+
+# Set and commit a single change, passed in $uci_set_string
+commit_single_change() {
+	local changes=$(uci changes mesh11sd)
+	local changelist=$(echo "$changes" | awk '{printf "%s ", $1}')
+	uci revert mesh11sd
+	echo "$uci_set_string" | uci batch
+	uci commit mesh11sd
+
+	# Restore any uncommitted changes
+	for change in $changelist; do
+		echo "set $change" | uci batch
+	done
+}
+
 ##############
 # Start point
 ##############
@@ -4292,6 +4310,12 @@ if [ -z "$1" ] || [ "$1" = "-h" ] || [ $1 = "--help" ] || [ $1 = "help" ]; then
   Usage: mesh11sd show_ap_data [node_id | all]
     Shows json format access point data for requested node | all nodes
     Valid on portal/apmond node
+
+  Option: country
+  Usage: mesh11sd country [country_code]
+    Shows the regulatory domain and country code if the optional country code is not supplied.
+    Sets the regulatory domain for the country code if it is supplied.
+    A restart or reboot is required for changes to take effect.
 
   For further documentation, see: https://github.com/openNDS/mesh11sd#readme
 
@@ -5269,6 +5293,26 @@ elif [ "$1" = "mesh_rssi_threshold" ]; then
 	echo
 	exit 0
 
+elif [ "$1" = "country" ]; then
+	current_country=$(iw reg get | grep "country")
+
+	if [ -z "$2" ]; then
+		echo "$current_country"
+		exit 0
+	fi
+
+	if [ -z "$commit_all" ] || [ "$commit_all" -eq 0 ]; then
+		echo "Changing regulatory domain from [ $current_country ] to [ $2 ]"
+		echo "A Restart or Reboot is required for this to take effect"
+		uci_set_string="set mesh11sd.setup.country='$2'"
+		commit_single_change
+	else
+		echo "Unable to change regulatory domain. Auto config is committed - edit wireless config to change country settings."
+		exit 1
+	fi
+
+	exit 0
+
 elif [ "$1" = "force_ipv4_download" ]; then
 
 	if ! grep "#!/bin/sh" /usr/bin/wget; then
@@ -5472,6 +5516,10 @@ elif [ "$1" = "read_log" ]; then
 
 	exit 0
 
+elif [ "$1" = "get_valid_channels" ]; then
+	get_valid_channels
+	echo "$valid_channels"
+	exit 0
 
 elif [ "$1" = "daemon" ]; then
 	debugtype="notice"
