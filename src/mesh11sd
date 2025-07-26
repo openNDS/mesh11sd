@@ -3154,7 +3154,7 @@ check_package_list() {
 
 create_vxlan_if() {
 	debugtype="debug"
-	syslogmessage="create_vxlan_if [ vxlan$tun_id ], address [ $vxmac_indexed ], local [ $link_local_addr ], group [ ff02::$tun_id ], device [ $device ]"
+	syslogmessage="create_vxlan_if [ vxlan$tun_id ], address [ $vxmac_indexed ], link_local [ $link_local_addr ], group [ ff02::$tun_id ], device [ $device ]"
 	write_to_syslog
 
 	ip -6 link add "vxlan$tun_id" \
@@ -3342,6 +3342,9 @@ check_vtunnel() {
 			vxmac_indexed="$mac_indexed"
 			link_local_addr=$(ip addr show "$device" | grep "inet6 fe80" | awk '{printf "%s", $2}' | awk -F "/" '{printf "%s", $1}')
 
+			if [ -z "$link_local_addr"]; then
+				return 1
+			fi
 
 			create_vxlan_if
 			vxlan_if="created"
@@ -3364,8 +3367,14 @@ check_vtunnel() {
 			make_indexed_mac "$mac_la" "$index"
 			vxmac_indexed="$mac_indexed"
 			link_local_addr=$(ip addr show "$device" | grep "inet6 fe80" | awk '{printf "%s", $2}' | awk -F "/" '{printf "%s", $1}')
+
+			if [ -z "$link_local_addr"]; then
+				return 1
+			fi
+
 			create_vxlan_if
 			vxlan_if="created"
+
 			device="br-tun$tun_id"
 			echo 1 > /proc/sys/net/ipv4/conf/$device/proxy_arp
 
@@ -5509,7 +5518,7 @@ elif [ "$1" = "read_log" ]; then
 
 	if [ -z "$2" ]; then
 		cat "$log_mountpoint/mesh11sd/mesh11sd_log.log"
-	elif [ "$2" = "-F" ]; then
+	elif [ "$2" = "-F" ] || [ "$2" = "-f" ]; then
 		rm "$log_mountpoint/mesh11sd/mesh11sd_log.log"
 		tail -F "$log_mountpoint/mesh11sd/mesh11sd_log.log" 2>/dev/null
 	fi
