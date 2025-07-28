@@ -288,6 +288,8 @@ get_current_setup () {
 
 	auto_mesh_id=$(printf "$auto_mesh_id" | sha256sum | awk '{printf "%s", $1}' | tail -c55 | head -c30)
 
+	set_ula_prefix "set"
+
 	syslogmessage="auto_mesh_id hash [ $auto_mesh_id ]"
 	debugtype="info"
 	mute="$mutestate"
@@ -1849,8 +1851,6 @@ check_portal() {
 				fi
 
 				echo "set network.$auto_mesh_network.proto='dhcp'" | uci batch
-				set_ula_prefix "revert"
-				/sbin/service network reload
 
 				uci set dhcp.@dnsmasq[0].authoritative='0'
 				echo "set dhcp.$auto_mesh_network.ignore='1'" | uci batch
@@ -5135,16 +5135,6 @@ elif [ "$1" = "commit_all" ]; then
 		echo "set mesh11sd.setup.commit_all='1'" | uci batch
 		echo "set mesh11sd.setup.portal_use_default_ipv4='1'" | uci batch
 
-		if [ "$portal_detect" -eq 1 ]; then
-			ra=$(uci get dhcp.lan.ra)
-
-			if [ "$ra" = "server" ]; then
-				echo "set mesh11sd.setup.portal_detect='0'" | uci batch
-			else
-				echo "set mesh11sd.setup.portal_detect='4'" | uci batch
-			fi
-		fi
-
 		for config in $configs; do
 			uci commit "$config"
 		done
@@ -5830,8 +5820,6 @@ elif [ "$1" = "daemon" ]; then
 
 					macfixup=1
 				fi
-			else
-				continue
 			fi
 
 			if [ "$firstloop" -eq 1 ] || [ "$changed" -eq 1 ]; then
