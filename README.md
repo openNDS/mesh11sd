@@ -367,7 +367,11 @@ Before activating the mesh11sd service daemon, there are a few important conside
  1. **Mesh11sd uses the uci utility** to manage dynamic configuration changes, moreover autoconfiguration is done on every startup and is not a one off process.
  2. In normal operation, **configuration changes are not written to the config files in /etc/config** but are kept in volatile storage by way of the uci utility.
  3. **Directly editing a config file will very likely break something**, all manual changes should be done with the uci utility and then only by expert users.
- 4. The OpenWrt Luci web interface does not support mesh11sd configuration and will probably not even show its effects. To this end, **Luci is by default disabled by the mesh11sd daemon.** Advanced users can re-enable it later if required (See the mesh11sd command line (CLI) reference later in this document).
+ 4. The OpenWrt Luci web interface does not support mesh11sd configuration and will probably not even show its effects.
+
+    To this end, **Luci is by default disabled by the mesh11sd daemon.**
+
+    It can re-enabled later if required (See the auto_config option 2 or the mesh11sd command line (CLI) reference later in this document). If re-enabled, the portal detect function will be disabled. This means that the current portal state will be made semi-permanent (It can be reversed using the revert_all command - See later).
 
 ## 6. Autoconfig Essentials
 
@@ -378,7 +382,7 @@ We can then move on to configuring the other meshnodes in the same way before pl
 We will do this by making a temporary connection for each node in turn to an upstream Internet connection, connecting its "wan" port to a "lan" port of your isp router.
 
 
-***Note: Use the same configuration for all nodes, INCLUDING the base ipv4 address (see later).***
+***Note: Use the same configuration for all nodes, INCLUDING the base ipv4 address (This base ipv4 address is only used if the meshnode detects itself as a portal. If it is not a portal it will request an ip address via DHCP).***
 
 By simply enabling auto_config, mesh11sd will attempt to bring up a working meshnode, but there are several essentials that should be configured as the defaults may not be appropriate.
 In the worst case this can result in a soft brick condition.
@@ -649,6 +653,18 @@ config mesh11sd 'setup'
 	# Auto configure mesh interfaces in the wireless configuration.
 	# Default 0 (disabled). Set to 1 to enable.
 	#
+	# Possible values:
+	# 0 Disabled
+	# 1 Enabled
+	# 2 Same as 1 but executes `commit_all` and enables LuCi
+	# 	Warning, this will lock the auto config to the initial autoconfigured mode.
+	#	If you want a locked portal, ensure you have the upstream Internet connection active
+	#	BEFORE first boot after reflash or install.
+	# 	For example if the meshnode initially configures as a portal,
+	#	portal detect will be set to 0 permanently.
+	#
+	#	The effect of option 2 can be reversed by issuing the command `mesh11sd revert_all revert`
+	#
 	# When set to 0, the mesh11sd daemon will check for an existing mesh configuration.
 	#
 	# Warning: If an existing mesh configuration is found, it will be honoured even if it is incorrect.
@@ -688,7 +704,7 @@ config mesh11sd 'setup'
 	# mesh_phy_index (optional)
 	#
 	# Force use of a particular radio for the mesh interface
-	# Must be an interger value corresponding to the physical radio hardware (eg. phy0, phy1 etc.).
+	# Must be an integer value corresponding to the physical radio hardware (eg. phy0, phy1 etc.).
 	# Default - Not Set
 	#
 	# Useful for devices with more than one phy on a particular band
@@ -1189,19 +1205,27 @@ Access to the remote meshnode peers will not be possible using the default ipv4 
 * auto_config - (optional) - autonomously configures the mesh network.
 
              Enables autonomous dynamic mesh configuration.
-
              Auto configure mesh interfaces in the wireless configuration.
-
              Default 0 (disabled). Set to 1 to enable.
+
+             Possible values:
+                0 Disabled
+                1 Enabled
+                2 Same as 1 but executes `commit_all` and enables LuCi
+                  Warning, this will lock the auto config to the initial autoconfigured mode.
+                    If you want a locked portal, ensure you have the upstream Internet connection active
+                    BEFORE first boot after reflash or install.
+                    For example if the meshnode initially configures as a portal,
+                      portal detect will be set to 0 permanently.
+
+                      The effect of option 2 can be reversed by issuing the command 'mesh11sd revert_all revert'
 
              When set to 0, the mesh11sd daemon will check for an existing mesh configuration.
 
              Warning: If an existing mesh configuration is found, it will be honoured even if it is incorrect.
-
-             Manually configuring a mesh can soft brick the router if incorrectly done.
+               Manually configuring a mesh can soft brick the router if incorrectly done.
 
              Auto config can be tested using the command line function 'mesh11sd auto_config test'
-
              See the documentation for further information (Hint: try 'mesh11sd --help')
 
 * auto_mesh_id - (optional) - specifies a string used to generate the mesh id hash.
