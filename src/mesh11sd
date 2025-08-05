@@ -230,7 +230,7 @@ get_current_setup () {
 	channel_tracking_checkinterval=$(uci get mesh11sd.setup.channel_tracking_checkinterval 2> /dev/null)
 
 	if [ -z "$channel_tracking_checkinterval" ]; then
-		channel_tracking_checkinterval="30"
+		channel_tracking_checkinterval="120"
 	fi
 
 	syslogmessage="option channel_tracking_checkinterval [ $channel_tracking_checkinterval ]"
@@ -1432,9 +1432,9 @@ check_channel() {
 	elapsed_time=$(($timenow - $cctimestamp))
 	mininterval=$channel_tracking_checkinterval
 
-debugtype="err"
-syslogmessage="elapsed_time=$elapsed_time! mininterval=$mininterval!"
-write_to_syslog
+	debugtype="debug"
+	syslogmessage="Time since last channel tracking check [ $elapsed_time ], minimum checkinterval [ $mininterval ]"
+	write_to_syslog
 
 
 	if [ "$mininterval" -le "$elapsed_time" ]; then
