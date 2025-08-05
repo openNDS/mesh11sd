@@ -135,7 +135,7 @@ check_mesh_params () {
 	done
 }
 
-restart_mesh () {
+restart_mesh() {
 	set_txpower
 	mesh_gate_state
 	wifi
@@ -743,10 +743,10 @@ get_current_setup () {
 	mesh_gate_enable=$(uci get mesh11sd.setup.mesh_gate_enable 2> /dev/null)
 
 	if [ -z "$mesh_gate_enable" ]; then
-		mesh_gate_enable="1"
+		mesh_gate_enable="2"
 	fi
 
-	if [ "$mesh_gate_enable" -eq 1 ]; then
+	if [ "$mesh_gate_enable" -eq 1 ] || [ "$mesh_gate_enable" -eq 2 ]; then
 		ifdisable=0
 	else
 		ifdisable=1
@@ -1341,18 +1341,47 @@ write_to_watchdog_nonvolatile_log() {
 
 
 mesh_gate_state() {
+
+	if [ -f "$tmpdir/active_mesh_ifname" ]; then
+		. "$tmpdir/active_mesh_ifname"
+	fi
+
 	aplist=$(uci show wireless | grep "mode='ap'" | awk -F "." '{printf "%s ", $2}')
+	vxlist=$(uci show wireless | grep "vtunlan" | awk -F "." '{printf "%s ", $2}')
+	meshdev=$(uci show wireless | grep "$active_mesh_ifname" | awk -F "." '{printf "%s.%s", $1, $2 }')
+	mesh_device=$(echo "get $meshdev.device" | uci batch 2>/dev/null); echo "$mesh_device"
 
 	for gate in $aplist; do
 		config_state=$(echo "get wireless.$gate.disabled" | uci batch 2> /dev/null)
+		gate_device=$(echo "get wireless.$gate.device" | uci batch 2>/dev/null)
 
 		if [ -z "$config_state" ] && [ "$mesh_gate_enable" -eq 1 ]; then
 			ucibatch="set wireless.$gate.disabled='0'"
 			echo "$ucibatch" | uci batch
+
 		elif [ -z "$config_state" ] && [ "$mesh_gate_enable" -eq 0 ]; then
 			ucibatch="set wireless.$gate.disabled='1'"
 			echo "$ucibatch" | uci batch
+
+		elif [ -z "$config_state" ] && [ "$mesh_gate_enable" -eq 2 ] && [ "$gate_device" = "$mesh_device" ]; then
+			ucibatch="set wireless.$gate.disabled='1'"
+			echo "$ucibatch" | uci batch
+
+		elif [ -z "$config_state" ] && [ "$mesh_gate_enable" -eq 2 ] && [ "$gate_device" != "$mesh_device" ]; then
+			ucibatch="set wireless.$gate.disabled='0'"
+			echo "$ucibatch" | uci batch
 		fi
+	done
+
+	for gate in $vxlist; do
+		is_vxradio=$(uci show wireless | grep "$gate" | grep -c "vtunlan")
+		gate_device=$(echo "get wireless.$gate.device" | uci batch 2>/dev/null)
+
+		if [ "$is_vxradio" -eq 1 ] && [ "$mesh_gate_enable" -eq 2 ] && [ "$gate_device" = "$mesh_device" ]; then
+			ucibatch="set wireless.$gate.disabled='1'"
+			echo "$ucibatch" | uci batch
+		fi
+
 	done
 }
 
@@ -1402,6 +1431,11 @@ check_channel() {
 
 	elapsed_time=$(($timenow - $cctimestamp))
 	mininterval=$channel_tracking_checkinterval
+
+debugtype="err"
+syslogmessage="elapsed_time=$elapsed_time! mininterval=$mininterval!"
+write_to_syslog
+
 
 	if [ "$mininterval" -le "$elapsed_time" ]; then
 		ifaces=$(uci export wireless | grep "config wifi-iface" | awk -F"'" '$2 != "" {printf "%s ",$2}')
@@ -3035,7 +3069,7 @@ probe_interface_mac() {
 check_mesh_gate_only() { # AKA leechmode
 
 	# No leechmode for a portal
-	if [ "$portal_detect" -gt 0 ] || [ "$portal_detect" -gt 4 ] || [ ! -z "$is_portal" ]; then
+	if [ "$portal_detect" -eq 0 ] || [ "$portal_detect" -eq 4 ] || [ ! -z "$is_portal" ]; then
 		return 0
 	fi
 
@@ -3919,7 +3953,7 @@ get_ap_data() {
 }
 
 is_default() {
-	configs=" mesh11sd wireless dhcp network firewall"
+	configs="mesh11sd wireless dhcp network firewall system"
 
 	for config in $configs; do
 
@@ -5131,7 +5165,7 @@ elif [ "$1" = "commit_all" ]; then
 	fi
 
 	if [ "$reply" = "yes" ] || [ "$output" = "silent" ]; then
-		configs="mesh11sd wireless dhcp network firewall"
+		configs="mesh11sd wireless dhcp network firewall system"
 		echo "set mesh11sd.setup.commit_all='1'" | uci batch
 		echo "set mesh11sd.setup.portal_use_default_ipv4='1'" | uci batch
 
@@ -5179,7 +5213,7 @@ elif [ "$1" = "revert_all" ]; then
 		read reply
 
 		if [ "$reply" = "yes" ]; then
-			configs="mesh11sd wireless dhcp network firewall"
+			configs="mesh11sd wireless dhcp network firewall system"
 
 			for config in $configs; do
 
@@ -5506,6 +5540,10 @@ elif [ "$1" = "read_log" ]; then
 	#Read the mesh11sd log
 	# $2 contains the follow flag
 
+	if [ ! -e "$log_mountpoint/mesh11sd/mesh11sd_log.log" ]; then
+		exit 1
+	fi
+
 	if [ -z "$2" ]; then
 		cat "$log_mountpoint/mesh11sd/mesh11sd_log.log"
 	elif [ "$2" = "-F" ] || [ "$2" = "-f" ]; then
@@ -5553,7 +5591,7 @@ elif [ "$1" = "daemon" ]; then
 		syslogmessage="Initialising state for auto_config"
 		write_to_syslog
 
-		configs="mesh11sd wireless dhcp network firewall"
+		configs="mesh11sd wireless dhcp network firewall system"
 
 		for config in $configs; do
 			uci revert "$config"
