@@ -147,6 +147,8 @@ restart_mesh() {
 		ip link set "$device" multicast on
 	fi
 
+	mobility_settings
+
 }
 
 get_current_setup () {
@@ -991,6 +993,42 @@ get_current_setup () {
 	debugtype="info"
 	mute="$mutestate"
 	write_to_syslog
+
+	#####
+	mesh_beacon_interval=$(uci get mesh11sd.setup.mesh_beacon_interval 2> /dev/null)
+
+	if [ -z "$mesh_beacon_interval" ]; then
+		mesh_beacon_interval="50"
+	fi
+
+	syslogmessage="option mesh_beacon_interval [ $mesh_beacon_interval ]"
+	debugtype="info"
+	mute="$mutestate"
+	write_to_syslog
+
+	#####
+	mesh_dtim_period=$(uci get mesh11sd.setup.mesh_dtim_period 2> /dev/null)
+
+	if [ -z "$mesh_dtim_period" ]; then
+		mesh_dtim_period="2"
+	fi
+
+	syslogmessage="option mesh_dtim_period [ $mesh_dtim_period ]"
+	debugtype="info"
+	mute="$mutestate"
+	write_to_syslog
+
+	#####
+	mesh_node_mobility_level=$(uci get mesh11sd.setup.mesh_node_mobility_level 2> /dev/null)
+
+	if [ -z "$mesh_node_mobility_level" ]; then
+		mesh_node_mobility_level="1"
+	fi
+
+	syslogmessage="option mesh_node_mobility_level [ $mesh_node_mobility_level ]"
+	debugtype="info"
+	mute="$mutestate"
+	write_to_syslog
 }
 
 check_config_params() {
@@ -1099,10 +1137,22 @@ check_config_params() {
 	write_to_syslog
 
 	#####
+	mesh_hwmp_preq_min_interval=$(uci get mesh11sd.mesh_params.mesh_hwmp_preq_min_interval 2> /dev/null)
+
+	if [ -z "$mesh_hwmp_preq_min_interval" ]; then
+		mesh_hwmp_preq_min_interval="586"
+		echo "set mesh11sd.mesh_params.mesh_hwmp_preq_min_interval='$mesh_hwmp_preq_min_interval'" | uci batch
+	fi
+
+	syslogmessage="option mesh_hwmp_preq_min_interval [ $mesh_hwmp_preq_min_interval ]"
+	debugtype="info"
+	write_to_syslog
+
+	#####
 	mesh_hwmp_rann_interval=$(uci get mesh11sd.mesh_params.mesh_hwmp_rann_interval 2> /dev/null)
 
 	if [ -z "$mesh_hwmp_rann_interval" ]; then
-		mesh_hwmp_rann_interval="5000"
+		mesh_hwmp_rann_interval="1953"
 		echo "set mesh11sd.mesh_params.mesh_hwmp_rann_interval='$mesh_hwmp_rann_interval'" | uci batch
 	fi
 
@@ -1111,6 +1161,7 @@ check_config_params() {
 	write_to_syslog
 
 	#####
+
 	mesh_hwmp_root_interval=$(uci get mesh11sd.mesh_params.mesh_hwmp_root_interval 2> /dev/null)
 
 	if [ -z "$mesh_hwmp_root_interval" ]; then
@@ -1123,14 +1174,28 @@ check_config_params() {
 	write_to_syslog
 
 	#####
+
 	mesh_hwmp_active_path_timeout=$(uci get mesh11sd.mesh_params.mesh_hwmp_active_path_timeout 2> /dev/null)
 
 	if [ -z "$mesh_hwmp_active_path_timeout" ]; then
-		mesh_hwmp_active_path_timeout="5000"
+		mesh_hwmp_active_path_timeout="1465"
 		echo "set mesh11sd.mesh_params.mesh_hwmp_active_path_timeout='$mesh_hwmp_active_path_timeout'" | uci batch
 	fi
 
 	syslogmessage="option mesh_hwmp_active_path_timeout [ $mesh_hwmp_active_path_timeout ]"
+	debugtype="info"
+	write_to_syslog
+
+	#####
+
+	mesh_hwmp_max_preq_retries=$(uci get mesh11sd.mesh_params.mesh_hwmp_max_preq_retries 2> /dev/null)
+
+	if [ -z "$mesh_hwmp_max_preq_retries" ]; then
+		mesh_hwmp_max_preq_retries="4"
+		echo "set mesh11sd.mesh_params.mesh_hwmp_max_preq_retries='$mesh_hwmp_max_preq_retries'" | uci batch
+	fi
+
+	syslogmessage="option mesh_hwmp_max_preq_retries [ $mesh_hwmp_max_preq_retries ]"
 	debugtype="info"
 	write_to_syslog
 
@@ -2031,32 +2096,6 @@ check_portal() {
 	fi
 }
 
-check_hwmp() {
-	get_mesh_iflist
-
-	for iface in $iflist; do
-		mesh_hwmp_active_path_timeout=$(iw dev $iface get mesh_param mesh_hwmp_active_path_timeout | awk '{printf "%s", $1}')
-		mesh_hwmp_active_path_to_root_timeout=$(iw dev $iface get mesh_param mesh_hwmp_active_path_to_root_timeout | awk '{printf "%s", $1}')
-		mesh_hwmp_rann_interval=$(iw dev $iface get mesh_param mesh_hwmp_rann_interval | awk '{printf "%s", $1}')
-		mesh_hwmp_root_interval=$(iw dev $iface get mesh_param mesh_hwmp_root_interval | awk '{printf "%s", $1}')
-
-		if [ "$mesh_hwmp_rann_interval" -gt "$mesh_hwmp_active_path_timeout" ]; then
-			debugtype="warn"
-			syslogmessage="mesh_hwmp_rann_interval is too large, reducing...."
-			write_to_syslog
-			echo "set mesh11sd.mesh_params.mesh_hwmp_rann_interval='$mesh_hwmp_active_path_timeout'" | uci batch
-		fi
-
-		if [ "$mesh_hwmp_root_interval" -gt "$mesh_hwmp_active_path_to_root_timeout" ]; then
-			debugtype="warn"
-			syslogmessage="mesh_hwmp_root_interval is too large, reducing...."
-			write_to_syslog
-			echo "set mesh11sd.mesh_params.mesh_hwmp_root_interval='$mesh_hwmp_active_path_to_root_timeout'" | uci batch
-		fi
-
-	done
-}
-
 wait_for_nodes() {
 	local tics=5
 
@@ -2459,8 +2498,9 @@ auto_config() {
 					echo "set wireless.m11s$phyindex.network='$auto_mesh_network'" | uci batch
 					echo "set wireless.m11s$phyindex.ifname='$mesh_ifname'" | uci batch
 					echo "set wireless.m11s$phyindex.mesh_rssi_threshold='$mesh_rssi_threshold'" | uci batch
+					echo "set wireless.m11s$phyindex.dtim_period='2'" | uci batch
 					echo "set wireless.radio$phyindex.disabled='0'" | uci batch
-					echo "set wireless.radio$phyindex.beacon_int='500'" | uci batch
+					echo "set wireless.radio$phyindex.beacon_int='50'" | uci batch
 					echo "set wireless.radio$phyindex.log_level='3'" | uci batch
 
 					ucicountry=$(uci get wireless.radio$phyindex.country 2> /dev/null | awk '{printf "%s", $1}')
@@ -2757,7 +2797,7 @@ urldecode() {
 	urldecoded=$(echo "$buffer" | awk '{ gsub(/%20/, " "); print }')
 }
 
-arp_setup() {
+sys_setup() {
 	refresh_bridgemac
 	# Set arp and ndp defaults
 	echo 1 > /proc/sys/net/ipv4/conf/all/arp_accept
@@ -2797,7 +2837,37 @@ arp_setup() {
 	echo 5 > /proc/sys/net/ipv6/conf/all/router_solicitations
 	echo 5 > /proc/sys/net/ipv6/conf/default/router_solicitations
 	echo 5 > /proc/sys/net/ipv6/conf/$device/router_solicitations
+}
 
+mobility_settings() {
+	. $tmpdir/active_mesh_ifname
+	stanza=$(uci show wireless | grep ".ifname='$active_mesh_ifname'" | awk -F "." '{printf "%s.%s", $1, $2}')
+	radio=$(uci get "$stanza.device")
+	phy="phy""$(echo "$radio" | awk -F "radio" '{printf "%s", $2}')"
+
+	case $mesh_node_mobility_level in
+		0) return 0;;
+		1) $rts=500; $limit=1000; $quantum=3000; aql_threshold=$aql_threshold=2000;;
+		2) $rts=300; $limit=1000; $quantum=3000; aql_threshold=$aql_threshold=1500;;
+		3) $rts=200; $limit=500; $quantum=6000; aql_threshold=$aql_threshold=1000;;
+		4) $rts=100; $limit=250; $quantum=9000; aql_threshold=$aql_threshold=500;;
+		*) return 0;;
+	esac
+
+
+
+	# RTS/CTS (Request to Send/Clear to Send) is a MAC-layer mechanism to reduce collisions, but in 802.11s,
+	# it’s typically controlled at the PHY/MAC layer via general 802.11 parameters (e.g., rts_threshold) rather than HWMP-specific settings.
+	# The mac80211 mesh stack does not provide a dedicated HWMP-level RTS/CTS toggle like mesh_hwmp_rts.
+	iw phy $phy set $rts 300 # Sets the frame size above which RTS/CTS is used.
+
+	# TXQ settings
+	iw phy $phy set txq $limit 1000 # Caps the number of packets in the queue.
+	iw phy $phy set txq $quantum 3000 # Sets the Deficit Round Robin (DRR) scheduler quantum (bytes), balancing fairness for mesh traffic.
+
+	# AQL settings (Airtime Queue Limit in microseconds)
+	echo 1 > /sys/kernel/debug/ieee80211/$phy/aql_enable
+	echo 1500 > /sys/kernel/debug/ieee80211/$phy/aql_threshold
 
 }
 check_path_changes() {
@@ -4841,7 +4911,13 @@ elif [ "$1" = "connect" ]; then
 			if [ -z "$nodeaddr" ]; then
 				ula_pref=$(uci get network.globals.ula_prefix 2>/dev/null | awk -F ":" '{printf "%s:%s:%s", $1, $2, $3}')
 				node_ula=$(ip -6 neigh | grep "$ula_pref" | grep "$ndpmac" | awk -F " " '{printf "%s", $1}')
-				echo "$ndpmacf [ ipaddress: $ip6addr] [ web_ui: https://[$node_ula] ]"
+
+				if [ ! -z "$node_ula" ]; then
+					echo "$ndpmacf [ ipaddress: $ip6addr] [ web_ui: https://[$node_ula] ]"
+				else
+					echo "$ndpmacf [ ipaddress: $ip6addr]"
+				fi
+
 			elif [ ! -z "$nodeaddr" ]; then
 
 				if [ "$nodeaddr" = "$ndpmac" ]; then
@@ -5570,6 +5646,10 @@ elif [ "$1" = "daemon" ]; then
 	set_led on
 
 	get_kernel_version
+
+	# Ensure debugfs is mounted
+	mount -t debugfs debugfs /sys/kernel/debug 2>/dev/null
+
 	cpe_conf=0
 
 	if [ -f "$tmpdir/active_mesh_ifname" ]; then
@@ -5751,7 +5831,7 @@ elif [ "$1" = "daemon" ]; then
 
 	check_config_params
 
-	arp_setup
+	sys_setup
 
 	setup_apmon_cgi
 
@@ -6049,7 +6129,6 @@ elif [ "$1" = "daemon" ]; then
 			check_vtunnel
 			check_gate
 			check_mesh_gate_only
-			check_hwmp
 			block_bridge_loops
 			check_path_changes
 
