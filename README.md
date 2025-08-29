@@ -1640,8 +1640,48 @@ RANN - Root ANNouncement
 
 RSSI - Received Signal Strength Indication
 
+**Some Further Common Acronyms**
 
-## 12. Command Line Interface
+SN - Sequence Number of a path: Tracks path updates to prevent loops or stale routes.
+
+QLEN - Queue LENgth: Number of packets currently queued for this path.
+
+EXPTIME - EXPiration TIME: Time (in ms) until this path entry expires if unused.
+
+DTIM - Discovery TIMeout: Total timeout (in ms) for path discovery attempts.
+
+DRET - Discovery RETries: Number of retries for path discovery.
+
+HOP_COUNT - Number of hops (intermediate nodes) to the destination.
+
+PATH_CHANGE - Number of times a path has been updated/changed.
+
+## 12. Mesh Path FLAGS Values
+Typical Mesh FLAGS values are `0x5`, `0x15`, and `0x17`. To decode these, we refer to the Linux kernel's 802.11s implementation, specifically the `nl80211` attributes for mesh paths, as defined in the kernel source (e.g., `net/wireless/nl80211.c` and `net/mac80211/mesh.h`).
+
+The FLAGS bitmask is defined by the `NL80211_MPATH_FLAG_*` attributes in the Linux kernel. The relevant flags for mesh paths include:
+
+1. **NL80211_MPATH_FLAG_ACTIVE (0x1)**: The path is actively used for forwarding data to the destination.
+2. **NL80211_MPATH_FLAG_RESOLVING (0x2)**: The path is in the process of being resolved (e.g., during path discovery via HWMP PREQ/PREP frames).
+3. **NL80211_MPATH_FLAG_SN_VALID (0x4)**: The sequence number (SN) for this path is valid, ensuring loop-free routing.
+4. **NL80211_MPATH_FLAG_FIXED (0x8)**: The path is fixed (manually set or static) rather than dynamically discovered by HWMP.
+5. **NL80211_MPATH_FLAG_ROOT (0x10)**: The path is a root path, typically used in proactive HWMP mode where a root node is designated (e.g., for tree-based routing).
+
+These flags are combined into a bitmask, and the hexadecimal value in the FLAGS output represents their sum. Let’s decode the typical values:
+
+- **0x5 (binary: 00101)**:
+  - `0x1` (ACTIVE) + `0x4` (SN_VALID)
+  - Meaning: The path is active (used for forwarding) and has a valid sequence number. It is not being resolved, is not fixed, and is not a root path.
+
+- **0x15 (binary: 10101)**:
+  - `0x1` (ACTIVE) + `0x4` (SN_VALID) + `0x10` (ROOT)
+  - Meaning: The path is active, has a valid sequence number, and is a root path (likely part of a proactive tree-based routing structure in HWMP). It is not being resolved or fixed.
+
+- **0x17 (binary: 10111)**:
+  - `0x1` (ACTIVE) + `0x2` (RESOLVING) + `0x4` (SN_VALID) + `0x10` (ROOT)
+  - Meaning: The path is active, has a valid sequence number, is a root path, and is currently in the process of being resolved (e.g., HWMP is refreshing or rediscovering the path, possibly due to a timeout or metric update).
+
+## 13. Command Line Interface
 Mesh11sd is an OpenWrt service daemon and runs continuously in the background. It does however also have a CLI interface:
 
       Usage: mesh11sd [option] [argument...]]
@@ -2048,6 +2088,28 @@ drwxr-xr-x    2 root     root            40 Jan 19 18:54 tmp/
 drwxr-xr-x    3 root     root            60 Jan 19 18:54 usr/
 root@meshnode-1483:~#
 ```
+
+## 14. Optimising the Airtime Link Metric Update Frequency
+
+In an **802.11s mesh network**, the **Airtime Link Metric (ALM)** update frequency is not directly controlled by a single, explicitly named parameter in the IEEE 802.11s standard. Instead, it is indirectly influenced by the **beacon interval** and the **neighbor discovery and maintenance mechanisms** used by the Hybrid Wireless Mesh Protocol (HWMP). The ALM is calculated based on link quality metrics (e.g., frame error rate, data rate) gathered during neighbor interactions, primarily through **beacons** and **management frames** like Path Request (PREQ) and Path Reply (PREP).
+
+### Relevant Parameter: Beacon Interval
+- **Parameter Name**: `dot11BeaconInterval`
+- **Description**: This parameter, defined in the 802.11 standard, sets the time interval (in Time Units, typically 1 TU = 1024 µs) between beacon transmissions by mesh stations (STAs). Beacons carry information used to update link quality metrics, which feed into the ALM calculation.
+- **Impact on ALM**: A shorter beacon interval increases the frequency of link quality updates, allowing the ALM to reflect changes in the mobile environment more quickly. However, it also increases control overhead.
+- **Typical Values**: Default is 100 TU (~100 ms). For mobile mesh nodes, reducing it to 50–20 TU (~20–50 ms) can improve ALM responsiveness.
+- **Configuration**: In practice, this can be set in the mesh stack (e.g., via `iw` commands in Linux with `ath9k` drivers):
+  ```bash
+  iw dev <interface> set mesh_param dot11BeaconInterval <value>
+  ```
+
+### Additional Influences
+- **PREQ Interval**: The `dot11MeshHWMPpreqMinInterval` parameter controls how often Path Request messages are sent for route discovery. Since PREQ messages can trigger link quality assessments, reducing this interval (e.g., from 2000 TU to 500 TU) indirectly affects ALM updates.
+- **Link Monitoring**: Some implementations allow custom link monitoring intervals (not standardized) to periodically reassess link quality. Check your mesh stack (e.g., Linux mac80211) for proprietary extensions.
+
+### Recommendation for Mobile Mesh
+For the use case of mobile nodes with small relative velocities but staying in range, set `dot11BeaconInterval` to 20–50 TU to balance frequent ALM updates with overhead. Monitor network performance to avoid congestion. If your implementation supports it, also adjust `dot11MeshHWMPpreqMinInterval` to ~500 TU for faster route updates.
+
 
 ![openNDS-Mesh11sd](https://github.com/openNDS/mesh11sd/blob/master/docs/images/avatarsmall.png)
 
