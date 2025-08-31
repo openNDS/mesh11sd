@@ -138,6 +138,7 @@ check_mesh_params () {
 restart_mesh() {
 	set_txpower
 	mesh_gate_state
+	mobility_settings config
 	wifi
 	wait_for_mesh
 
@@ -147,7 +148,7 @@ restart_mesh() {
 		ip link set "$device" multicast on
 	fi
 
-	mobility_settings
+	mobility_settings parameters
 
 }
 
@@ -998,7 +999,7 @@ get_current_setup () {
 	mesh_beacon_interval=$(uci get mesh11sd.setup.mesh_beacon_interval 2> /dev/null)
 
 	if [ -z "$mesh_beacon_interval" ]; then
-		mesh_beacon_interval="50"
+		mesh_beacon_interval="100"
 	fi
 
 	syslogmessage="option mesh_beacon_interval [ $mesh_beacon_interval ]"
@@ -1137,30 +1138,6 @@ check_config_params() {
 	write_to_syslog
 
 	#####
-	mesh_hwmp_preq_min_interval=$(uci get mesh11sd.mesh_params.mesh_hwmp_preq_min_interval 2> /dev/null)
-
-	if [ -z "$mesh_hwmp_preq_min_interval" ]; then
-		mesh_hwmp_preq_min_interval="586"
-		echo "set mesh11sd.mesh_params.mesh_hwmp_preq_min_interval='$mesh_hwmp_preq_min_interval'" | uci batch
-	fi
-
-	syslogmessage="option mesh_hwmp_preq_min_interval [ $mesh_hwmp_preq_min_interval ]"
-	debugtype="info"
-	write_to_syslog
-
-	#####
-	mesh_hwmp_rann_interval=$(uci get mesh11sd.mesh_params.mesh_hwmp_rann_interval 2> /dev/null)
-
-	if [ -z "$mesh_hwmp_rann_interval" ]; then
-		mesh_hwmp_rann_interval="1953"
-		echo "set mesh11sd.mesh_params.mesh_hwmp_rann_interval='$mesh_hwmp_rann_interval'" | uci batch
-	fi
-
-	syslogmessage="option mesh_hwmp_rann_interval [ $mesh_hwmp_rann_interval ]"
-	debugtype="info"
-	write_to_syslog
-
-	#####
 
 	mesh_hwmp_root_interval=$(uci get mesh11sd.mesh_params.mesh_hwmp_root_interval 2> /dev/null)
 
@@ -1170,32 +1147,6 @@ check_config_params() {
 	fi
 
 	syslogmessage="option mesh_hwmp_root_interval [ $mesh_hwmp_root_interval ]"
-	debugtype="info"
-	write_to_syslog
-
-	#####
-
-	mesh_hwmp_active_path_timeout=$(uci get mesh11sd.mesh_params.mesh_hwmp_active_path_timeout 2> /dev/null)
-
-	if [ -z "$mesh_hwmp_active_path_timeout" ]; then
-		mesh_hwmp_active_path_timeout="1465"
-		echo "set mesh11sd.mesh_params.mesh_hwmp_active_path_timeout='$mesh_hwmp_active_path_timeout'" | uci batch
-	fi
-
-	syslogmessage="option mesh_hwmp_active_path_timeout [ $mesh_hwmp_active_path_timeout ]"
-	debugtype="info"
-	write_to_syslog
-
-	#####
-
-	mesh_hwmp_max_preq_retries=$(uci get mesh11sd.mesh_params.mesh_hwmp_max_preq_retries 2> /dev/null)
-
-	if [ -z "$mesh_hwmp_max_preq_retries" ]; then
-		mesh_hwmp_max_preq_retries="4"
-		echo "set mesh11sd.mesh_params.mesh_hwmp_max_preq_retries='$mesh_hwmp_max_preq_retries'" | uci batch
-	fi
-
-	syslogmessage="option mesh_hwmp_max_preq_retries [ $mesh_hwmp_max_preq_retries ]"
 	debugtype="info"
 	write_to_syslog
 
@@ -2498,9 +2449,9 @@ auto_config() {
 					echo "set wireless.m11s$phyindex.network='$auto_mesh_network'" | uci batch
 					echo "set wireless.m11s$phyindex.ifname='$mesh_ifname'" | uci batch
 					echo "set wireless.m11s$phyindex.mesh_rssi_threshold='$mesh_rssi_threshold'" | uci batch
-					echo "set wireless.m11s$phyindex.dtim_period='2'" | uci batch
+					echo "set wireless.m11s$phyindex.dtim_period='$mesh_dtim_period'" | uci batch
 					echo "set wireless.radio$phyindex.disabled='0'" | uci batch
-					echo "set wireless.radio$phyindex.beacon_int='50'" | uci batch
+					echo "set wireless.radio$phyindex.beacon_int='$mesh_beacon_interval'" | uci batch
 					echo "set wireless.radio$phyindex.log_level='3'" | uci batch
 
 					ucicountry=$(uci get wireless.radio$phyindex.country 2> /dev/null | awk '{printf "%s", $1}')
@@ -2843,33 +2794,73 @@ mobility_settings() {
 	. $tmpdir/active_mesh_ifname
 	stanza=$(uci show wireless | grep ".ifname='$active_mesh_ifname'" | awk -F "." '{printf "%s.%s", $1, $2}')
 	radio=$(uci get "$stanza.device")
-	phy="phy""$(echo "$radio" | awk -F "radio" '{printf "%s", $2}')"
+	phyindex="$(echo "$radio" | awk -F "radio" '{printf "%s", $2}')"
+	phy="phy$phyindex"
 
 	case $mesh_node_mobility_level in
 		0) return 0;;
-		1) $rts=500; $limit=1000; $quantum=3000; aql_threshold=$aql_threshold=2000;;
-		2) $rts=300; $limit=1000; $quantum=3000; aql_threshold=$aql_threshold=1500;;
-		3) $rts=200; $limit=500; $quantum=6000; aql_threshold=$aql_threshold=1000;;
-		4) $rts=100; $limit=250; $quantum=9000; aql_threshold=$aql_threshold=500;;
+		1) rts=500; limit=1000; quantum=3000; aql_threshold=2000; beacon_int=50; dtim_period=2;\
+			mesh_hwmp_rann_interval=1953;\
+			mesh_hwmp_preq_min_interval=586;\
+			mesh_hwmp_active_path_timeout=1465;\
+			mesh_hwmp_max_preq_retries=4\
+		;;
+		2) rts=300; limit=750; quantum=4500; aql_threshold=1500; beacon_int=25; dtim_period=2\
+			mesh_hwmp_rann_interval=1464;\
+			mesh_hwmp_preq_min_interval=488;\
+			mesh_hwmp_active_path_timeout=1074;\
+			mesh_hwmp_max_preq_retries=3\
+		;;
+		3) rts=200; imit=500; $quantum=6000; aql_threshold=1000; beacon_int=20; dtim_period=1
+			mesh_hwmp_rann_interval=977;\
+			mesh_hwmp_preq_min_interval=390;\
+			mesh_hwmp_active_path_timeout=684;\
+			mesh_hwmp_max_preq_retries=2;\
+		;;
+		4) rts=100; limit=250; quantum=9000; aql_threshold=500; beacon_int=15; dtim_period=1\
+			mesh_hwmp_rann_interval=488;\
+			mesh_hwmp_preq_min_interval=293;\
+			mesh_hwmp_active_path_timeout=293;\
+			mesh_hwmp_max_preq_retries=1\
+		;;
 		*) return 0;;
 	esac
 
+	if [ -z "$1" ] || [ "$1" = "parameters" ]; then
+		# RTS/CTS (Request to Send/Clear to Send) is a MAC-layer mechanism to reduce collisions, but in 802.11s,
+		# it’s typically controlled at the PHY/MAC layer via general 802.11 parameters (e.g., rts_threshold) rather than HWMP-specific settings.
+		# The mac80211 mesh stack does not provide a dedicated HWMP-level RTS/CTS toggle like mesh_hwmp_rts.
+		iw phy $phy set rts $rts # Sets the frame size above which RTS/CTS is used.
 
+		# TXQ settings
+		iw phy $phy set txq limit $limit # Caps the number of packets in the queue.
+		iw phy $phy set txq quantum $quantum # Sets the Deficit Round Robin (DRR) scheduler quantum (bytes), balancing fairness for mesh traffic.
 
-	# RTS/CTS (Request to Send/Clear to Send) is a MAC-layer mechanism to reduce collisions, but in 802.11s,
-	# it’s typically controlled at the PHY/MAC layer via general 802.11 parameters (e.g., rts_threshold) rather than HWMP-specific settings.
-	# The mac80211 mesh stack does not provide a dedicated HWMP-level RTS/CTS toggle like mesh_hwmp_rts.
-	iw phy $phy set $rts 300 # Sets the frame size above which RTS/CTS is used.
+		# AQL settings - Airtime Queue Limit in microseconds
+		echo 1 > /sys/kernel/debug/ieee80211/$phy/aql_enable
+		echo $aql_threshold > /sys/kernel/debug/ieee80211/$phy/aql_threshold
+	fi
 
-	# TXQ settings
-	iw phy $phy set txq $limit 1000 # Caps the number of packets in the queue.
-	iw phy $phy set txq $quantum 3000 # Sets the Deficit Round Robin (DRR) scheduler quantum (bytes), balancing fairness for mesh traffic.
+	if [ -z "$1" ] || [ "$1" = "config" ]; then
+		# Beacon Interval - This parameter, defined in the 802.11 standard, sets the time interval (in Time Units, typically 1 TU = 1024 µs) between beacon transmissions by mesh stations (STAs).
+		# Beacons carry information used to update link quality metrics, which feed into the Airtime Link Metric (ALM) calculation.
+		# A shorter beacon interval increases the frequency of link quality updates, allowing the ALM to reflect changes in the mobile environment more quickly.
+		# However, it also increases control overhead.
+		echo "set wireless.radio$phyindex.beacon_int='$beacon_int'" | uci batch
 
-	# AQL settings (Airtime Queue Limit in microseconds)
-	echo 1 > /sys/kernel/debug/ieee80211/$phy/aql_enable
-	echo 1500 > /sys/kernel/debug/ieee80211/$phy/aql_threshold
+		# DTIM (Discovery Timeout) Period: Total timeout for path discovery attempts.
+		# Set as a number of Beacon Intervals before a path discovery attempts are repeated.
+		# The default is 2 beacon intervals.
+		echo "set wireless.m11s$phyindex.dtim_period='$dtim_period'" | uci batch
 
+		# Mesh Parameter config options
+		echo "set mesh11sd.mesh_params.mesh_hwmp_rann_interval='$mesh_hwmp_rann_interval'" | uci batch
+		echo "set mesh11sd.mesh_params.mesh_hwmp_preq_min_interval='$mesh_hwmp_preq_min_interval'" | uci batch
+		echo "set mesh11sd.mesh_params.mesh_hwmp_active_path_timeout='$mesh_hwmp_active_path_timeout'" | uci batch
+		echo "set mesh11sd.mesh_params.mesh_hwmp_max_preq_retries='$mesh_hwmp_max_preq_retries'" | uci batch
+	fi
 }
+
 check_path_changes() {
 	# get list of interfaces
 	get_mesh_iflist
