@@ -1000,7 +1000,6 @@ get_current_setup () {
 
 	if [ -z "$mesh_beacon_interval" ]; then
 		mesh_beacon_interval="100"
-		uci set mesh11sd.setup.mesh_beacon_interval='1'
 	fi
 
 	syslogmessage="option mesh_beacon_interval [ $mesh_beacon_interval ]"
@@ -1013,7 +1012,6 @@ get_current_setup () {
 
 	if [ -z "$mesh_dtim_period" ]; then
 		mesh_dtim_period="2"
-		uci set mesh11sd.setup.mesh_dtim_period='2'
 	fi
 
 	syslogmessage="option mesh_dtim_period [ $mesh_dtim_period ]"
@@ -1026,7 +1024,6 @@ get_current_setup () {
 
 	if [ -z "$mesh_node_mobility_level" ]; then
 		mesh_node_mobility_level="1"
-		uci set mesh11sd.setup.mesh_node_mobility_level='1'
 	fi
 
 	syslogmessage="option mesh_node_mobility_level [ $mesh_node_mobility_level ]"
@@ -2799,6 +2796,11 @@ mobility_settings() {
 	radio=$(uci get "$stanza.device")
 	phyindex="$(echo "$radio" | awk -F "radio" '{printf "%s", $2}')"
 	phy="phy$phyindex"
+	mesh_node_mobility_level=$(uci get mesh11sd.setup.mesh_node_mobility_level 2>/dev/null)
+
+	if [ -z "$mesh_node_mobility_level" ]; then
+		mesh_node_mobility_level=1
+	fi
 
 	case $mesh_node_mobility_level in
 		0) return 0;;
@@ -2808,19 +2810,19 @@ mobility_settings() {
 			mesh_hwmp_active_path_timeout=1465;\
 			mesh_hwmp_max_preq_retries=4\
 		;;
-		2) rts=300; limit=750; quantum=4500; aql_threshold=1500; beacon_int=25; dtim_period=2\
+		2) rts=300; limit=750; quantum=4500; aql_threshold=1500; beacon_int=25; dtim_period=2;\
 			mesh_hwmp_rann_interval=1464;\
 			mesh_hwmp_preq_min_interval=488;\
 			mesh_hwmp_active_path_timeout=1074;\
 			mesh_hwmp_max_preq_retries=3\
 		;;
-		3) rts=200; imit=500; $quantum=6000; aql_threshold=1000; beacon_int=20; dtim_period=1
+		3) rts=200; limit=500; quantum=6000; aql_threshold=1000; beacon_int=20; dtim_period=1;\
 			mesh_hwmp_rann_interval=977;\
 			mesh_hwmp_preq_min_interval=390;\
 			mesh_hwmp_active_path_timeout=684;\
 			mesh_hwmp_max_preq_retries=2;\
 		;;
-		4) rts=100; limit=250; quantum=9000; aql_threshold=500; beacon_int=15; dtim_period=1\
+		4) rts=100; limit=250; quantum=9000; aql_threshold=500; beacon_int=15; dtim_period=1;\
 			mesh_hwmp_rann_interval=488;\
 			mesh_hwmp_preq_min_interval=293;\
 			mesh_hwmp_active_path_timeout=293;\
@@ -2828,6 +2830,9 @@ mobility_settings() {
 		;;
 		*) return 0;;
 	esac
+
+	echo "mesh_node_mobility_level=\"$mesh_node_mobility_level\"; beacon_int=\"$beacon_int\"; dtim_period=\"$dtim_period\"; \
+		rts=\"$rts\"; limit=\"$limit\"; quantum=\"$quantum\"; aql_threshold=\"$aql_threshold\"" > "$tmpdir/mesh_mobility"
 
 	if [ -z "$1" ] || [ "$1" = "parameters" ]; then
 		# RTS/CTS (Request to Send/Clear to Send) is a MAC-layer mechanism to reduce collisions, but in 802.11s,
@@ -4619,9 +4624,18 @@ elif [ "$1" = "status" ]; then
 	echo "    \"auto_mesh_id\":\"$auto_mesh_id\","
 	echo "    \"mesh_gate_enable\":\"$mesh_gate_enable\","
 	echo "    \"mesh_leechmode_enable\":\"$mesh_gate_only\","
-	echo "    \"mesh_node_mobility_level\":\"$mesh_node_mobility_level\","
-	echo "    \"mesh_beacon_interval\":\"$mesh_beacon_interval\","
-	echo "    \"mesh_dtim_period\":\"$mesh_dtim_period\","
+
+	if [ -e "$tmpdir/mesh_mobility" ]; then
+		. "$tmpdir/mesh_mobility"
+		echo "    \"mesh_node_mobility_level\":\"$mesh_node_mobility_level\","
+		echo "    \"mesh_beacon_interval\":\"$beacon_int\","
+		echo "    \"mesh_dtim_period\":\"$dtim_period\","
+		echo "    \"mesh_rts_threshold\":\"$rts\","
+		echo "    \"mesh_queue_limit\":\"$limit\","
+		echo "    \"mesh_ddr_scheduler_quantum\":\"$quantum\","
+		echo "    \"mesh_airtime_queue_limit\":\"$aql_threshold\","
+	fi
+
 	echo "    \"mesh_gate_encryption\":\"$mesh_gate_encryption\","
 	echo "    \"mesh_backhaul_led\":\"$mesh_backhaul_led\","
 
@@ -5096,12 +5110,56 @@ elif [ "$1" = "mesh_leechmode" ]; then
 	echo
 	exit 0
 
+elif [ "$1" = "mesh_node_mobility_level" ]; then
+	warning_message="Warning, if you continue, the mesh will be restarted and you may loose your current terminal connection and have to reopen it"
+
+	if [ -z "$2" ]; then
+		echo "Usage: mesh11sd mesh_node_mobility_level <level>"
+		echo "    where level can be 0, 1, 2, 3, 4"
+		echo "    0 is for static nodes, 1 for nodes with low relative velocity"
+		echo "    and 2, 3, 4 for consecutively higher relative velocity"
+		echo "    level 1 corresponds to a relative velocity in the region of 1 metre per second"
+		echo "    level 4 corresponds to a relative velocity in the region of 5 metres per second"
+		echo "    These are approximate values of achievable velative velocity"
+		echo
+		echo "$warning_message"
+		echo
+
+		if [ -e "$tmpdir/mesh_mobility" ]; then
+			. "$tmpdir/mesh_mobility"
+			echo "Current level is [ $mesh_node_mobility_level ]"
+			echo
+		fi
+	elif [ "$2" -ge 0 ] && [ $2 -le 4 ]; then
+		echo
+		echo "$warning_message"
+		echo
+		echo "    Do you want to continue? [yes/no] "
+		read reply
+
+		if [ ! -z "$reply" ] && [ "$reply" = "yes" ]; then
+			echo "set mesh11sd.setup.mesh_node_mobility_level='$2'" | uci batch
+			echo
+			echo "Activating change.... mesh_node_mobility_level [ $2 ]"
+			echo "Note: Change can be reverted by restarting mesh11sd or rebooting"
+			echo "Use the \"mesh11sd commit_changes\" command to make the change non-volatile"
+			sleep 2
+
+			restart_mesh
+		else
+			echo "Aborting..."
+		fi
+	fi
+
+	exit 0
+
 elif [ "$1" = "commit_changes" ]; then
 
 	rssi_change_flag=0
 	txpower_change_flag=0
 	mesh_gate_only_change_flag=0
 	debuglevel_change_flag=0
+	mesh_node_mobility_level_change_flag=0
 
 	changes=$(uci changes mesh11sd)
 	changelist=$(echo "$changes" | awk '{printf "%s ", $1}')
@@ -5110,6 +5168,7 @@ elif [ "$1" = "commit_changes" ]; then
 	mesh_rssi_threshold_change=$(echo "$changes" | grep "mesh_rssi_threshold" | tail -n 1)
 	txpower_change=$(echo "$changes" | grep "txpower" | tail -n 1)
 	mesh_gate_only_change=$(echo "$changes" | grep "mesh_leechmode_enable" | tail -n 1)
+	mesh_node_mobility_level_change=$(echo "$changes" | grep "mesh_node_mobility_level" | tail -n 1)
 
 	echo "==========================================================================="
 
@@ -5139,6 +5198,11 @@ elif [ "$1" = "commit_changes" ]; then
 		if [ ! -z "$mesh_gate_only_change" ]; then
 			echo "set $mesh_gate_only_change" | uci batch
 			mesh_gate_only_change_flag=1
+		fi
+
+		if [ ! -z "$mesh_node_mobility_level_change" ]; then
+			echo "set $mesh_node_mobility_level_change" | uci batch
+			mesh_node_mobility_level_change_flag=1
 		fi
 
 		uci commit mesh11sd
@@ -5171,6 +5235,10 @@ elif [ "$1" = "commit_changes" ]; then
 
 		if [ "$mesh_gate_only_change_flag" -eq 1 ]; then
 			echo "Mesh Leechmode change committed"
+		fi
+
+		if [ "$mesh_node_mobility_level_change_flag" -eq 1 ]; then
+			echo "Mesh Mobility Level change committed"
 		fi
 
 		if [ "$debuglevel_change_flag" -eq 0 ] && [ "$rssi_change_flag" -eq 0 ] && [ "$txpower_change_flag" -eq 0 ] && [ "$mesh_gate_only_change_flag" -eq 0 ]; then
