@@ -367,7 +367,11 @@ Before activating the mesh11sd service daemon, there are a few important conside
  1. **Mesh11sd uses the uci utility** to manage dynamic configuration changes, moreover autoconfiguration is done on every startup and is not a one off process.
  2. In normal operation, **configuration changes are not written to the config files in /etc/config** but are kept in volatile storage by way of the uci utility.
  3. **Directly editing a config file will very likely break something**, all manual changes should be done with the uci utility and then only by expert users.
- 4. The OpenWrt Luci web interface does not support mesh11sd configuration and will probably not even show its effects. To this end, **Luci is by default disabled by the mesh11sd daemon.** Advanced users can re-enable it later if required (See the mesh11sd command line (CLI) reference later in this document).
+ 4. The OpenWrt Luci web interface does not support mesh11sd configuration and will probably not even show its effects.
+
+    To this end, **Luci is by default disabled by the mesh11sd daemon.**
+
+    It can re-enabled later if required (See the auto_config option 2 or the mesh11sd command line (CLI) reference later in this document). If re-enabled, the portal detect function will be disabled. This means that the current portal state will be made semi-permanent (It can be reversed using the revert_all command - See later).
 
 ## 6. Autoconfig Essentials
 
@@ -378,7 +382,7 @@ We can then move on to configuring the other meshnodes in the same way before pl
 We will do this by making a temporary connection for each node in turn to an upstream Internet connection, connecting its "wan" port to a "lan" port of your isp router.
 
 
-***Note: Use the same configuration for all nodes, INCLUDING the base ipv4 address (see later).***
+***Note: Use the same configuration for all nodes, INCLUDING the base ipv4 address (This base ipv4 address is only used if the meshnode detects itself as a portal. If it is not a portal it will request an ip address via DHCP).***
 
 By simply enabling auto_config, mesh11sd will attempt to bring up a working meshnode, but there are several essentials that should be configured as the defaults may not be appropriate.
 In the worst case this can result in a soft brick condition.
@@ -649,6 +653,18 @@ config mesh11sd 'setup'
 	# Auto configure mesh interfaces in the wireless configuration.
 	# Default 0 (disabled). Set to 1 to enable.
 	#
+	# Possible values:
+	# 0 Disabled
+	# 1 Enabled
+	# 2 Same as 1 but executes `commit_all` and enables LuCi
+	# 	Warning, this will lock the auto config to the initial autoconfigured mode.
+	#	If you want a locked portal, ensure you have the upstream Internet connection active
+	#	BEFORE first boot after reflash or install.
+	# 	For example if the meshnode initially configures as a portal,
+	#	portal detect will be set to 0 permanently.
+	#
+	#	The effect of option 2 can be reversed by issuing the command `mesh11sd revert_all revert`
+	#
 	# When set to 0, the mesh11sd daemon will check for an existing mesh configuration.
 	#
 	# Warning: If an existing mesh configuration is found, it will be honoured even if it is incorrect.
@@ -688,7 +704,7 @@ config mesh11sd 'setup'
 	# mesh_phy_index (optional)
 	#
 	# Force use of a particular radio for the mesh interface
-	# Must be an interger value corresponding to the physical radio hardware (eg. phy0, phy1 etc.).
+	# Must be an integer value corresponding to the physical radio hardware (eg. phy0, phy1 etc.).
 	# Default - Not Set
 	#
 	# Useful for devices with more than one phy on a particular band
@@ -1189,19 +1205,27 @@ Access to the remote meshnode peers will not be possible using the default ipv4 
 * auto_config - (optional) - autonomously configures the mesh network.
 
              Enables autonomous dynamic mesh configuration.
-
              Auto configure mesh interfaces in the wireless configuration.
-
              Default 0 (disabled). Set to 1 to enable.
+
+             Possible values:
+                0 Disabled
+                1 Enabled
+                2 Same as 1 but executes `commit_all` and enables LuCi
+                  Warning, this will lock the auto config to the initial autoconfigured mode.
+                    If you want a locked portal, ensure you have the upstream Internet connection active
+                    BEFORE first boot after reflash or install.
+                    For example if the meshnode initially configures as a portal,
+                      portal detect will be set to 0 permanently.
+
+                      The effect of option 2 can be reversed by issuing the command 'mesh11sd revert_all revert'
 
              When set to 0, the mesh11sd daemon will check for an existing mesh configuration.
 
              Warning: If an existing mesh configuration is found, it will be honoured even if it is incorrect.
-
-             Manually configuring a mesh can soft brick the router if incorrectly done.
+               Manually configuring a mesh can soft brick the router if incorrectly done.
 
              Auto config can be tested using the command line function 'mesh11sd auto_config test'
-
              See the documentation for further information (Hint: try 'mesh11sd --help')
 
 * auto_mesh_id - (optional) - specifies a string used to generate the mesh id hash.
@@ -1616,8 +1640,48 @@ RANN - Root ANNouncement
 
 RSSI - Received Signal Strength Indication
 
+**Some Further Common Acronyms**
 
-## 12. Command Line Interface
+SN - Sequence Number of a path: Tracks path updates to prevent loops or stale routes.
+
+QLEN - Queue LENgth: Number of packets currently queued for this path.
+
+EXPTIME - EXPiration TIME: Time (in ms) until this path entry expires if unused.
+
+DTIM - Discovery TIMeout: Total timeout (in ms) for path discovery attempts.
+
+DRET - Discovery RETries: Number of retries for path discovery.
+
+HOP_COUNT - Number of hops (intermediate nodes) to the destination.
+
+PATH_CHANGE - Number of times a path has been updated/changed.
+
+## 12. Mesh Path FLAGS Values
+Typical Mesh FLAGS values are `0x5`, `0x15`, and `0x17`. To decode these, we refer to the Linux kernel's 802.11s implementation, specifically the `nl80211` attributes for mesh paths, as defined in the kernel source (e.g., `net/wireless/nl80211.c` and `net/mac80211/mesh.h`).
+
+The FLAGS bitmask is defined by the `NL80211_MPATH_FLAG_*` attributes in the Linux kernel. The relevant flags for mesh paths include:
+
+1. **NL80211_MPATH_FLAG_ACTIVE (0x1)**: The path is actively used for forwarding data to the destination.
+2. **NL80211_MPATH_FLAG_RESOLVING (0x2)**: The path is in the process of being resolved (e.g., during path discovery via HWMP PREQ/PREP frames).
+3. **NL80211_MPATH_FLAG_SN_VALID (0x4)**: The sequence number (SN) for this path is valid, ensuring loop-free routing.
+4. **NL80211_MPATH_FLAG_FIXED (0x8)**: The path is fixed (manually set or static) rather than dynamically discovered by HWMP.
+5. **NL80211_MPATH_FLAG_ROOT (0x10)**: The path is a root path, typically used in proactive HWMP mode where a root node is designated (e.g., for tree-based routing).
+
+These flags are combined into a bitmask, and the hexadecimal value in the FLAGS output represents their sum. Let’s decode the typical values:
+
+- **0x5 (binary: 00101)**:
+  - `0x1` (ACTIVE) + `0x4` (SN_VALID)
+  - Meaning: The path is active (used for forwarding) and has a valid sequence number. It is not being resolved, is not fixed, and is not a root path.
+
+- **0x15 (binary: 10101)**:
+  - `0x1` (ACTIVE) + `0x4` (SN_VALID) + `0x10` (ROOT)
+  - Meaning: The path is active, has a valid sequence number, and is a root path (likely part of a proactive tree-based routing structure in HWMP). It is not being resolved or fixed.
+
+- **0x17 (binary: 10111)**:
+  - `0x1` (ACTIVE) + `0x2` (RESOLVING) + `0x4` (SN_VALID) + `0x10` (ROOT)
+  - Meaning: The path is active, has a valid sequence number, is a root path, and is currently in the process of being resolved (e.g., HWMP is refreshing or rediscovering the path, possibly due to a timeout or metric update).
+
+## 13. Command Line Interface
 Mesh11sd is an OpenWrt service daemon and runs continuously in the background. It does however also have a CLI interface:
 
       Usage: mesh11sd [option] [argument...]]
@@ -2024,6 +2088,28 @@ drwxr-xr-x    2 root     root            40 Jan 19 18:54 tmp/
 drwxr-xr-x    3 root     root            60 Jan 19 18:54 usr/
 root@meshnode-1483:~#
 ```
+
+## 14. Optimising the Airtime Link Metric Update Frequency
+
+In an **802.11s mesh network**, the **Airtime Link Metric (ALM)** update frequency is not directly controlled by a single, explicitly named parameter in the IEEE 802.11s standard. Instead, it is indirectly influenced by the **beacon interval** and the **neighbor discovery and maintenance mechanisms** used by the Hybrid Wireless Mesh Protocol (HWMP). The ALM is calculated based on link quality metrics (e.g., frame error rate, data rate) gathered during neighbor interactions, primarily through **beacons** and **management frames** like Path Request (PREQ) and Path Reply (PREP).
+
+### Relevant Parameter: Beacon Interval
+- **Parameter Name**: `dot11BeaconInterval`
+- **Description**: This parameter, defined in the 802.11 standard, sets the time interval (in Time Units, typically 1 TU = 1024 µs) between beacon transmissions by mesh stations (STAs). Beacons carry information used to update link quality metrics, which feed into the ALM calculation.
+- **Impact on ALM**: A shorter beacon interval increases the frequency of link quality updates, allowing the ALM to reflect changes in the mobile environment more quickly. However, it also increases control overhead.
+- **Typical Values**: Default is 100 TU (~100 ms). For mobile mesh nodes, reducing it to 50–20 TU (~20–50 ms) can improve ALM responsiveness.
+- **Configuration**: In practice, this can be set in the mesh stack (e.g., via `iw` commands in Linux with `ath9k` drivers):
+  ```bash
+  iw dev <interface> set mesh_param dot11BeaconInterval <value>
+  ```
+
+### Additional Influences
+- **PREQ Interval**: The `dot11MeshHWMPpreqMinInterval` parameter controls how often Path Request messages are sent for route discovery. Since PREQ messages can trigger link quality assessments, reducing this interval (e.g., from 2000 TU to 500 TU) indirectly affects ALM updates.
+- **Link Monitoring**: Some implementations allow custom link monitoring intervals (not standardized) to periodically reassess link quality. Check your mesh stack (e.g., Linux mac80211) for proprietary extensions.
+
+### Recommendation for Mobile Mesh
+For the use case of mobile nodes with small relative velocities but staying in range, set `dot11BeaconInterval` to 20–50 TU to balance frequent ALM updates with overhead. Monitor network performance to avoid congestion. If your implementation supports it, also adjust `dot11MeshHWMPpreqMinInterval` to ~500 TU for faster route updates.
+
 
 ![openNDS-Mesh11sd](https://github.com/openNDS/mesh11sd/blob/master/docs/images/avatarsmall.png)
 

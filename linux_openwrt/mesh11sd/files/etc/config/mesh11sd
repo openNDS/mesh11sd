@@ -148,13 +148,25 @@ config mesh11sd 'setup'
 	# Auto configure mesh interfaces in the wireless configuration.
 	# Default 0 (disabled). Set to 1 to enable.
 	#
+	# Possible values:
+	# 0 Disabled
+	# 1 Enabled
+	# 2 Same as 1 but executes `commit_all` and enables LuCi
+	#   Warning, this will lock the auto config to the initial autoconfigured mode.
+	#   If you want a locked portal, ensure you have the upstream Internet connection active
+	#   BEFORE first boot after reflash or install.
+	#   For example if the meshnode initially configures as a portal,
+	#   portal detect will be set to 0 permanently.
+	#
+	#   The effect of option 2 can be reversed by issuing the command `mesh11sd revert_all revert`
+	#
 	# When set to 0, the mesh11sd daemon will check for an existing mesh configuration.
 	#
 	# Warning: If an existing mesh configuration is found, it will be honoured even if it is incorrect.
-	#	Manually configuring a mesh can soft brick the router if incorrectly done.
+	#   Manually configuring a mesh can soft brick the router if incorrectly done.
 	#
 	# Auto config can be tested using the command line function 'mesh11sd auto_config test'
-	#	See the documentation for further information (Hint: try 'mesh11sd --help')
+	#   See the documentation for further information (Hint: try 'mesh11sd --help')
 	#
 	#option auto_config '1'
 
@@ -205,7 +217,7 @@ config mesh11sd 'setup'
 	# Set a valid country code for all radios
 	# Defaults to DFS-ETSI if not explicitly set in wireless config
 	#
-	# If set here, will overide any setting in wireless config
+	# If set here, will override any setting in wireless config
 	#
 	# Example set to country code US:
 	#option country 'US'
@@ -216,7 +228,7 @@ config mesh11sd 'setup'
 	# Defaults to a sha256 key to be automatically used on all members of this mesh when auto_config is enabled
 	# Generates a secure sha256 key from the string value set in this option.
 	#
-	# If set, it must also be set to the same value on every mesh node
+	# If set here, it must also be set to the same value on every other node in this mesh
 	#
 	#option auto_mesh_key 'MySecretKey'
 
@@ -389,9 +401,14 @@ config mesh11sd 'setup'
 	# mesh_gate_enable (optional)
 	# Determines whether this node will be a gate
 	#
-	# Default: 1 (enabled)
-	# Set to 0 to disable (turns off the node's gate interface ie its access point and SSID)
+	# Default: 1 (enable all mesh gate access points)
 	#
+	# Possible values:
+	# 0 Disable all mesh gate access points.
+	# 1 Enable all mesh gate access points.
+	# 2 Enable ONLY access points on radios NOT shared with a mesh interface.
+	#
+	# Example:
 	#option mesh_gate_enable '0'
 
 	###########################################################################################
