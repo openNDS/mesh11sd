@@ -12,8 +12,8 @@
 #
 # mesh11sd daemon
 #
-last_version="5.1.4~be7a"
-version="6.0.0~be7a"
+last_version="6.0.0~be7a"
+version="6.1.0~be7a"
 fixup1=0
 ip4pingfailcount=0
 network_restart=0
@@ -1129,7 +1129,7 @@ check_config_params() {
 	mesh_hwmp_rootmode=$(uci get mesh11sd.mesh_params.mesh_hwmp_rootmode 2> /dev/null)
 
 	if [ -z "$mesh_hwmp_rootmode" ]; then
-		mesh_hwmp_rootmode="4"
+		mesh_hwmp_rootmode="0"
 		echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='$mesh_hwmp_rootmode'" | uci batch
 	fi
 
@@ -1485,7 +1485,11 @@ check_channel() {
 					fi
 				done
 
-				link_to_portal=$(cat $tmpdir/dhcp6probe | grep -q -w "Got a valid ADVERTISE" ; echo -n "$?")
+				if [ -f "$tmpdir/dhcp6probe" ]; then
+					link_to_portal=$(cat $tmpdir/dhcp6probe | grep -q -w "Got a valid ADVERTISE" ; echo -n "$?")
+				else
+					link_to_portal=""
+				fi
 
 				# NOTE: odhcp6c -p option does not work and pid is not recorded, so we have to look up the pid using ps utility
 				instances=$(ps | grep "odhcp6c" | grep "/var/run/odhcp6c-renew-$device.pid" | awk '{printf "%s ", $1}')
@@ -1498,16 +1502,22 @@ check_channel() {
 
 				if [ "$link_to_portal" -eq 0 ]; then
 					syslogmessage="portal detected"
+					write_to_syslog
+					cctimestamp=""
+					return 0
 				else
 					syslogmessage="portal not detected"
+					write_to_syslog
+					scan_channel
+					cctimestamp=""
+					return 0
 				fi
 
-				write_to_syslog
-				cctimestamp=""
-				scan_channel
 				continue
 			fi
 		done
+
+		cctimestamp=""
 	fi
 }
 
@@ -1549,11 +1559,11 @@ scan_channel() {
 							echo "set wireless.$device.channel='$channel'" | uci batch
 
 							debugtype="notice"
-							syslogmessage="Tracking channel from [ $our_channel ] to [ $channel ]"
+							syslogmessage="Tracking [ $meshconfig, $device, $ifname ] from channel [ $our_channel ] to [ $channel ]"
 							write_to_syslog
-
 							restart_mesh
-							break
+							cctimestamp=""
+							return 0
 						fi
 					done
 				fi
@@ -1620,7 +1630,7 @@ get_portal_state() {
 
 	elif [ "$portal_detect" -eq 0 ] || [ "$portal_detect" -eq 4 ]; then
 		# 0 - force portal mode, 4 - force portal bridge mode
-		echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='4'" | uci batch
+###		echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='4'" | uci batch
 
 		if [ "$portal_detect" -eq 0 ]; then
 			zone="wan"
@@ -1711,6 +1721,7 @@ get_portal_state() {
 				if [ "$leechmode" -eq 1 ]; then
 					echo "set mesh11sd.setup.mesh_leechmode_enable='0'" | uci batch
 					leechmode=0
+					echo "leechmode=$leechmode" > "$tmpdir/leechmode"
 					# Reset ip4pingfailcount to go around again to the portal_detect_threshold, giving HWMP some cycles to establish a path
 					ip4pingfailcount=0
 
@@ -1933,7 +1944,7 @@ check_portal() {
 					non_portal_mesh_hwmp_rootmode="0"
 				fi
 
-				echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='$non_portal_mesh_hwmp_rootmode'" | uci batch
+###				echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='$non_portal_mesh_hwmp_rootmode'" | uci batch
 
 				/sbin/service dnsmasq restart
 				/sbin/service odhcpd restart
@@ -1986,8 +1997,8 @@ check_portal() {
 			if [ "$detected_state" = "portal" ] && [ "$last_state" = "peer" ]; then
 
 				if [ "$leechmode" -eq 1 ]; then
-					uci set mesh11sd.setup.mesh_leechmode_enable='0'
 					leechmode=0
+					echo "leechmode=$leechmode" > "$tmpdir/leechmode"
 				fi
 
 				last_state="portal"
@@ -2029,7 +2040,7 @@ check_portal() {
 					mesh_hwmp_rootmode="0"
 				fi
 
-				echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='$mesh_hwmp_rootmode'" | uci batch
+###				echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='$mesh_hwmp_rootmode'" | uci batch
 
 				restore_ipv4
 				/sbin/service dnsmasq restart
@@ -2805,36 +2816,41 @@ mobility_settings() {
 	case $mesh_node_mobility_level in
 		0) return 0;;
 		1) rts=500; limit=1000; quantum=3000; aql_threshold=2000; beacon_int=50; dtim_period=2;\
+			rootmode=3;\
+			mesh_fwding=1;\
 			mesh_hwmp_rann_interval=1953;\
 			mesh_hwmp_preq_min_interval=586;\
 			mesh_hwmp_active_path_timeout=1465;\
-			mesh_hwmp_max_preq_retries=4\
-		;;
+			mesh_hwmp_max_preq_retries=4;;
 		2) rts=300; limit=750; quantum=4500; aql_threshold=1500; beacon_int=25; dtim_period=2;\
+			rootmode=2;\
+			mesh_fwding=1;\
 			mesh_hwmp_rann_interval=1464;\
 			mesh_hwmp_preq_min_interval=488;\
 			mesh_hwmp_active_path_timeout=1074;\
-			mesh_hwmp_max_preq_retries=3\
-		;;
+			mesh_hwmp_max_preq_retries=3;;
 		3) rts=200; limit=500; quantum=6000; aql_threshold=1000; beacon_int=20; dtim_period=1;\
+			rootmode=0;\
+			mesh_fwding=0;\
 			mesh_hwmp_rann_interval=977;\
 			mesh_hwmp_preq_min_interval=390;\
 			mesh_hwmp_active_path_timeout=684;\
-			mesh_hwmp_max_preq_retries=2;\
-		;;
+			mesh_hwmp_max_preq_retries=2;;
 		4) rts=100; limit=250; quantum=9000; aql_threshold=500; beacon_int=15; dtim_period=1;\
+			rootmode=0;\
+			mesh_fwding=0;\
 			mesh_hwmp_rann_interval=488;\
 			mesh_hwmp_preq_min_interval=293;\
 			mesh_hwmp_active_path_timeout=293;\
-			mesh_hwmp_max_preq_retries=1\
-		;;
+			mesh_hwmp_max_preq_retries=1;;
 		*) return 0;;
 	esac
 
-	echo "mesh_node_mobility_level=\"$mesh_node_mobility_level\"; beacon_int=\"$beacon_int\"; dtim_period=\"$dtim_period\"; \
+	echo "mesh_node_mobility_level=\"$mesh_node_mobility_level\"; rootmode=\"$rootmode\"; beacon_int=\"$beacon_int\"; dtim_period=\"$dtim_period\"; \
 		rts=\"$rts\"; limit=\"$limit\"; quantum=\"$quantum\"; aql_threshold=\"$aql_threshold\"" > "$tmpdir/mesh_mobility"
 
 	if [ -z "$1" ] || [ "$1" = "parameters" ]; then
+
 		# RTS/CTS (Request to Send/Clear to Send) is a MAC-layer mechanism to reduce collisions, but in 802.11s,
 		# it’s typically controlled at the PHY/MAC layer via general 802.11 parameters (e.g., rts_threshold) rather than HWMP-specific settings.
 		# The mac80211 mesh stack does not provide a dedicated HWMP-level RTS/CTS toggle like mesh_hwmp_rts.
@@ -2850,6 +2866,13 @@ mobility_settings() {
 	fi
 
 	if [ -z "$1" ] || [ "$1" = "config" ]; then
+
+		if [ ! -z "$is_portal" ] || [ "$portal_detect" -eq 0 ] || [ "$portal_detect" -eq 4 ]; then
+			# this is a portal node, so override hwmp_rootmode and mesh_fwding
+			rootmode=4
+			mesh_fwding=1
+		fi
+
 		# Beacon Interval - This parameter, defined in the 802.11 standard, sets the time interval (in Time Units, typically 1 TU = 1024 µs) between beacon transmissions by mesh stations (STAs).
 		# Beacons carry information used to update link quality metrics, which feed into the Airtime Link Metric (ALM) calculation.
 		# A shorter beacon interval increases the frequency of link quality updates, allowing the ALM to reflect changes in the mobile environment more quickly.
@@ -2862,10 +2885,12 @@ mobility_settings() {
 		echo "set wireless.m11s$phyindex.dtim_period='$dtim_period'" | uci batch
 
 		# Mesh Parameter config options
+		echo "set mesh11sd.mesh_params.mesh_fwding='$mesh_fwding'" | uci batch
 		echo "set mesh11sd.mesh_params.mesh_hwmp_rann_interval='$mesh_hwmp_rann_interval'" | uci batch
 		echo "set mesh11sd.mesh_params.mesh_hwmp_preq_min_interval='$mesh_hwmp_preq_min_interval'" | uci batch
 		echo "set mesh11sd.mesh_params.mesh_hwmp_active_path_timeout='$mesh_hwmp_active_path_timeout'" | uci batch
 		echo "set mesh11sd.mesh_params.mesh_hwmp_max_preq_retries='$mesh_hwmp_max_preq_retries'" | uci batch
+		echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='$rootmode'" | uci batch
 	fi
 }
 
@@ -2933,7 +2958,7 @@ check_path_changes() {
 
 								# Reactive path stabilisation:
 
-								if [ "$mesh_path_stabilisation" -eq 1 ]; then
+								if [ "$mesh_path_stabilisation" -eq 1 ] && [ -z "$is_portal" ] ; then
 									mrstloopcount=$(eval echo "\$node$peermac_id")
 									debugtype="debug"
 									syslogmessage="mrstloopcount [ $mrstloopcount ]"
@@ -2950,9 +2975,9 @@ check_path_changes() {
 										iw dev $iface station del $peermac
 										eval "node$peermac_id"="0"
 
-										if [ -z "$is_portal" ]; then
-											uci set mesh11sd.setup.mesh_leechmode_enable='1'
+										if [ "$mesh_node_mobility_level" -eq 0 ]; then
 											leechmode=1
+											echo "leechmode=$leechmode" > "$tmpdir/leechmode"
 										fi
 									else
 										debugtype="notice"
@@ -3142,7 +3167,12 @@ check_mesh_gate_only() { # AKA leechmode
 		return 0
 	fi
 
-	current_mgo_option=$(uci get mesh11sd.setup.mesh_leechmode_enable 2> /dev/null | awk '{printf "%s", $1}')
+	if [ -e "$tmpdir/leechmode" ]; then
+		. "$tmpdir/leechmode" # gets current leechmode status
+		current_mgo_option="$leechmode"
+	else
+		current_mgo_option=$(uci get mesh11sd.setup.mesh_leechmode_enable 2> /dev/null | awk '{printf "%s", $1}') # gets config value
+	fi
 
 	if [ -z "$current_mgo_option" ]; then
 		current_mgo_option="$mesh_gate_only"
@@ -3155,22 +3185,21 @@ check_mesh_gate_only() { # AKA leechmode
 	if [ "$current_mgo_option" -ne "$mesh_gate_only" ]; then
 		#option has changed
 
+		if [ "$mesh_node_mobility_level" -gt 1  ]; then
+			rootmode=3
+		else
+			rootmode=0
+		fi
+
 		if [ "$current_mgo_option" -eq 1 ]; then
 			echo "set mesh11sd.mesh_params.mesh_fwding='0'" | uci batch
-			echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='0'" | uci batch
+###			echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='$rootmode'" | uci batch
 			echo "set mesh11sd.mesh_params.mesh_gate_announcements='0'" | uci batch
 			echo "set mesh11sd.mesh_params.mesh_max_peer_links='2'" | uci batch
+
 		elif [ "$current_mgo_option" -eq 0 ]; then
-
-			if [ ! -z "$is_portal" ] || [ "$portal_detect" -eq 0 ] || [ "$portal_detect" -eq 4 ] ; then
-				mesh_hwmp_rootmode=4
-			else
-				# This IS NOT a layer 3 mesh portal
-				mesh_hwmp_rootmode=2
-			fi
-
 			echo "set mesh11sd.mesh_params.mesh_fwding='1'" | uci batch
-			echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='$mesh_hwmp_rootmode'" | uci batch
+###			echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='$rootmode'" | uci batch
 			echo "set mesh11sd.mesh_params.mesh_max_peer_links='$config_max_peer_links'" | uci batch
 
 			current_ctg_option=$(uci get mesh11sd.mesh_params.mesh_connected_to_gate 2> /dev/null | awk '{printf "%s", $1}')
@@ -3184,26 +3213,27 @@ check_mesh_gate_only() { # AKA leechmode
 
 	elif [ "$current_mgo_option" -eq 1 ]; then
 		echo "set mesh11sd.mesh_params.mesh_fwding='0'" | uci batch
-		echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='0'" | uci batch
+###		echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='$rootmode'" | uci batch
 		echo "set mesh11sd.mesh_params.mesh_gate_announcements='0'" | uci batch
 		echo "set mesh11sd.mesh_params.mesh_max_peer_links='2'" | uci batch
 		leechmode=1
+		echo "leechmode=$leechmode" > "$tmpdir/leechmode"
 
 	elif [ "$current_mgo_option" -eq 0 ]; then
 		leechmode=0
+		echo "leechmode=$leechmode" > "$tmpdir/leechmode"
 
-		if [ ! -z "$is_portal" ] || [ "$portal_detect" -eq 0 ] || [ "$portal_detect" -eq 4 ]; then
-			mesh_hwmp_rootmode=4
+		if [ -e "/tmpdir/mesh_mobility" ]; then
+			. /tmpdir/mesh_mobility
 		else
-			# This IS NOT a layer 3 mesh portal
-			mesh_hwmp_rootmode=2
+			rootmode="$mesh_hwmp_rootmode"
 		fi
 
 		current_rootmode=$(uci get mesh11sd.mesh_params.mesh_hwmp_rootmode 2>/dev/null)
 
-		if [ "$current_rootmode" != "$mesh_hwmp_rootmode" ]; then
-			echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='$mesh_hwmp_rootmode'" | uci batch
-		fi
+###		if [ "$current_rootmode" != "$rootmode" ]; then
+###			echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='$rootmode'" | uci batch
+###		fi
 
 		echo "set mesh11sd.mesh_params.mesh_max_peer_links='$config_max_peer_links'" | uci batch
 	fi
@@ -4265,6 +4295,11 @@ get_valid_channels() {
 	valid_channels=$(iw list | grep "0 MHz \[" | grep -v "disabled" | grep -v "radar detection" | awk '{printf "%s ", $4}' | tr -d "[" | tr -d "]")
 }
 
+get_valid_channels_by_phyindex() {
+	valid_channels=$(iw phy phy$phyindex channels | grep "*" | awk -F "[" '{printf "%s\n", $2'} | awk -F "]" '$2==" " {printf "%s%s", $1, $2}')
+}
+
+
 # Set and commit a single change, passed in $uci_set_string
 commit_single_change() {
 	local changes=$(uci changes mesh11sd)
@@ -4623,7 +4658,14 @@ elif [ "$1" = "status" ]; then
 
 	echo "    \"auto_mesh_id\":\"$auto_mesh_id\","
 	echo "    \"mesh_gate_enable\":\"$mesh_gate_enable\","
-	echo "    \"mesh_leechmode_enable\":\"$mesh_gate_only\","
+
+	if [ -e "$tmpdir/leechmode" ]; then
+		. "$tmpdir/leechmode"
+	else
+		leechmode="$mesh_gate_only"
+	fi
+
+	echo "    \"mesh_leechmode_enable\":\"$leechmode\","
 
 	if [ -e "$tmpdir/mesh_mobility" ]; then
 		. "$tmpdir/mesh_mobility"
@@ -6121,7 +6163,7 @@ elif [ "$1" = "daemon" ]; then
 							mesh_hwmp_rootmode="0"
 						fi
 
-						echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='$mesh_hwmp_rootmode'" | uci batch
+###						echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='$mesh_hwmp_rootmode'" | uci batch
 
 						/sbin/service dnsmasq restart
 						/sbin/service odhcpd restart
@@ -6154,7 +6196,7 @@ elif [ "$1" = "daemon" ]; then
 							non_portal_mesh_hwmp_rootmode="0"
 						fi
 
-						echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='$non_portal_mesh_hwmp_rootmode'" | uci batch
+###						echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='$non_portal_mesh_hwmp_rootmode'" | uci batch
 
 						echo "set dhcp.lan.ignore='0'" | uci batch
 						echo "set dhcp.lan.ra_default='2'" | uci batch
@@ -6171,7 +6213,7 @@ elif [ "$1" = "daemon" ]; then
 					fi
 
 				elif [ "$portal_detect" -eq 0 ]; then
-					echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='4'" | uci batch
+###					echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='4'" | uci batch
 
 					if [ -z "$opennds_conf" ] || [ "$opennds_conf" -eq 0 ]; then
 						opennds_conf=1
