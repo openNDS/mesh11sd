@@ -2091,25 +2091,29 @@ root@meshnode-1483:~#
 
 ## 14. Optimising the Airtime Link Metric Update Frequency
 
-In an **802.11s mesh network**, the **Airtime Link Metric (ALM)** update frequency is not directly controlled by a single, explicitly named parameter in the IEEE 802.11s standard. Instead, it is indirectly influenced by the **beacon interval** and the **neighbor discovery and maintenance mechanisms** used by the Hybrid Wireless Mesh Protocol (HWMP). The ALM is calculated based on link quality metrics (e.g., frame error rate, data rate) gathered during neighbor interactions, primarily through **beacons** and **management frames** like Path Request (PREQ) and Path Reply (PREP).
+In an **802.11s mesh network**, the **Airtime Link Metric (ALM)** update frequency is not directly controlled by a single, explicitly named parameter in the IEEE 802.11s standard. Instead, it is indirectly influenced by the **beacon interval** and the **neighbor discovery and maintenance mechanisms** used by the Hybrid Wireless Mesh Protocol (HWMP). The ALM is calculated based on link quality metrics (e.g., frame error rate, data rate) gathered during neighbour interactions, primarily through **beacons** and **management frames** like Path Request (PREQ) and Path Reply (PREP).
 
 ### Relevant Parameter: Beacon Interval
-- **Parameter Name**: `dot11BeaconInterval`
+- **Parameter Name**: `beacon_int`
 - **Description**: This parameter, defined in the 802.11 standard, sets the time interval (in Time Units, typically 1 TU = 1024 µs) between beacon transmissions by mesh stations (STAs). Beacons carry information used to update link quality metrics, which feed into the ALM calculation.
 - **Impact on ALM**: A shorter beacon interval increases the frequency of link quality updates, allowing the ALM to reflect changes in the mobile environment more quickly. However, it also increases control overhead.
 - **Typical Values**: Default is 100 TU (~100 ms). For mobile mesh nodes, reducing it to 50–20 TU (~20–50 ms) can improve ALM responsiveness.
-- **Configuration**: In practice, this can be set in the mesh stack (e.g., via `iw` commands in Linux with `ath9k` drivers):
-  ```bash
-  iw dev <interface> set mesh_param dot11BeaconInterval <value>
-  ```
+- **Configuration**: In practice, this can be set in the mesh11sd config with mesh_node_mobility_level :
+
+    ```uci set mesh11sd.setup.mesh_node_mobility_level='N'
+    ```
+
+    Where "N" is 0, 1, 2, 3 or 4. The default is 1.
+
+	A value of "0" is for stationary mesh nodes with leechmode enabled.
+
+	A value of "1" is for slowly moving or overlapping coverage area meshnodes.
+
+	Values 2, 3 and 4 are for nodes with increasing relative velocities at the expense of an increasing management overhead.
 
 ### Additional Influences
-- **PREQ Interval**: The `dot11MeshHWMPpreqMinInterval` parameter controls how often Path Request messages are sent for route discovery. Since PREQ messages can trigger link quality assessments, reducing this interval (e.g., from 2000 TU to 500 TU) indirectly affects ALM updates.
-- **Link Monitoring**: Some implementations allow custom link monitoring intervals (not standardized) to periodically reassess link quality. Check your mesh stack (e.g., Linux mac80211) for proprietary extensions.
-
-### Recommendation for Mobile Mesh
-For the use case of mobile nodes with small relative velocities but staying in range, set `dot11BeaconInterval` to 20–50 TU to balance frequent ALM updates with overhead. Monitor network performance to avoid congestion. If your implementation supports it, also adjust `dot11MeshHWMPpreqMinInterval` to ~500 TU for faster route updates.
-
+- **PREQ Interval**: The `mesh_hwmp_preq_min_interval` parameter controls how often Path Request messages are sent for route discovery. Since PREQ messages can trigger link quality assessments, reducing this interval (e.g., from 2000 TU to 500 TU) indirectly affects ALM updates.
+- **Link Monitoring**: Some implementations allow custom link monitoring intervals (not yet standardized) to periodically reassess link quality. Check your mesh stack (e.g., Linux mac80211) for Link Monitoring extensions.
 
 ![openNDS-Mesh11sd](https://github.com/openNDS/mesh11sd/blob/master/docs/images/avatarsmall.png)
 
