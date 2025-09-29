@@ -151,7 +151,26 @@ restart_mesh() {
 		ip link set "$device" multicast on
 	fi
 
+	check_mesh_mtu
 	mobility_settings parameters
+
+}
+
+check_mesh_mtu() {
+	if [ -f "$tmpdir/active_mesh_ifname" ]; then
+		. $tmpdir/active_mesh_ifname
+
+		vxlan_status=$(ip link show vxlan$tun_id &> /dev/null; echo $?)
+		mesh_mtu=$(ip link show "$active_mesh_ifname" | grep -w "mtu" | awk -F "mtu " '{print $2}' | awk '{printf "%s", $1}')
+
+		if [ -z "$mesh_mtu" ]; then
+			return 0
+		fi
+
+		if [ "$vtun_enable" -eq 1 ] && [ "$vxlan_status" -eq 0 ] && [ "$mesh_mtu" -lt 1600 ]; then
+			ip link set "$active_mesh_ifname" mtu 1600
+		fi
+	fi
 
 }
 
@@ -502,7 +521,7 @@ get_current_setup () {
 	fi
 
 	if [ -z "$mesh_gate_encryption" ]; then
-		mesh_gate_encryption=0
+		mesh_gate_encryption=4
 	fi
 
 	if [ "$mesh_gate_encryption" -eq 4 ] && [ "$installed_wpad" -gt 0 ]; then
@@ -999,13 +1018,14 @@ get_current_setup () {
 	write_to_syslog
 
 	#####
-	mesh_beacon_interval=$(uci get mesh11sd.setup.mesh_beacon_interval 2> /dev/null)
+	use_default_beacon_interval=$(uci get mesh11sd.setup.use_default_beacon_interval 2> /dev/null)
 
-	if [ -z "$mesh_beacon_interval" ]; then
-		mesh_beacon_interval="100"
+	if [ -z "$use_default_beacon_interval" ] || [ "$use_default_beacon_interval" -lt 1 ]; then
+		default_beacon_int_state="disabled"
+	else
+		default_beacon_int_state="enabled"
 	fi
-
-	syslogmessage="option mesh_beacon_interval [ $mesh_beacon_interval ]"
+	syslogmessage="option use_default_beacon_interval is [ $default_beacon_int_state ]"
 	debugtype="info"
 	mute="$mutestate"
 	write_to_syslog
@@ -1876,6 +1896,7 @@ check_dns_server() {
 			if [ "$dns_server_config" -eq 1 ] && [ "$commit_all" -eq 0 ]; then
 				echo "add_list dhcp.@dnsmasq[0].server='$gw_ip'" | uci batch
 				uci set dhcp.@dnsmasq[0].authoritative='0'
+				uci set dhcp.@dnsmasq[0].rebind_protection='0'
 				/sbin/service dnsmasq reload
 			fi
 		fi
@@ -2869,6 +2890,13 @@ mobility_settings() {
 		*) return 0;;
 	esac
 
+	if [ ! -z "$use_default_beacon_interval" ] && [ "$use_default_beacon_interval"  -gt 0 ]; then
+		beacon_int=100
+		debugtype="info"
+		syslogmessage="Default beacon interval requested [ $beacon_int ] Mesh mobility my be suboptimal."
+		write_to_syslog
+	fi
+
 	echo "mesh_node_mobility_level=\"$mesh_node_mobility_level\"; rootmode=\"$rootmode\"; beacon_int=\"$beacon_int\"; dtim_period=\"$dtim_period\"; \
 		rts=\"$rts\"; limit=\"$limit\"; quantum=\"$quantum\"; aql_threshold=\"$aql_threshold\"" > "$tmpdir/mesh_mobility"
 
@@ -2939,7 +2967,7 @@ check_path_changes() {
 			# this is not a mesh interface
 			continue
 		else
-			macrouting=$(iw dev $iface mpath dump 2>/dev/null | awk -F" " 'NR>1 {printf "%s/%s/%s/%s/%s ", $1, $2, $5, $11, $12}')
+			macrouting=$(iw dev $iface mpath dump 2>/dev/null | awk -F" " 'NR>1 {printf "%s/%s/%s/%s/%s/%s/%s ", $1, $2, $5, $11, $12, $4, $10}')
 
 			if [ ! -z "$macrouting" ]; then
 				for peer in $macrouting; do
@@ -2954,10 +2982,22 @@ check_path_changes() {
 
 					metric=$(echo "$peer" | awk -F"/" '{printf "%s", $3}')
 
+					sequence_number=$(echo "$peer" | awk -F"/" '{printf "%s", $6}')
+
+					flags_bitmask=$(echo "$peer" | awk -F"/" '{printf "%s", $7}')
+
+
 					if [ -f "$tmpdir/$peermac_id" ]; then
 						. $tmpdir/$peermac_id
 					else
 						previous_path_change_count=1
+					fi
+
+					if [ "$previous_sequence_number" -lt "$sequence_number" ]; then
+						path_updates=$(($sequence_number - $previous_sequence_number))
+						elapsed_time_millis=$((($(date +%s) - $previous_time) * 1000))
+						hwmp_update_period=$(($elapsed_time_millis/$path_updates))
+
 					fi
 
 					if [ "$path_change_count" -ne "$previous_path_change_count" ]; then
@@ -2967,8 +3007,12 @@ check_path_changes() {
 							is_connected=$(iw dev $iface station dump | grep -q "$peermac"; echo -n $?)
 
 							if [ "$is_connected" -eq 0 ]; then
-								debugtype="info"
+								debugtype="debug"
 								syslogmessage="Station [ $peermac ] is [ $hop_count ] hops away and [ $path_change_count ] path_change(s) for station have been detected"
+								write_to_syslog
+
+								debugtype="info"
+								syslogmessage="Path to [ $peermac ], changed, [ $hop_count ] hop(s) via [ $next_hop ], HWMP Sequence Lifetime [ $hwmp_update_period ] ms"
 								write_to_syslog
 
 								# Reactive path stabilisation:
@@ -3012,8 +3056,11 @@ check_path_changes() {
 							fi
 
 						elif [ "$hop_count" -eq 1 ] && [ "$path_change_count" -gt 1 ]; then
-							debugtype="warn"
+							debugtype="debug"
 							syslogmessage="Station [ $peermac ] is an immediate neighbour, but has had [ $path_change_count ] path_change(s) detected"
+							write_to_syslog
+							debugtype="info"
+							syslogmessage="Path to [ $peermac ], changed, [ $hop_count ] hop(s) via [ $next_hop ], HWMP Sequence Lifetime [ $hwmp_update_period ] ms"
 							write_to_syslog
 
 							if [ "$mesh_path_stabilisation" -eq 1 ]; then
@@ -3028,12 +3075,13 @@ check_path_changes() {
 							fi
 						fi
 
-						echo "previous_path_change_count=$path_change_count" > $tmpdir/$peermac_id
 					else
 						debugtype="info"
-						syslogmessage="Path to station [ $peermac ] is stable and [ $hop_count ] hop(s) away via [ $next_hop ]"
+						syslogmessage="Path to [ $peermac ], stable, [ $hop_count ] hop(s) via [ $next_hop ], HWMP Sequence Lifetime [ $hwmp_update_period ] ms"
 						write_to_syslog
 					fi
+
+					echo "previous_path_change_count=$path_change_count; previous_sequence_number=$sequence_number; previous_time=$(date +%s)" > $tmpdir/$peermac_id
 				done
 			fi
 		fi
@@ -3308,6 +3356,10 @@ create_vxlan_if() {
 	syslogmessage="create_vxlan_if [ vxlan$tun_id ], address [ $vxmac_indexed ], link_local [ $link_local_addr ], group [ ff02::$tun_id ], device [ $device ]"
 	write_to_syslog
 
+	if [ ! -f "$tmpdir/active_mesh_ifname" ]; then
+		. $tmpdir/active_mesh_ifname
+	fi
+
 	ip -6 link add "vxlan$tun_id" \
 		address "$vxmac_indexed" \
 		type vxlan \
@@ -3350,7 +3402,7 @@ check_vtunnel() {
 		return
 	fi
 
-	if [ "$vtun_enable" = 1 ]; then
+	if [ "$vtun_enable" -eq 1 ]; then
 		vxlan_status=$(ip link show vxlan$tun_id &> /dev/null; echo $?)
 
 		if [ "$vxlan_status" -eq 0 ]; then
@@ -3542,6 +3594,19 @@ check_vtunnel() {
 				brctl addif "$device" "$vxifname"
 			done
 
+		fi
+
+		if [ "$vxlan_status" -eq 0 ] && [ -z "$is_portal" ]; then
+
+			dhcpserver=$(uci get dhcp.vtunlan.dhcpv4)
+
+			if [ "$dhcpserver" = "server" ]; then
+				uci set dhcp.vtunlan.dhcpv4='disabled'
+				uci set dhcp.vtunlan.dhcpv6='disabled'
+				uci set dhcp.vtunlan.ra='disabled'
+				uci set dhcp.vtunlan.ignore='1'
+				/sbin/service dnsmasq restart
+			fi
 		fi
 
 		device="br-tun$tun_id"
@@ -4804,7 +4869,7 @@ elif [ "$1" = "status" ]; then
 
 				peernum=0
 				peers=$(iw dev $iface mpath dump 2>/dev/null | grep -c -w $iface)
-				macrouting=$(iw dev $iface mpath dump 2>/dev/null | awk -F" " 'NR>1 {printf "%s/%s/%s/%s/%s ", $1, $2, $5, $11, $12}')
+				macrouting=$(iw dev $iface mpath dump 2>/dev/null | awk -F" " 'NR>1 {printf "%s/%s/%s/%s/%s/%s/%s ", $1, $2, $5, $11, $12, $4, $10}')
 				peer_macs="$devicemac ""$(iw dev $iface mpath dump 2>/dev/null | awk -F" " 'NR>1 {printf "%s ", $1}')"
 
 				echo "      \"this_node\":\"$devicemac\","
@@ -4827,6 +4892,12 @@ elif [ "$1" = "status" ]; then
 
 					metric=$(echo "$peer" | awk -F"/" '{printf "%s", $3}')
 					echo "          \"metric\":\"$metric\""
+
+					sequence_number=$(echo "$peer" | awk -F"/" '{printf "%s", $6}')
+					echo "          \"sequence_number\":\"$sequence_number\","
+
+					flags_bitmask=$(echo "$peer" | awk -F"/" '{printf "%s", $7}')
+					echo "          \"flags_bitmask\":\"$flags_bitmask\","
 
 					if [ "$peers" = "$peernum" ]; then
 						echo "        }"
@@ -6036,24 +6107,24 @@ elif [ "$1" = "daemon" ]; then
 
 					for wiphy in $wiphys; do
 						ucimeshconfig=$(uci get $meshconfig.macaddr 2> /dev/null)
+						convert_to_la "$devicemac"
 
 						if [ -z "$ucimeshconfig" ] && [ "$commit_all" -eq 0 ]; then
 							# No mac address fixup, so add one
 							phyindex=$(echo "$wiphy" | awk -F "phy" '{printf "%s", $2}')
 							phyindex=$(printf "%x" $phyindex)
 							mesh_ifname="$mesh_basename""$phyindex"
-							convert_to_la "$devicemac"
+							index=$(($index + 1))
+							make_indexed_mac "$mac_la" "$index"
+							echo "set wireless.m11s$phyindex.macaddr='$mac_indexed'" | uci batch
 							debugtype="notice"
-							syslogmessage="Setting mac address of mesh interface $mesh_ifname to [ $mac_la ]"
+							syslogmessage="Setting mac address of mesh interface $mesh_ifname to [ $mac_indexed ]"
 							write_to_syslog
-
-							ucibatch="set wireless.m11s$phyindex.macaddr='$mac_la'"
-							echo "$ucibatch" | uci batch
 							changed=1
 						fi
 					done
 
-					# do the same for ap interfaces but index the la mac
+					# do the same for ap interfaces, indexing the la mac
 					aplist=$(uci show wireless | grep "mode='ap'" | awk -F "." '{printf "%s ", $2}')
 
 					convert_to_la "$devicemac"
@@ -6280,6 +6351,7 @@ elif [ "$1" = "daemon" ]; then
 			write_to_syslog
 		fi
 
+		check_mesh_mtu
 		check_mesh_active_led # sets heartbeatflag = 1 when mesh is active
 
 		if [ "$heartbeatflag" -eq 1 ] && [ "$commit_all" -eq 0 ] && [ "$auto_config" -eq 2 ]; then
