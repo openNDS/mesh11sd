@@ -1022,8 +1022,10 @@ get_current_setup () {
 
 	if [ -z "$use_default_beacon_interval" ] || [ "$use_default_beacon_interval" -lt 1 ]; then
 		default_beacon_int_state="disabled"
+		use_default_beacon_interval=0
 	else
 		default_beacon_int_state="enabled"
+		use_default_beacon_interval=1
 	fi
 	syslogmessage="option use_default_beacon_interval is [ $default_beacon_int_state ]"
 	debugtype="info"
@@ -4760,6 +4762,7 @@ elif [ "$1" = "status" ]; then
 
 	if [ -e "$tmpdir/mesh_mobility" ]; then
 		. "$tmpdir/mesh_mobility"
+		echo "    \"use_default_beacon_interval\":\"$use_default_beacon_interval\","
 		echo "    \"mesh_beacon_interval\":\"$beacon_int\","
 		echo "    \"mesh_dtim_period\":\"$dtim_period\","
 		echo "    \"mesh_rts_threshold\":\"$rts\","
@@ -4897,7 +4900,7 @@ elif [ "$1" = "status" ]; then
 					echo "          \"sequence_number\":\"$sequence_number\","
 
 					flags_bitmask=$(echo "$peer" | awk -F"/" '{printf "%s", $7}')
-					echo "          \"flags_bitmask\":\"$flags_bitmask\","
+					echo "          \"hwmp_flags_bitmask\":\"$flags_bitmask\","
 
 					if [ "$peers" = "$peernum" ]; then
 						echo "        }"
