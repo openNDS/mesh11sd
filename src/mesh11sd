@@ -2867,6 +2867,7 @@ mobility_settings() {
 			mesh_hwmp_rann_interval=1953;\
 			mesh_hwmp_preq_min_interval=586;\
 			mesh_hwmp_active_path_timeout=1465;\
+			mesh_max_peer_links=16;\
 			mesh_hwmp_max_preq_retries=4;;
 		2) rts=300; limit=750; quantum=4500; aql_threshold=1500; beacon_int=25; dtim_period=2;\
 			rootmode=2;\
@@ -2874,6 +2875,7 @@ mobility_settings() {
 			mesh_hwmp_rann_interval=1464;\
 			mesh_hwmp_preq_min_interval=488;\
 			mesh_hwmp_active_path_timeout=1074;\
+			mesh_max_peer_links=32;\
 			mesh_hwmp_max_preq_retries=3;;
 		3) rts=200; limit=500; quantum=6000; aql_threshold=1000; beacon_int=20; dtim_period=1;\
 			rootmode=0;\
@@ -2881,6 +2883,7 @@ mobility_settings() {
 			mesh_hwmp_rann_interval=977;\
 			mesh_hwmp_preq_min_interval=390;\
 			mesh_hwmp_active_path_timeout=684;\
+			mesh_max_peer_links=64;\
 			mesh_hwmp_max_preq_retries=2;;
 		4) rts=100; limit=250; quantum=9000; aql_threshold=500; beacon_int=15; dtim_period=1;\
 			rootmode=0;\
@@ -2888,6 +2891,7 @@ mobility_settings() {
 			mesh_hwmp_rann_interval=488;\
 			mesh_hwmp_preq_min_interval=293;\
 			mesh_hwmp_active_path_timeout=293;\
+			mesh_max_peer_links=128;\
 			mesh_hwmp_max_preq_retries=1;;
 		*) return 0;;
 	esac
@@ -2942,6 +2946,7 @@ mobility_settings() {
 		echo "set mesh11sd.mesh_params.mesh_hwmp_rann_interval='$mesh_hwmp_rann_interval'" | uci batch
 		echo "set mesh11sd.mesh_params.mesh_hwmp_preq_min_interval='$mesh_hwmp_preq_min_interval'" | uci batch
 		echo "set mesh11sd.mesh_params.mesh_hwmp_active_path_timeout='$mesh_hwmp_active_path_timeout'" | uci batch
+		echo "set mesh11sd.mesh_params.mesh_max_peer_links='$mesh_max_peer_links'" | uci batch
 		echo "set mesh11sd.mesh_params.mesh_hwmp_max_preq_retries='$mesh_hwmp_max_preq_retries'" | uci batch
 		echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='$rootmode'" | uci batch
 	fi
