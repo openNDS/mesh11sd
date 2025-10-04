@@ -1656,7 +1656,7 @@ HOP_COUNT - Number of hops (intermediate nodes) to the destination.
 
 PATH_CHANGE - Number of times a path has been updated/changed.
 
-## 12. Mesh Path FLAGS Values
+## 12. HWMP - Mesh Path FLAGS Values
 Typical Mesh FLAGS values are `0x5`, `0x15`, and `0x17`. To decode these, we refer to the Linux kernel's 802.11s implementation, specifically the `nl80211` attributes for mesh paths, as defined in the kernel source (e.g., `net/wireless/nl80211.c` and `net/mac80211/mesh.h`).
 
 The FLAGS bitmask is defined by the `NL80211_MPATH_FLAG_*` attributes in the Linux kernel. The relevant flags for mesh paths include:
@@ -1816,15 +1816,17 @@ Mesh11sd is an OpenWrt service daemon and runs continuously in the background. I
 **Example status output:**
 
 ```
+root@meshnode-256e:~# mesh11sd status
 {
   "setup":{
-    "version":"5.0.0",
+    "version":"6.1.0",
     "enabled":"1",
     "procd_status":"running",
     "portal_detect":"1",
-    "portal_detect_threshold":"10",
+    "portal_detect_threshold":"5",
     "portal_channel":"default",
-    "channel_tracking_checkinterval":"30",
+    "portal_use_default_ipv4":"0",
+    "channel_tracking_checkinterval":"120",
     "mesh_mac_forced_forwarding":"1",
     "gateway_proxy_arp":"1",
     "reboot_on_error":"1",
@@ -1837,19 +1839,27 @@ Mesh11sd is an OpenWrt service daemon and runs continuously in the background. I
     "auto_mesh_id":"92d490daf46cfe534c56ddd669297e",
     "mesh_gate_enable":"1",
     "mesh_leechmode_enable":"0",
-    "mesh_gate_encryption":"0",
+    "mesh_node_mobility_level":"1",
+    "use_default_beacon_interval":"0",
+    "mesh_beacon_interval":"50",
+    "mesh_dtim_period":"2",
+    "mesh_rts_threshold":"500",
+    "mesh_queue_limit":"1000",
+    "mesh_ddr_scheduler_quantum":"3000",
+    "mesh_airtime_queue_limit":"2000",
+    "mesh_gate_encryption":"4",
     "mesh_backhaul_led":"auto",
     "vtun_enable":"1",
     "tun_id":"69",
-    "vtun_ip":"192.168.168.1",
+    "vtun_ip":"192.168.138.1",
     "vtun_mask":"255.255.255.0",
-    "vtun_gate_encryption":"0",
+    "vtun_gate_encryption":"4",
     "vtun_base_ssid":"Guest",
-    "vtun_path_cost":"10",
+    "vtun_path_cost":"65525",
     "txpower":"20",
-    "mesh_path_cost":"10",
-    "mesh_path_stabilisation":"1",
-    "reactive_path_stabilisation_threshold":"10",
+    "mesh_path_cost":"65525",
+    "mesh_path_stabilisation":"0",
+    "reactive_path_stabilisation_threshold":"5",
     "checkinterval":"10",
     "interface_timeout":"10",
     "ssid_suffix_enable":"1",
@@ -1858,7 +1868,7 @@ Mesh11sd is an OpenWrt service daemon and runs continuously in the background. I
     "debuglevel":"3"
   },
   "mesh_interfaces":{
-    "m-11s-0":{
+    "m-11s-1":{
       "mesh_retry_timeout":"255",
       "mesh_confirm_timeout":"255",
       "mesh_holding_timeout":"255",
@@ -1870,11 +1880,11 @@ Mesh11sd is an OpenWrt service daemon and runs continuously in the background. I
       "mesh_hwmp_max_preq_retries":"4",
       "mesh_path_refresh_time":"1000",
       "mesh_min_discovery_timeout":"100",
-      "mesh_hwmp_active_path_timeout":"5000",
-      "mesh_hwmp_preq_min_interval":"10",
+      "mesh_hwmp_active_path_timeout":"1465",
+      "mesh_hwmp_preq_min_interval":"586",
       "mesh_hwmp_net_diameter_traversal_time":"50",
-      "mesh_hwmp_rootmode":"4",
-      "mesh_hwmp_rann_interval":"5000",
+      "mesh_hwmp_rootmode":"3",
+      "mesh_hwmp_rann_interval":"1953",
       "mesh_gate_announcements":"1",
       "mesh_fwding":"1",
       "mesh_sync_offset_max_neighor":"50",
@@ -1884,60 +1894,97 @@ Mesh11sd is an OpenWrt service daemon and runs continuously in the background. I
       "mesh_hwmp_confirmation_interval":"2000",
       "mesh_power_mode":"active",
       "mesh_awake_window":"10",
-      "mesh_plink_timeout":"10",
+      "mesh_plink_timeout":"500",
       "mesh_connected_to_gate":"1",
       "mesh_nolearn":"0",
-      "mesh_connected_to_as":"1",
+      "mesh_connected_to_as":"0",
       "mesh_id":"92d490daf46cfe534c56ddd669297e",
-      "device":"radio0",
+      "device":"radio1",
       "channel":"1",
-      "tx_packets":"1545600",
-      "tx_bytes":"1963833436",
-      "rx_packets":"1341979",
-      "rx_bytes":"179684310",
-      "this_node":"94:83:c4:a2:8e:cb",
-      "active_peers":"2",
+      "tx_packets":"43000",
+      "tx_bytes":"6658069",
+      "rx_packets":"146966",
+      "rx_bytes":"16254142",
+      "this_node":"94:83:c4:5c:25:6e",
+      "active_peers":"4",
       "peers":{
-        "96:83:c4:30:12:8d":{
-          "next_hop":"96:83:c4:30:12:8d",
+        "96:83:c4:a3:8e:cb":{
+          "next_hop":"96:83:c4:a3:8e:cb",
           "hop_count":"1",
           "path_change_count":"1",
-          "metric":"50"
+          "metric":"18"
+          "sequence_number":"38770",
+          "hwmp_flags_bitmask":"0x15",
         },
-        "96:83:c4:24:1a:a5":{
-          "next_hop":"96:83:c4:24:1a:a5",
+        "96:83:c4:28:78:8f":{
+          "next_hop":"96:83:c4:a3:8e:cb",
+          "hop_count":"2",
+          "path_change_count":"1686",
+          "metric":"36"
+          "sequence_number":"44344",
+          "hwmp_flags_bitmask":"0x15",
+        },
+        "96:83:c4:5e:2a:52":{
+          "next_hop":"96:83:c4:a3:8e:cb",
+          "hop_count":"2",
+          "path_change_count":"23",
+          "metric":"81"
+          "sequence_number":"21275",
+          "hwmp_flags_bitmask":"0x15",
+        },
+        "96:83:c4:2f:f9:d1":{
+          "next_hop":"96:83:c4:2f:f9:d1",
           "hop_count":"1",
-          "path_change_count":"5",
-          "metric":"1051"
+          "path_change_count":"13",
+          "metric":"225"
+          "sequence_number":"39886",
+          "hwmp_flags_bitmask":"0x15",
         }
       },
-      "active_stations":"3",
+      "active_stations":"6",
       "stations":{
-        "ce:fe:af:7f:3b:e1":{
-          "proxy_node":"94:83:c4:a2:8e:cb"
+        "b4:8c:9d:ea:26:21":{
+          "proxy_node":"94:83:c4:5c:25:6e"
         },
-        "94:83:c4:30:12:8d":{
-          "proxy_node":"96:83:c4:30:12:8d"
+        "00:e0:4c:68:08:a2":{
+          "proxy_node":"96:83:c4:a3:8e:cb"
         },
-        "94:83:c4:24:1a:a5":{
-          "proxy_node":"96:83:c4:24:1a:a5"
+        "94:83:c4:2e:f9:d1":{
+          "proxy_node":"96:83:c4:2f:f9:d1"
+        },
+        "94:83:c4:5c:2a:52":{
+          "proxy_node":"96:83:c4:5e:2a:52"
+        },
+        "94:83:c4:27:78:8f":{
+          "proxy_node":"96:83:c4:28:78:8f"
+        },
+        "94:83:c4:a2:8e:cb":{
+          "proxy_node":"96:83:c4:a3:8e:cb"
         }
       }
     }
   },
   "layer2_connections":{
     "br-lan":{
-      "94:83:c4:24:1a:a5":"m-11s-0",
-      "94:83:c4:30:12:8d":"m-11s-0",
-      "96:83:c4:24:1a:a5":"m-11s-0",
-      "00:e0:4c:68:08:a2":"lan3"
+      "00:e0:4c:68:08:a2":"m-11s-1",
+      "94:83:c4:27:78:8f":"m-11s-1",
+      "94:83:c4:2e:f9:d1":"m-11s-1",
+      "94:83:c4:5c:2a:52":"m-11s-1",
+      "94:83:c4:a2:8e:cb":"m-11s-1",
+      "96:83:c4:28:78:8f":"m-11s-1"
     },
     "br-tun69":{
-      "ce:fe:af:7f:3b:e1":"owe2-0",
-      "96:83:c4:2d:1a:a5":"vxlan69"
+      "96:83:c4:2c:78:8f":"vxlan69",
+      "96:83:c4:2f:78:8f":"vxlan69",
+      "96:83:c4:31:f9:d1":"vxlan69",
+      "96:83:c4:61:2a:52":"vxlan69",
+      "96:83:c4:a7:8e:cb":"vxlan69",
+      "b4:8c:9d:ea:26:21":"vxradio0"
     }
   }
 }
+root@meshnode-256e:~#
+
 
 ```
 
@@ -2100,16 +2147,15 @@ In an **802.11s mesh network**, the **Airtime Link Metric (ALM)** update frequen
 - **Typical Values**: Default is 100 TU (~100 ms). For mobile mesh nodes, reducing it to 50–20 TU (~20–50 ms) can improve ALM responsiveness.
 - **Configuration**: In practice, this can be set in the mesh11sd config with mesh_node_mobility_level :
 
-    ```uci set mesh11sd.setup.mesh_node_mobility_level='N'
-    ```
+    `uci set mesh11sd.setup.mesh_node_mobility_level='N'`
 
     Where "N" is 0, 1, 2, 3 or 4. The default is 1.
 
-	A value of "0" is for stationary mesh nodes with leechmode enabled.
+    A value of "0" is for stationary mesh nodes with leechmode enabled.
 
-	A value of "1" is for slowly moving or overlapping coverage area meshnodes.
+    A value of "1" is for slowly moving or overlapping coverage area meshnodes.
 
-	Values 2, 3 and 4 are for nodes with increasing relative velocities at the expense of an increasing management overhead.
+    Values 2, 3 and 4 are for nodes with increasing relative velocities at the expense of an increasing management overhead.
 
 ### Additional Influences
 - **PREQ Interval**: The `mesh_hwmp_preq_min_interval` parameter controls how often Path Request messages are sent for route discovery. Since PREQ messages can trigger link quality assessments, reducing this interval (e.g., from 2000 TU to 500 TU) indirectly affects ALM updates.
