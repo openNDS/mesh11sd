@@ -1642,7 +1642,7 @@ get_portal_state() {
 	# get the default ipv4 gateway
 	default_gw=$(ip route | grep "default via")
 
-	# select zone (0 to 5 all wan, others may be added later)
+	# select zone (0 to 5 all set to wan for now, may be changed added to later)
 	case $portal_detect in
 		"0") zone="wan";;
 		"1") zone="wan";;
@@ -1993,6 +1993,9 @@ check_portal() {
 					non_portal_mesh_hwmp_rootmode="0"
 				fi
 
+				set_ula_prefix "revert"
+				/sbin/service network reload
+
 				/sbin/service dnsmasq restart
 				/sbin/service odhcpd restart
 
@@ -2032,7 +2035,6 @@ check_portal() {
 
 				# Just become a peer so stop opennds if it is installed and enabled
 				manage_opennds stop
-
 			fi
 
 			check_dns_server
@@ -2403,21 +2405,9 @@ refresh_bridgemac() {
 
 	if [ ! -f "/etc/factory_mac" ]; then
 		echo "factory_mac=\"$devicemac\"" > /etc/factory_mac
-
-###		if [ -z "$configured_mac" ] && [ "$commit_all" -eq 0 ]; then
-###			echo "set network.$auto_mesh_network.macaddr='$devicemac'" | uci batch
-###			uci commit network
-###		fi
-
 	fi
 
 	. /etc/factory_mac
-
-###	if [ "$factory_mac" != "$devicemac" ] && [ "$commit_all" -eq 0 ]; then
-###		devicemac="$factory_mac"
-###		ip link set $device down
-###		ip link set $device up address $devicemac
-###	fi
 
 	echo "device=\"$device\" ; devicemac=\"$devicemac\"" > $tmpdir/devicemac
 }
@@ -3158,35 +3148,6 @@ block_bridge_loops() {
 				rule_status=$(nft add rule bridge mesh11s mesh_PRE meta iifname { "\"$br_iface\"" } ether saddr "\"$devicemac\"" counter drop 2> /dev/null; echo -n $?)
 				rule_status=$(nft add rule bridge mesh11s mesh_PRE meta iifname { "\"$br_iface\"" } counter accept 2> /dev/null; echo -n $?)
 			fi
-
-			#convert_to_la "$devicemac"
-			#is_meshif=$(echo "$iflist" | grep -q "$br_iface"; echo -n $?)
-
-			# If kernel version is 6 or higher we have to ensure there are no duplicate bridge interface mac addresses
-			# But it is safe to fix up mac addresses for kernel < 6 if we do it correctly:
-			#macfixenable=6
-
-			# macfixenable=$kmajor # uncomment to only fixup macs if kernel is version 6 or greater
-
-			#if [ "$macfixenable" -ge 6 ] && [ "$commit_all" -eq 0 ]; then
-			#	if [ $is_meshif -ne 0 ]; then
-					# This is not a mesh interface
-			#		local br_iface_mac=$(ip link | grep -A 1 "$br_iface" | grep "link/ether" | awk 'NR==1 {printf "%s", $2}')
-			#		is_same=$(echo "$br_mac_list" | grep -q "$br_iface_mac"; echo -n $?)
-
-			#		if [ "$is_same" -eq 0 ]; then
-			#			#This is a duplicate mac address so change it
-			#			index=$(($index + 1))
-			#			make_indexed_mac "$mac_la" "$index"
-
-			#			ip link set $br_iface down; ip link set $br_iface up address $mac_indexed
-			#			mac_changed=1
-			#		else
-			#			#Not a duplicate so save it in the list
-			#			br_mac_list="$br_mac_list $br_iface_mac"
-			#		fi
-			#	fi
-			#fi
 		done
 	done
 
@@ -3603,19 +3564,6 @@ check_vtunnel() {
 				echo "add_list network.vtunnel.ports='$wanif'" | uci batch
 			fi
 
-
-###			elif [ "$portal_detect" -eq 4 ] && [ "$commit_all" -eq 0 ]; then
-###				stanza=$(uci show network | grep "name='$device'" | awk -F "." '{printf "%s.%s", $1, $2}')
-
-###				echo "set network.wan.disabled='1'" | uci batch
-###				echo "set network.wan6.disabled='1'" | uci batch
-###				wanif=$(uci get network.wan.device)
-###				echo "del_list $stanza.ports='$wanif'" | uci batch 2>/dev/null
-###				echo "add_list $stanza.ports='$wanif'" | uci batch
-###			else
-###				proto="none"
-###			fi
-
 			wifi down
 			/sbin/service firewall restart
 			/sbin/service network restart
@@ -3747,7 +3695,7 @@ set_ula_prefix() {
 
 	if [ -z "$current_prefix" ] || [ "$current_prefix" != "$ula_prefix" ]; then
 
-		if [ "$1" != "get" ]; then
+		if [ "$1" != "get" ] && [ "$portal_detect" -ne 3 ]; then
 			echo "set network.globals.ula_prefix='$ula_prefix'" | uci batch
 		fi
 	fi
@@ -3833,42 +3781,53 @@ write_node_data() {
 	node_id="$1"
 	data_raw="$2"
 
-	if [ -z "$data_raw" ]; then
-		return 0
-	fi
-
-	maxchunksize=16
-	strindex=0
-	chunkstr=""
-	data_raw_len=$((${#data_raw}))
-	data_checked=""
-	cumulative_transfer=0
 	node_type=$(echo "$node_id" | awk -F ";" '{printf "%s", $1}')
 	node_hostname=$(echo "$node_id" | awk -F ";" '{printf "%s", $2}')
 	node_mac=$(echo "$node_id" | awk -F ";" '{printf "%s", $3}' | awk -F ":" 'NF==6 {printf "%s%s%s%s%s%s%s", $1, $2, $3, $4, $5, $6}')
 	chunkstatus=$(echo "$node_id" | awk -F ";" '{printf "%s", $4}')
 	strindex=$(echo "$node_id" | awk -F ";" '{printf "%s", $5}')
+	maxchunksize=16 # 16 is max size for hextest
+	strindex=0
+	chunkstr=""
+	data_raw_len=$((${#data_raw}))
+	data_checked=""
+	cumulative_transfer=""
+
+	if [ "$data_raw_len" -eq 0 ]; then
+		return 0
+	fi
 
 	while true; do
 		# get a chunk
 		chunk=${data_raw:$strindex:$maxchunksize}
-		chunksize="%.$((${#chunk}))x"
+		hexchunksize=$(printf %x $((${#chunk})))
+		chunksize=$((${#chunk}))
+		mute=0
+		debugtype="debug"
+		syslogmessage="apmond - collected chunked data [ $chunk ], type [$chunkstatus], from [$node_hostname] id [ $node_mac ]"
+		write_to_syslog
+
 
 		if [ -z "$chunk" ]; then
+			mute=0
+			debugtype="debug"
+			syslogmessage="apmond - end of data reached [$node_hostname] id [ $node_mac ], transfer [ "$strindex" ]"
+			write_to_syslog
 			break
 		fi
 
 		hextest=$(printf "%d" "0x$chunk" &>/dev/null; echo -n $?)
 
 		if [ "$hextest" -eq 0 ]; then
+			cumulative_transfer="$cumulative_transfer""$chunk"
 			# Increment the pointer
 			strindex=$((strindex+$maxchunksize))
 
 			continue
 		else
-			status="nack"
+			status="$hextest_invalid_data"
 			retval=127
-			echo -n "$status"
+			printf "$status, code [ $retval ]"
 			return $retval
 		fi
 	done
@@ -3879,12 +3838,12 @@ write_node_data() {
 
 			if [ "$chunkstatus" = "begin" ]; then
 				echo -n "$node_id $data_raw" > "$tmpdir/$node_type/ap/$node_mac"
-				status="* "
+				status="*begin"
 				echo -n "$status"
 				retval=0
 			elif [ "$chunkstatus" = "chunk" ]; then
 				echo -n "$data_raw" >> "$tmpdir/$node_type/ap/$node_mac"
-				status="* "
+				status="*chunk"
 				echo -n "$status"
 				retval=0
 			elif [ "$chunkstatus" = "end" ]; then
@@ -3893,7 +3852,7 @@ write_node_data() {
 				mute=0
 				syslogmessage="apmond data received from node [$node_hostname] id [ $node_mac ]"
 				write_to_syslog
-				status="ack"
+				status="*end"
 				echo -n "$status"
 				retval=0
 			fi
@@ -3914,7 +3873,7 @@ write_node_data() {
 	fi
 
 	if [ "$status" = "nack" ]; then
-		echo -n "ERROR 418: Invalid HTCPCP"
+		echo -n "ERROR 418: Invalid HTCPCP, Code [ $retval ] "
 	fi
 
 	return $retval
@@ -4095,24 +4054,37 @@ send_ap_data() {
 		return "$retcode"
 	fi
 
+	. $tmpdir/devicemac
+	. /etc/factory_mac
+
+	if [ "$portal_detect" -eq 3 ]; then
+		ap_macaddr="$factory_mac"
+	else
+		ap_macaddr="$devicemac"
+	fi
+
+	if [ -z "$ap_macaddr" ]; then
+		retcode=1
+		return "$retcode"
+	fi
+
 	maxchunksize=4096
 	strindex=0
 	chunkstr=""
 	hostname=$(uci get system.@system[0].hostname 2> /dev/null | awk '{printf "%s", $1}')
-	. $tmpdir/devicemac
 	str_data=$(get_ap_data)
-
 	str_to_hex "$str_data"
 	hexencoded=$(cat "$tmpdir/apmond/hexencoded")
 	hexencoded_len=$((${#hexencoded}))
 
 	# If no data, Spider to force NDP update
-	if [ "$hexencoded_len" -le 10 ]; then
+	if [ "$hexencoded_len" -eq 0 ]; then
 		spider="-s"
 	else
 		spider=""
 	fi
 
+	mute=0
 	debugtype="debug"
 	syslogmessage="apmond sending chunked data"
 	write_to_syslog
@@ -4122,26 +4094,55 @@ send_ap_data() {
 	while true; do
 		# get a chunk
 		chunk=${hexencoded:$strindex:$maxchunksize}
-		chunksize="%.$((${#chunk}))x"
+		chunksize=$((${#chunk}))
+		hexchunksize=$(printf %x $((${#chunk})))
 
 		if [ -z "$chunk" ]; then
-			chunkstatus="end"
-			send_status=$(wget $spider -6 -q -O - -U "apmond;$hostname;$devicemac;$chunkstatus;$strindex" --no-check-certificate https://[$portal_ula]/cgi-bin/apmon.cgi)
+
+			if [ "$spider" = "-s" ]; then
+				chunkstatus="spider"
+			fi
+
+			send_status=$(wget $spider -6 -O - -U "apmond;$hostname;$ap_macaddr;$chunkstatus;$strindex" --no-check-certificate https://[$portal_ula]/cgi-bin/apmon.cgi)
 			retcode=$?
-			echo "$send_status" | awk '{printf "%s", $1}'
+			send_status=$(echo "$send_status" | awk '{printf "%s", $1}')
+			mute=0
+			debugtype="debug"
+			syslogmessage="apmond - send_ap_data - chunkstatus [ $chunkstatus ], chunksize [ $chunksize ], return code [ $retcode ]"
+			write_to_syslog
+			echo "send_status=$send_status!"
 			break
+
 		elif [ "$strindex" -eq 0 ]; then
 			chunkstatus="begin"
 		else
 			chunkstatus="chunk"
 		fi
 
-		send_status=$(wget -6 -q -O - -U "apmond;$hostname;$devicemac;$chunkstatus;$strindex" --no-check-certificate https://[$portal_ula]/cgi-bin/apmon.cgi?"$chunk")
+		send_status=$(wget -6 -O - -U "apmond;$hostname;$ap_macaddr;$chunkstatus;$strindex" --no-check-certificate https://[$portal_ula]/cgi-bin/apmon.cgi?"$chunk")
 		retcode=$?
+		send_status=$(echo "$send_status" | awk '{printf "%s", $1}')
+		mute=0
+		debugtype="debug"
+		syslogmessage="apmond - send_ap_data - chunkstatus [ $chunkstatus ], chunksize [ $chunksize ], return code [ $retcode ], send_status [ $send_status ], sent [ $strindex ] "
+		write_to_syslog
+		echo "send_status=$send_status!"
+
+		if [ "$send_status" = "nack" ]; then
+			break
+		fi
 
 		# Increment the pointer
 		strindex=$((strindex+$maxchunksize))
 	done
+
+	mute=0
+	debugtype="debug"
+
+	if [ "$send_status" = "nack" ]; then
+		syslogmessage="apmond return code [ $retcode ], send_status [ $send_status ], data rejected by portal"
+		write_to_syslog
+	fi
 
 	return "$retcode"
 }
@@ -5021,10 +5022,6 @@ elif [ "$1" = "status" ]; then
 				for staroute in $starouting; do
 					sta="${staroute%/*}"
 					inpeermacs=$(echo "$peer_macs" | grep "$sta")
-
-###					if [ "$inpeermacs" = "$peer_macs" ]; then
-###						continue
-###					fi
 
 					stamac=$(echo "$sta" | awk -F"/" '{printf "%s", $1}')
 					proxy_node=$(echo "$sta" | awk -F"/" '{printf "%s", $2}')
@@ -6060,17 +6057,10 @@ elif [ "$1" = "daemon" ]; then
 				bridge_mac="$factory_mac"
 			fi
 
-echo "index=$index! devicemac=$devicemac! factory_mac=$factory_mac! mac_la=$mac_la!" > /tmp/la_index
 			uci set network.cpewan=device
 			uci set network.cpewan.name='br-wan'
 			uci set network.cpewan.type='bridge'
-###			echo "set network.lan.macaddr='$bridge_mac'" | uci batch
-###			echo "set network.cpewan.macaddr='$mac_la'" | uci batch
 			echo "add_list network.cpewan.ports='$wanif'" | uci batch
-
-###			if [ "$wanif" != "$wan6if" ]; then
-###				echo "add_list network.cpewan.ports='$wan6if'" | uci batch
-###			fi
 
 			uci set network.wan.device='br-wan'
 			uci set network.wan6.device='br-wan'
@@ -6196,7 +6186,6 @@ echo "index=$index! devicemac=$devicemac! factory_mac=$factory_mac! mac_la=$mac_
 			ip link delete dev "$br_tun"
 		fi
 
-		set_ula_prefix "set"
 		/sbin/service network restart
 		/sbin/service dnsmasq restart
 		/sbin/service firewall restart
