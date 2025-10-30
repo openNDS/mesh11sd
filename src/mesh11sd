@@ -1057,6 +1057,8 @@ get_current_setup () {
 	write_to_syslog
 
 	#####
+	# CPE Mode
+	#
 	# Possible modes are prefix_delegation, relay and nat66
 	#
 	# Prefix Delegation works with all client devices, including Android,
@@ -1075,6 +1077,20 @@ get_current_setup () {
 	fi
 
 	syslogmessage="option cpe_mode [ $cpe_mode ]"
+	debugtype="info"
+	mute="$mutestate"
+	write_to_syslog
+
+	#####
+	apmon_verbose_debug_enable=$(uci get mesh11sd.setup.apmon_debug 2> /dev/null)
+
+	if [ -z "$apmon_verbose_debug_enable" ]; then
+		apmon_verbose_debug_enable="0"
+	else
+		apmon_verbose_debug_enable="1"
+	fi
+
+	syslogmessage="option apmon_verbose_debug_enable [ $apmon_verbose_debug_enable ]"
 	debugtype="info"
 	mute="$mutestate"
 	write_to_syslog
@@ -3133,10 +3149,6 @@ block_bridge_loops() {
 		local br_iface
 		local br_ifaces=$(brctl showstp "$device" | grep -B 1 -w "port id" | grep "(" | awk '{printf "%s ", $1}')
 
-		if [ ! -e "$tmpdir/brmac_la" ]; then
-			touch "$tmpdir/brmac_la"
-		fi
-
 		get_mesh_iflist
 
 		br_mac_list=""
@@ -3776,7 +3788,7 @@ is_hex() {
 		return 1
 	fi
 }
-
+wait_for_interface
 write_node_data() {
 	node_id="$1"
 	data_raw="$2"
@@ -3802,16 +3814,19 @@ write_node_data() {
 		chunk=${data_raw:$strindex:$maxchunksize}
 		hexchunksize=$(printf %x $((${#chunk})))
 		chunksize=$((${#chunk}))
-		mute=0
-		debugtype="debug"
-		syslogmessage="apmond - collected chunked data [ $chunk ], type [$chunkstatus], from [$node_hostname] id [ $node_mac ]"
-		write_to_syslog
+
+		if [ "$apmon_verbose_debug_enable" -eq 1 ]; then
+			mute=0
+			debugtype="debug"
+			syslogmessage="apmond - collected chunked data [ $chunk ], type [$chunkstatus], from [$node_hostname] id [ $node_mac ]"
+			write_to_syslog
+		fi
 
 
 		if [ -z "$chunk" ]; then
 			mute=0
 			debugtype="debug"
-			syslogmessage="apmond - end of data reached [$node_hostname] id [ $node_mac ], transfer [ "$strindex" ]"
+			syslogmessage="apmond - end of data reached [$node_hostname] id [ $node_mac ], [ "$strindex" ] bytes received"
 			write_to_syslog
 			break
 		fi
@@ -6194,10 +6209,6 @@ elif [ "$1" = "daemon" ]; then
 		probe_interface_mac
 	else
 		restore_luci_cgi
-	fi
-
-	if [ -e "$tmpdir/brmac_la" ]; then
-		rm "$tmpdir/brmac_la"
 	fi
 
 	if [ -f "$tmpdir/mesh_rssi_threshold" ]; then
