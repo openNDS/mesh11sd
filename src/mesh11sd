@@ -12,6 +12,7 @@
 #
 # mesh11sd daemon
 #
+
 last_version="6.0.0~be7a"
 version="6.1.0~be7a"
 fixup1=0
@@ -204,18 +205,6 @@ get_current_setup () {
 	write_to_syslog
 
 	#####
-	commit_all=$(uci get mesh11sd.setup.commit_all 2> /dev/null)
-
-	if [ -z "$commit_all" ]; then
-		commit_all=0
-	fi
-
-	syslogmessage="option commit_all [ $commit_all ]"
-	debugtype="info"
-	mute="$mutestate"
-	write_to_syslog
-
-	#####
 	checkinterval=$(uci get mesh11sd.setup.checkinterval 2> /dev/null)
 
 	if [ -z "$checkinterval" ] || [ "$checkinterval" -lt 10 ]; then
@@ -223,6 +212,18 @@ get_current_setup () {
 	fi
 
 	syslogmessage="option checkinterval [ $checkinterval ]"
+	debugtype="info"
+	mute="$mutestate"
+	write_to_syslog
+
+	#####
+	commit_all=$(uci get mesh11sd.setup.commit_all 2> /dev/null)
+
+	if [ -z "$commit_all" ]; then
+		commit_all=0
+	fi
+
+	syslogmessage="option commit_all [ $commit_all ]"
 	debugtype="info"
 	mute="$mutestate"
 	write_to_syslog
@@ -599,19 +600,10 @@ get_current_setup () {
 			vtun_enable=0
 		fi
 
-		if [ "$portal_detect" -eq 3 ]; then
-			uci set mesh11sd.setup.vtun_enable='0'
-			vtun_enable=0
-			syslogmessage="option vtun_enable is disabled because cpe mode is enabled"
-			debugtype="info"
-			mute="$mutestate"
-			write_to_syslog
-		else
-			syslogmessage="option vtun_enable [ $vtun_enable ]"
-			debugtype="info"
-			mute="$mutestate"
-			write_to_syslog
-		fi
+		syslogmessage="option vtun_enable [ $vtun_enable ]"
+		debugtype="info"
+		mute="$mutestate"
+		write_to_syslog
 
 		#####
 		tun_id=$(uci get mesh11sd.setup.tun_id 2> /dev/null)
@@ -767,6 +759,16 @@ get_current_setup () {
 	#####
 	mesh_gate_enable=$(uci get mesh11sd.setup.mesh_gate_enable 2> /dev/null)
 
+	# Determines whether this node will be a gate
+	#
+	# Default: 1 (enable all mesh gate access points)
+	#
+	# Possible values:
+	# 0 Disable all mesh gate access points.
+	# 1 Enable all mesh gate access points.
+	# 2 Enable ONLY access points on radios NOT shared with a mesh interface.
+	#
+
 	if [ -z "$mesh_gate_enable" ]; then
 		mesh_gate_enable="1"
 	fi
@@ -785,6 +787,8 @@ get_current_setup () {
 	#####
 	# mesh_leechmode_enable
 	# mesh_gate_only deprecated as a config option - use mesh_leechmode_enable instead as the config option
+	#
+	# Valid only with mesh_node_mobility_level = 0 and not on a portal node.
 	mesh_gate_only=$(uci get mesh11sd.setup.mesh_leechmode_enable 2> /dev/null)
 
 	if [ -z "$mesh_gate_only" ]; then
@@ -966,6 +970,21 @@ get_current_setup () {
 	#####
 	mesh_backhaul_led=$(uci get mesh11sd.setup.mesh_backhaul_led 2> /dev/null)
 
+	# Enables the mesh backhaul heartbeat led indicator
+	#	The led indicator will be on when the mesh interface is up, changing to the Linux heartbeat signal when peer nodes are connected
+	# Default: auto
+	#	By default, the power or system led will be used if present.
+	#
+	#	Other leds can be found listed in /sys/class/leds with the format "color:function"
+	# Disable this option by setting its value to "none"
+	#
+	# Example, enable the "blue:run" led:
+	#option mesh_backhaul_led 'blue:run'
+	#
+	# Example, disable the mesh backhaul led:
+	#option mesh_backhaul_led 'none'
+
+
 	if [ -z "$mesh_backhaul_led" ]; then
 		mesh_backhaul_led="auto"
 	fi
@@ -1082,7 +1101,7 @@ get_current_setup () {
 	write_to_syslog
 
 	#####
-	apmon_verbose_debug_enable=$(uci get mesh11sd.setup.apmon_debug 2> /dev/null)
+	apmon_verbose_debug_enable=$(uci get mesh11sd.setup.apmon_verbose_debug_enable 2> /dev/null)
 
 	if [ -z "$apmon_verbose_debug_enable" ]; then
 		apmon_verbose_debug_enable="0"
@@ -1091,6 +1110,28 @@ get_current_setup () {
 	fi
 
 	syslogmessage="option apmon_verbose_debug_enable [ $apmon_verbose_debug_enable ]"
+	debugtype="info"
+	mute="$mutestate"
+	write_to_syslog
+
+	#####
+	odhcpd_log_level=$(uci get mesh11sd.setup.odhcpd_log_level 2> /dev/null)
+	# Can be set from 0 to 7
+	# 0 - Emergency
+	# 1 - Alert
+	# 2 - Critical
+	# 3 - Error
+	# 4 - Warning
+	# 5 - Notice
+	# 6 - Info
+	# 7 - Debug
+	#
+
+	if [ -z "$odhcpd_log_level" ]; then
+		odhcpd_log_level="3"
+	fi
+
+	syslogmessage="option odhcpd_log_level [ $odhcpd_log_level ]"
 	debugtype="info"
 	mute="$mutestate"
 	write_to_syslog
@@ -1262,7 +1303,7 @@ get_mesh_path_cost() {
 		mesh_path_cost="65525"
 	fi
 
-	syslogmessage="option mesh_path_cost [ mute=$mute! $mesh_path_cost ]"
+	syslogmessage="option mesh_path_cost [ $mesh_path_cost ]"
 	debugtype="info"
 	write_to_syslog
 	mute="$mutestate"
@@ -1669,7 +1710,7 @@ get_portal_state() {
 	esac
 
 
-	if [ "$portal_detect" -eq 1 ] || [ "$portal_detect" -eq 3 ] || [ "$portal_detect" -eq 5 ]; then
+	if [ "$portal_detect" -eq 1 ] || [ "$portal_detect" -eq 3 ]; then
 		# - check if portal
 		local retries=2
 
@@ -1700,6 +1741,10 @@ get_portal_state() {
 	elif [ "$portal_detect" -eq 3 ]; then
 		# 3 - force CPE peer mode
 		uci set dhcp.@dnsmasq[0].authoritative='0'
+
+	elif [ "$portal_detect" -eq 5 ]; then
+		# 5 - force peer mode
+		is_portal=""
 
 	elif [ "$portal_detect" -eq 0 ] || [ "$portal_detect" -eq 4 ]; then
 		# 0 - force portal mode, 4 - force portal bridge mode
@@ -1861,7 +1906,11 @@ get_portal_state() {
 		fi
 
 	else
-		detected_state="portal"
+		if [ "$portal_detect" =-eq 5 ]; then
+			detected_state="peer"
+		else
+			detected_state="portal"
+		fi
 	fi
 
 	if [ -z "$is_portal" ] && [ "$portal_detect" -eq 3 ]; then
@@ -2451,7 +2500,7 @@ auto_config() {
 
 	if [ "$autoconfig" -eq 0 ]; then
 		# Set the odhcpd loglevel
-		uci set dhcp.odhcpd.loglevel='7'
+		echo "set dhcp.odhcpd.loglevel='$odhcpd_log_level'" | uci batch
 
 		# mute dnsmasq logging
 		uci set dhcp.@dnsmasq[0].logfacility='-'
@@ -2927,7 +2976,7 @@ mobility_settings() {
 	if [ ! -z "$use_default_beacon_interval" ] && [ "$use_default_beacon_interval"  -gt 0 ]; then
 		beacon_int=100
 		debugtype="info"
-		syslogmessage="Default beacon interval requested [ $beacon_int ] Mesh mobility my be suboptimal."
+		syslogmessage="Default beacon interval requested [ $beacon_int ] Mesh mobility may be suboptimal."
 		write_to_syslog
 	fi
 
@@ -3540,7 +3589,8 @@ check_vtunnel() {
 			echo "set network.vtunlan.proto='$proto'" | uci batch
 			uci set network.vtunlan.ip6assign='64'
 
-			if [ "$portal_detect" -eq 4 ]; then
+###			if [ "$portal_detect" -eq 4 ]; then
+			if [ "$portal_detect" -eq 10 ]; then ### dummy portal detect
 				stanza=$(uci show network | grep "name='$device'" | awk -F "." '{printf "%s.%s", $1, $2}')
 				lanports=$(uci get "$stanza.ports")
 
@@ -3569,6 +3619,7 @@ check_vtunnel() {
 			fi
 
 			if [ "$portal_detect" -eq 5 ]; then
+				# Disable wan and add the port that was wan to the vtunnel bridge
 				echo "set network.wan.disabled='1'" | uci batch
 				echo "set network.wan6.disabled='1'" | uci batch
 				wanif=$(uci get network.wan.device)
@@ -3788,7 +3839,7 @@ is_hex() {
 		return 1
 	fi
 }
-wait_for_interface
+
 write_node_data() {
 	node_id="$1"
 	data_raw="$2"
@@ -4583,6 +4634,15 @@ if [ -z "$1" ] || [ "$1" = "-h" ] || [ $1 = "--help" ] || [ $1 = "help" ]; then
   Usage: mesh11sd mesh_leechmode [enable/disable]
   If enabled, the mesh node connects to the mesh backhaul but does not forward packets or contribute to the mesh.
 
+  Option: mesh_node_mobility_level
+  Usage: mesh11sd mesh_node_mobility_level [level]
+    Sets the mesh node mobility level
+    Supported levels are 0, 1, 2, 3 and 4
+    Level 0 - not recommended for normal use - node must be stationary and carefully positioned
+    Level 1 - Enables mesh_hwmp_rts for on air collision avoidance, enables transmit queue and aql_threshold to minimise latency, enables rapid path convergence
+      Level 1 supports inter node relative velocities up to 1.5 metres per second
+    Levels 2 to 4 support progressively higher relative inter node velocities at the expense of a larger and larger backhaul overhead
+
   Option: commit_changes
   Usage: mesh11sd commit_changes commit
     Commits changes to mesh_leechmode, txpower and rssi_threshold to non volatile configuration (make permanent)
@@ -4654,6 +4714,19 @@ if [ -z "$1" ] || [ "$1" = "-h" ] || [ $1 = "--help" ] || [ $1 = "help" ]; then
     Shows the regulatory domain and country code if the optional country code is not supplied.
     Sets the regulatory domain for the country code if it is supplied.
     A restart or reboot is required for changes to take effect.
+
+  Option: write_to_syslog
+  Usage: mesh11sd write_to_syslog [string to log] [debuglevel (debug, info, warn, notice, err or emerg)]
+    Writes to the syslog at the specified debuglevel
+
+  Option: write_log
+  Usage: mesh11sd write_log [string to log] [debuglevel (debug, info, warn, notice, err or emerg)]
+    Writes to the mesh11sd log at the specified debuglevel
+
+  Option: read_log
+  Usage: mesh11sd read_log [ -f ]
+    Displays the mesh11sd log
+      If -f is specified, the existing log will be deleted and all subequent logs will be followed on the display
 
   For further documentation, see: https://github.com/openNDS/mesh11sd#readme
 
@@ -4865,10 +4938,6 @@ elif [ "$1" = "status" ]; then
 		echo "    \"use_default_beacon_interval\":\"$use_default_beacon_interval\","
 		echo "    \"mesh_beacon_interval\":\"$beacon_int\","
 		echo "    \"mesh_dtim_period\":\"$dtim_period\","
-		echo "    \"mesh_rts_threshold\":\"$rts\","
-		echo "    \"mesh_queue_limit\":\"$limit\","
-		echo "    \"mesh_ddr_scheduler_quantum\":\"$quantum\","
-		echo "    \"mesh_airtime_queue_limit\":\"$aql_threshold\","
 	fi
 
 	echo "    \"mesh_gate_encryption\":\"$mesh_gate_encryption\","
@@ -4921,6 +4990,13 @@ elif [ "$1" = "status" ]; then
 	echo "    \"ssid_suffix_enable\":\"$ssid_suffix_enable\","
 	echo "    \"apmond_enable\":\"$apmond_enable\","
 	echo "    \"apmond_cgi_dir\":\"$apmond_cgi_dir\","
+	echo "    \"apmon_verbose_debug_enable\":\"$apmon_verbose_debug_enable\","
+	echo "    \"odhcpd_log_level\":\"$odhcpd_log_level\","
+
+	if [ "$portal_detect" -eq 3 ]; then
+		echo "    \"cpe_mode\":\"$cpe_mode\","
+	fi
+
 	echo "    \"debuglevel\":\"$debuglevel\""
 	echo "  },"
 	echo "  \"mesh_interfaces\":{"
@@ -4955,6 +5031,16 @@ elif [ "$1" = "status" ]; then
 				meshid=$(uci get $meshconfig.mesh_id 2> /dev/null)
 
 				echo "      \"mesh_id\":\"$meshid\","
+
+				if [ -e "$tmpdir/mesh_mobility" ]; then
+					. "$tmpdir/mesh_mobility"
+					echo "      \"mesh_rts_threshold\":\"$rts\","
+					echo "      \"mesh_queue_limit\":\"$limit\","
+					echo "      \"mesh_ddr_scheduler_quantum\":\"$quantum\","
+					echo "      \"mesh_airtime_queue_limit\":\"$aql_threshold\","
+				fi
+
+
 				echo "      \"device\":\"$device\","
 				echo "      \"channel\":\"$channel\","
 
@@ -6034,7 +6120,7 @@ elif [ "$1" = "daemon" ]; then
 		if [ "$portal_use_default_ipv4" -eq 0 ]; then
 
 			if [ "$portal_detect" -eq 3 ]; then
-				# Set the cpe gateway ipv4 address based in mac address
+				# Set the cpe gateway ipv4 address based on mac address
 				. $tmpdir/devicemac
 
 				seedvalue="$devicemac"
@@ -6052,7 +6138,6 @@ elif [ "$1" = "daemon" ]; then
 			echo "set network.wan6.reqprefix='auto'" | uci batch
 			echo "set network.wan6.reqaddress='try'" | uci batch
 		fi
-
 
 		# Before restarting the network, check if CPE mode is requested
 		if [ "$portal_detect" -eq 3 ] && [ "$commit_all" -eq 0 ]; then
@@ -6195,7 +6280,7 @@ elif [ "$1" = "daemon" ]; then
 			fi
 		fi
 
-		br_tun=$(brctl show | grep br-tun | awk '{printf "%s", $1}')
+		br_tun=$(brctl show | grep "br-tun" | awk '{printf "%s", $1}')
 
 		if [ ! -z "$br_tun" ]; then
 			ip link delete dev "$br_tun"
@@ -6397,7 +6482,7 @@ elif [ "$1" = "daemon" ]; then
 
 			if [ "$auto_config" -ne 0 ] || [ -e "$tmpdir/auto_config_test" ]; then
 
-				if [ "$portal_detect" -ge 1 ] && [ "$portal_detect" -lt 4 ]; then
+				if [ "$portal_detect" -ne 0 ] || [ "$portal_detect" -ne 4 ]; then
 					check_portal
 
 				elif [ "$portal_detect" -eq 0 ] || [ "$portal_detect" -eq 4 ] && [ "$commit_all" -eq 0 ]; then
