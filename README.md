@@ -657,21 +657,21 @@ config mesh11sd 'setup'
 	# 0 Disabled
 	# 1 Enabled
 	# 2 Same as 1 but executes `commit_all` and enables LuCi
-	# 	Warning, this will lock the auto config to the initial autoconfigured mode.
-	#	If you want a locked portal, ensure you have the upstream Internet connection active
-	#	BEFORE first boot after reflash or install.
-	# 	For example if the meshnode initially configures as a portal,
-	#	portal detect will be set to 0 permanently.
+	#   Warning, this will lock the auto config to the initial autoconfigured mode.
+	#   If you want a locked portal, ensure you have the upstream Internet connection active
+	#   BEFORE first boot after reflash or install.
+	#   For example if the meshnode initially configures as a portal,
+	#   portal detect will be set to 0 permanently.
 	#
-	#	The effect of option 2 can be reversed by issuing the command `mesh11sd revert_all revert`
+	#   The effect of option 2 can be reversed by issuing the command `mesh11sd revert_all revert`
 	#
 	# When set to 0, the mesh11sd daemon will check for an existing mesh configuration.
 	#
 	# Warning: If an existing mesh configuration is found, it will be honoured even if it is incorrect.
-	#	Manually configuring a mesh can soft brick the router if incorrectly done.
+	#   Manually configuring a mesh can soft brick the router if incorrectly done.
 	#
 	# Auto config can be tested using the command line function 'mesh11sd auto_config test'
-	#	See the documentation for further information (Hint: try 'mesh11sd --help')
+	#   See the documentation for further information (Hint: try 'mesh11sd --help')
 	#
 	#option auto_config '1'
 
@@ -722,7 +722,7 @@ config mesh11sd 'setup'
 	# Set a valid country code for all radios
 	# Defaults to DFS-ETSI if not explicitly set in wireless config
 	#
-	# If set here, will overide any setting in wireless config
+	# If set here, will override any setting in wireless config
 	#
 	# Example set to country code US:
 	#option country 'US'
@@ -733,7 +733,7 @@ config mesh11sd 'setup'
 	# Defaults to a sha256 key to be automatically used on all members of this mesh when auto_config is enabled
 	# Generates a secure sha256 key from the string value set in this option.
 	#
-	# If set, it must also be set to the same value on every mesh node
+	# If set here, it must also be set to the same value on every other node in this mesh
 	#
 	#option auto_mesh_key 'MySecretKey'
 
@@ -778,7 +778,7 @@ config mesh11sd 'setup'
 	# mesh_gate_encryption (optional)
 	# Determines whether this node's gate (Access Point) will be a encrypted
 	#
-	# Default: 0 (disabled)
+	# Default: 4 (Opportunistic Wireless Encryption - owe)
 	# Set to 0 (none/owe-transition), 1 (sae, aka wpa3), 2 (sae-mixed, aka wpa2/wpa3), 3 (psk2, aka wpa2)
 	# or 4 (Opportunistic Wireless Encryption - owe)
 	#
@@ -835,7 +835,7 @@ config mesh11sd 'setup'
 	# Sets the vxtunnel ipv4 gateway address to be used in the vxtunnel.
 	# Becomes active if the node becomes a portal (portal_detect 0 or 1).
 	#
-	# Default: 192.168.168.1
+	# Default: auto generated subnet
 	#
 	#option vtun_ip '10.69.1.1'
 
@@ -857,9 +857,10 @@ config mesh11sd 'setup'
 	# Note: All vtun options require the ip-full and vxlan packages to be installed, otherwise the options will be ignored
 	#
 	# Sets the vxtunnel gate encryption to be used on node gates (access points) connected to the vxtunnel.
-	#	Valid values are: 0 (none/owe_transition), 1 (sae, aka wpa3), 2 (sae-mixed, aka wpa2/wpa3), 3 (psk2, aka wpa2) or 4 (owe)"
 	#
-	# Default: 0 (none/owe transition)
+	# Default: 4 (Opportunistic Wireless Encryption - owe)
+	# Set to 0 (none/owe-transition), 1 (sae, aka wpa3), 2 (sae-mixed, aka wpa2/wpa3), 3 (psk2, aka wpa2)
+	# or 4 (Opportunistic Wireless Encryption - owe)
 	#
 	#option vtun_gate_encryption '3'
 
@@ -906,14 +907,22 @@ config mesh11sd 'setup'
 	# mesh_gate_enable (optional)
 	# Determines whether this node will be a gate
 	#
-	# Default: 1 (enabled)
-	# Set to 0 to disable (turns off the node's gate interface ie its access point and SSID)
+	# Default: 1 (enable all mesh gate access points)
 	#
+	# Possible values:
+	# 0 Disable all mesh gate access points.
+	# 1 Enable all mesh gate access points.
+	# 2 Enable ONLY access points on radios NOT shared with a mesh interface.
+	#
+	# Example:
 	#option mesh_gate_enable '0'
 
 	###########################################################################################
 	# mesh_leechmode_enable (optional)
 	# Determines whether this node will be a gate only leech node
+	#
+	# Valid only with mesh_node_mobility_level = 0 and not on a portal node.
+	#
 	# A gate only leech node acts as an access point with a mesh backhaul connection, but does not contribute to the mesh
 	#
 	# This is useful when a node is well within the coverage of 2 or more peer nodes,
@@ -954,17 +963,19 @@ config mesh11sd 'setup'
 	# mesh_path_stabilisation (optional)
 	#
 	# This enables mesh path stabilisation, preventing multi hop path changes due to multipath signal strength jitter
+	# Usually not required when mesh_node_mobility_level is set to greater than 0
 	#
-	# Default: 1 (enabled)
+	# Default: 0 (disabled)
 	#
-	# To disable, set to zero:
-	#option mesh_path_stabilisation '0'
+	# To enable, set to 1:
+	#option mesh_path_stabilisation '1'
 
 	###########################################################################################
 	# reactive_path_stabilisation_threshold (optional)
 	#
 	# If an unstable path to an immediate neighbour node is detected, a counter is incremented each checkinterval while the unstable condition continues.
 	# 	Mesh path stabilisation is activated once the counter exceeds the threshold.
+	# Usually not required when mesh_node_mobility_level is set to greater than 0
 	#
 	# Default: 10 checkinterval periods.
 	#
@@ -1015,7 +1026,7 @@ config mesh11sd 'setup'
 	# apmond_enable (optional)
 	#
 	# Enables the access point monitoring daemon
-	# 	Assumes the uhttpd and px5g-mbedtls packages are installed.
+	# 	Assumes the uhttpd and px5g-mbedtls (or luci-ssl) packages are installed.
 	#	But other portal based https web servers can be used.
 	# Default: 1 (enabled)
 	#
@@ -1061,7 +1072,128 @@ config mesh11sd 'setup'
 	# Synchronizes nft rulesets of opennds and mesh11sd
 	# Disabling may cause crash loops because the opennds gatewayinterface may not be up as mesh11sd starts.
 	#
+	# Example:
 	#option manage_opennds_startup '0'
+
+	###########################################################################################
+	# log_mountpoint (optional)
+	#
+	# Specifies the mountpoint of storage to be used for the mesh11sd logging system
+	# Default: /tmp
+	# A subdirectory "mesh11sd" will be created in the mountpoint where all logs and temporary files will be stored
+	# Ensure this mountpoint is NOT in system flash memory as it will lead to premature flash failure
+	# Typically a removable (and replaceable) usb drive is ideal.
+	#
+	# Example:
+	#option log_mountpoint '/logdrive'
+
+	###########################################################################################
+	# max_log_entries (optional)
+	#
+	# Specifies the number of rolling log entries to be kept by the logging system (displayed by the read_log cli command)
+	# Default: 500
+	# Log entries are stored in the mesh11sd directory on the log_mountpoint
+	#
+	# Example:
+	#option max_log_entries '1000'
+
+	###########################################################################################
+	# use_default_beacon_interval (optional)
+	#
+	# When set, forces the use of the default beacon interval on the mesh phy
+	# For most drivers, the beacon interval defaults to 100ms
+	# mesh11sd dynamically sets the beacon interval according to the mesh_node_mobility_level setting
+	# Some wireless drivers fail if the beacon interval is changed (eg Qualcomm Atheros IPQ6018)
+	# Default: 0 (disabled)
+	# Set to 1 to force
+	#
+	# Example:
+	#option use_default_beacon_interval '1'
+
+	###########################################################################################
+	# mesh_dtim_period (optional)
+	#
+	# Sets the mesh DTIM period
+	# DTIM - Discovery Timeout, Total timeout (in ms) for path discovery attempts.
+	# A discovery beacon is sent every mesh_dtim_period beacons.
+	# A larger value will slow the discovery process but reduce the overhead.
+	# mesh11sd dynamically sets the mesh_dtim_period according to the mesh_node_mobility_level setting
+	# Some wireless drivers ignore this option and continue to use the default (eg Qualcomm Atheros IPQ6018)
+	# Default: 2
+	#
+	# Example:
+	#option mesh_dtim_period '3'
+
+	###########################################################################################
+	# mesh_node_mobility_level (optional)
+	#
+	# Sets the mesh node mobility level
+	# Supported levels are 0, 1, 2, 3 and 4
+	# Level 0 - not recommended for normal use - node must be stationary and carefully positioned
+	# Level 1 - Enables mesh_hwmp_rts for on air collision avoidance, enables transmit queue and aql_threshold to minimise latency, enables rapid path convergence
+	#	Level 1 supports inter node relative velocities up to 1.5 metres per second
+	#
+	# Levels 2 to 4 support progressively higher relative inter node velocities at the expense of a larger and larger backhaul overhead
+	#
+	# Default: 1
+	#
+	# Example:
+	#option mesh_node_mobility_level '2'
+
+	###########################################################################################
+	# cpe_mode (optional)
+	#
+	# Sets the cpe ipv6 mode
+	# Applicable only when portal_detect is set to 3
+	#
+	# Possible modes are prefix_delegation, relay and nat66
+	#
+	# Prefix Delegation works with all client devices, including Android,
+	#	but the ISP needs to provide a prefix large enough to delegate a /64 subnet to every cpe mesh node.
+	#	Exhausting available delegations is a danger.
+	#
+	# Relay does not require any prefix delegation, but some versions of Android devices will detect the relay and turn off the device's interface within ~60 seconds - because - Google.
+	#
+	# NAT66 will work with all types of client devices, including Android, so is used as the default.
+	# Default: nat66
+	#
+	#
+	# Example:
+	#option cpe_mode 'prefix_delegation'
+
+	###########################################################################################
+	# apmon_verbose_debug_enable (optional)
+	#
+	# Enables apmon verbose debug logging.
+	# Logs can be read using the mesh11sd read_log command
+
+	# Default 0 (disabled)
+	#
+	# Example: Enable verbose logging
+	#option apmon_verbose_debug_enable '1'
+
+	###########################################################################################
+	# odhcpd_log_level (optional)
+	#
+	# Sets the odhcpd log level
+	# Used for monitoring ipv6 dhcp/ra
+	#
+	# Can be set from 0 to 7
+	# 0 - Emergency
+	# 1 - Alert
+	# 2 - Critical
+	# 3 - Error
+	# 4 - Warning
+	# 5 - Notice
+	# 6 - Info
+	# 7 - Debug
+	#
+	# Logs can be read using the logread command
+
+	# Default 3 (Error)
+	#
+	# Example: Set log level to debug
+	#option odhcpd_log_level '7'
 
 config mesh11sd 'mesh_params'
 	# A minimum set of parameters is automatically set for initial startup and do not have to be configured here
