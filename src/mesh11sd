@@ -271,6 +271,10 @@ get_current_setup () {
 		portal_detect_threshold=5
 	fi
 
+	if [ "$portal_detect" -eq 0 ] || [ "$portal_detect" -eq 4 ]; then
+		portal_detect_threshold=0
+	fi
+
 	syslogmessage="option portal_detect_threshold [ $portal_detect_threshold ]"
 	debugtype="info"
 	mute="$mutestate"
@@ -1829,8 +1833,9 @@ get_portal_state() {
 		write_to_syslog
 
 
-		if [ "$pingresult" -eq 1 ] && [ "$portal_detect" -ne 4 ]; then
+		if [ "$pingresult" -eq 1 ]; then
 			ip4pingfailcount=$(($ip4pingfailcount + 1))
+
 			check_channel_now=1
 			check_channel
 			check_channel_now=0
@@ -1986,7 +1991,7 @@ dhcp4_renew() {
 }
 
 check_dns_server() {
-	default_gw=$(ip route | grep "default via")
+	default_gw=$(ip route | grep "default via" | grep -w "dev $br_$auto_mesh_network")
 
 	if [ ! -z "$default_gw" ]; then
 		gw_ip=$(echo "$default_gw" | awk -F" " '{printf "%s", $3}')
@@ -2375,6 +2380,9 @@ wait_for_mesh() {
 		#echo "iface=$iface! uci_section_name=$uci_section_name! radio=$radio! wifiifaces=$wifiifaces! htmode_config=$htmode_config!"
 		###########
 	done
+
+	# Reload odhcpd to refresh RA timers
+	/sbin/service odhcpd reload
 }
 
 all_nodes_rssi_update() {
@@ -6161,6 +6169,7 @@ elif [ "$1" = "daemon" ]; then
 
 	refresh_bridgemac
 
+	/sbin/service odhcpd stop
 	/sbin/service network reload
 
 	set_led init
@@ -6245,6 +6254,9 @@ elif [ "$1" = "daemon" ]; then
 			echo "set network.wan6.reqprefix='auto'" | uci batch
 			echo "set network.wan6.reqaddress='try'" | uci batch
 		fi
+
+		echo "set network.lan.ip6privacy='0'" | uci batch
+		echo "set dhcp.lan.ra_lifetime='3600'" | uci batch
 
 		# Before restarting the network, check if CPE mode is requested
 		if [ "$portal_detect" -eq 3 ] && [ "$commit_all" -eq 0 ]; then
