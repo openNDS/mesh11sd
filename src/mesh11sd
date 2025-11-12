@@ -13,8 +13,8 @@
 # mesh11sd daemon
 #
 
-last_version="6.0.0~be7a"
-version="6.1.0~be7a"
+last_version="6.1.0~be7a"
+version="6.2.0~be7a"
 fixup1=0
 ip4pingfailcount=0
 network_restart=0
