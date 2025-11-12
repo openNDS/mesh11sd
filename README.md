@@ -6,7 +6,7 @@ It helps automate the process, which can be complex, especially for those new to
 
 ***Please read this entire document before installing the mesh11sd package!***
 
-***Note: This documentation applies to version 5.0.0 or higher.***
+***Note: This documentation applies to version 6.0.0 or higher.***
 
 ## 2. Overview
 
@@ -39,6 +39,7 @@ The package acts as a service daemon, dynamically configuring network parameters
  6. **Portal-Node to Peer-Group Mode**, enabling "guest" networking over mesh backhaul without the need for setting up a VLAN (Default).
  7. **Access Point Monitoring** (AKA Mesh Gate Monitoring). Incorporates the code and functionality of the apmond package. A centralised Access Point usage database is created, enabling access point statistics, such as client connections, client data volumes etc., to be viewed on the Mesh Portal in json format (Default).
  8. **Leech Mode Peer**, enables a special type of peer that can join the mesh backhaul without contributing to the backhaul infrastructure. Useful for providing coverage "fill in" where access point signals are too weak for client devices. The Leech Mode peer forwards only the traffic of clients that are connected to it, it does not forward the traffic of other peers.
+ 9. **Mesh Node Mobility Level**, supports inter node relative velocities in excess of 1.5 metres per second where conditions allow. Enables mesh_hwmp_rts for on air collision avoidance, enables transmit queue and aql_threshold to minimise latency, enables rapid path convergence.
 
 ## 4. Getting Started:
 To get started, you will need at least two mesh capable devices to use as meshnodes. These meshnodes should have:
