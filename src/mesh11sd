@@ -3661,34 +3661,8 @@ check_vtunnel() {
 			echo "set network.vtunlan.proto='$proto'" | uci batch
 			uci set network.vtunlan.ip6assign='64'
 
-###			if [ "$portal_detect" -eq 4 ]; then
-			if [ "$portal_detect" -eq 10 ]; then ### dummy portal detect
-				stanza=$(uci show network | grep "name='$device'" | awk -F "." '{printf "%s.%s", $1, $2}')
-				lanports=$(uci get "$stanza.ports")
-
-				for brtunport in $lanports; do
-
-					if [  -z "$brtunport" ]; then
-						debugtype="notice"
-						syslogmessage="Cannot find a port to add to br-tun$tun_id"
-						write_to_syslog
-						break
-					else
-
-						if [ -z "$brtunportflag" ]; then
-							echo "del_list $stanza.ports='$brtunport'" | uci batch 2>/dev/null
-							echo "del_list network.vtunnel.ports='$brtunport'" | uci batch 2>/dev/null
-							echo "add_list network.vtunnel.ports='$brtunport'" | uci batch 2>/dev/null
-							debugtype="notice"
-							syslogmessage="Port $brtunport added to br-tun$tun_id vtunnel bridge"
-							write_to_syslog
-							brtunportflag=1
-						fi
-
-						break
-					fi
-				done
-			fi
+			echo "set network.vtunlan.ip6privacy='0'" | uci batch
+			echo "set dhcp.vtunlan.ra_lifetime='3600'" | uci batch
 
 			if [ "$portal_detect" -eq 4 ] || [ "$portal_detect" -eq 5 ]; then
 				# Disable wan and add the port that was wan to the vtunnel bridge
@@ -4749,11 +4723,11 @@ if [ -z "$1" ] || [ "$1" = "-h" ] || [ $1 = "--help" ] || [ $1 = "help" ]; then
 
   Option: mesh_node_mobility_level
   Usage: mesh11sd mesh_node_mobility_level [level]
-    Sets the mesh node mobility level
+  Sets the mesh node mobility level
     Supported levels are 0, 1, 2, 3 and 4
     Level 0 - not recommended for normal use - node must be stationary and carefully positioned
     Level 1 - Enables mesh_hwmp_rts for on air collision avoidance, enables transmit queue and aql_threshold to minimise latency, enables rapid path convergence
-      Level 1 supports inter node relative velocities up to 1.5 metres per second
+    Level 1 supports inter node relative velocities up to 1.5 metres per second
     Levels 2 to 4 support progressively higher relative inter node velocities at the expense of a larger and larger backhaul overhead
 
   Option: commit_changes
@@ -4805,6 +4779,15 @@ if [ -z "$1" ] || [ "$1" = "-h" ] || [ $1 = "--help" ] || [ $1 = "help" ]; then
   Usage: mesh11sd hex_to_str [hex encoded_access_point_data_string]
     Decode run length hex encoded access_point_data to apmond format
 
+  Option: is_hex
+  Usage: mesh11sd is_hex [string]
+    Check if string contains only valid hex characters (0-9, a-f, A-F)
+    Return code 0 if string is valid hex, 1 otherwise.
+
+  Option: is_ipv4addr_valid [string]
+    Check if string contains a single ipv4 address
+    Return code 0 if string is valid ipv4 address, 1 otherwise.
+
   Option: write_node_data
   Usage: mesh11sd write_node_data [node_id] [querystring]
     Called from apmond cgi script. Writes node data received by web server
@@ -4839,7 +4822,16 @@ if [ -z "$1" ] || [ "$1" = "-h" ] || [ $1 = "--help" ] || [ $1 = "help" ]; then
   Option: read_log
   Usage: mesh11sd read_log [ -f ]
     Displays the mesh11sd log
-      If -f is specified, the existing log will be deleted and all subequent logs will be followed on the display
+      If -f is specified, the existing log will be deleted and all subsequent logs will be followed on the display
+
+  Option: get_valid_channels
+  Usage: mesh11sd get_valid_channels
+    Returns a list of valid wireless channels for the current country setting
+
+
+  Option: country
+  Usage: mesh11sd country [country code]
+    Sets the requested country code
 
   For further documentation, see: https://github.com/openNDS/mesh11sd#readme
 
