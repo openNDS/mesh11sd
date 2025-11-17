@@ -4826,12 +4826,8 @@ if [ -z "$1" ] || [ "$1" = "-h" ] || [ $1 = "--help" ] || [ $1 = "help" ]; then
 
   Option: get_valid_channels
   Usage: mesh11sd get_valid_channels
-    Returns a list of valid wireless channels for the current country setting
-
-
-  Option: country
-  Usage: mesh11sd country [country code]
-    Sets the requested country code
+    Returns a list of valid wireless channels for the current country code setting
+    Note: DFS channels are not suitable for use in a mesh backhaul so are excluded.
 
   For further documentation, see: https://github.com/openNDS/mesh11sd#readme
 
