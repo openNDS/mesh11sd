@@ -1815,7 +1815,26 @@ These flags are combined into a bitmask, and the hexadecimal value in the FLAGS 
   - Meaning: The path is active, has a valid sequence number, is a root path, and is currently in the process of being resolved (e.g., HWMP is refreshing or rediscovering the path, possibly due to a timeout or metric update).
 
 ## 13. Command Line Interface
-Mesh11sd is an OpenWrt service daemon and runs continuously in the background. It does however also have a CLI interface:
+Mesh11sd is an OpenWrt service daemon and runs continuously in the background. It does however also have a CLI interface. CLI commands have multiple functions including verification of operational parameters, making runtime changes, reading of access point data and reading of logs.
+
+**CLI Quick Guide:**
+
+| Command | Description |
+|---------|-------------|
+| `mesh11sd status` | Primary verifier (config, links, apmond summary). |
+| `mesh11sd show_ap_data all` | Full apmond stats (clients per AP, rx/tx, signal, bitrates). |
+| `mesh11sd read_log [-f]` | View/follow internal logs (v6+; minimal syslog). |
+| `mesh11sd debuglevel [0-3]` | Set logging verbosity (0=quiet, 3=verbose). Runtime! |
+| `mesh11sd mesh_rssi_threshold <value>` | Set RSSI link threshold (e.g., -70 dBm). Runtime! |
+| `mesh11sd wireless channel <channel>` | Change backhaul channel (1/6/11). Runtime! |
+| `mesh11sd mobility_level <0-4>` | Switch mobility mode runtime (see Section 8). |
+| `mesh11sd commit_changes [commit|test]` | Apply/test UCI changes. |
+| `mesh11sd commit_all commit` | Persist *all* dynamic changes to disk. |
+| `mesh11sd auto_config [start|stop]` | Toggle auto-setup. |
+
+**Pro Tip**: Runtime CLI (debuglevel, RSSI, channel, mobility) = no restart. UCI changes require `system mesh11sd stop` → set → `system mesh11sd start`.
+
+**CLI Full List:**
 
       Usage: mesh11sd [option] [argument...]]
 
@@ -1868,6 +1887,15 @@ Mesh11sd is an OpenWrt service daemon and runs continuously in the background. I
           Usage: mesh11sd mesh_leechmode [enable/disable]
           Takes effect immediately
 
+        Option: mesh_node_mobility_level
+          Usage: mesh11sd mesh_node_mobility_level [level]
+          Sets the mesh node mobility level
+          Supported levels are 0, 1, 2, 3 and 4
+          Level 0 - not recommended for normal use - node must be stationary and carefully positioned
+          Level 1 - Enables mesh_hwmp_rts for on air collision avoidance, enables transmit queue and aql_threshold to minimise latency, enables rapid path convergence
+          Level 1 supports inter node relative velocities up to 1.5 metres per second
+          Levels 2 to 4 support progressively higher relative inter node velocities at the expense of a larger and larger backhaul overhead
+
         Option: stations
           List all mesh peer stations directly connected to this mesh peer station (one hop)
           Usage: mesh11sd stations
@@ -1896,55 +1924,88 @@ Mesh11sd is an OpenWrt service daemon and runs continuously in the background. I
 
         Option: force_ipv4_download
           Usage: mesh11sd force_ipv4_download
-          Forces opkg to use ipv4 for its downloads
+          Forces opkg/apk to use ipv4 for its downloads
 
         Option: download_revert_to_default
           Usage: mesh11sd download_revert_to_default
-          Reverts opkg to default for its downloads
+          Reverts opkg/apk to default for its downloads
 
         Option: dhcp4_renew
           Usage: mesh11sd dhcp4_renew
           Renews the current dhcp4 lease
 
-       Option: is_installed
-         Usage: mesh11sd is_installed [packagename]
+        Option: is_installed
+          Usage: mesh11sd is_installed [packagename]
          Checks if \"packagename\" is installed
          Returns the installation status of the package and exit code 0 if installed
 
-       Option: get_portal_ula
-         Usage: mesh11sd get_portal_ula
-         Gets the portal unique local ipv6 address (ula)
+        Option: get_portal_ula
+          Usage: mesh11sd get_portal_ula
+          Gets the portal unique local ipv6 address (ula)
 
-       Option: set_ula_prefix
-         Usage: mesh11sd set_ula_prefix [get|set|revert]
-         get - gets the current ula prefix
-         set - sets the ula prefix for the mesh backhaul based on the mesh id
-         revert - reverts a previously set ula prefix
+        Option: set_ula_prefix
+          Usage: mesh11sd set_ula_prefix [get|set|revert]
+          get - gets the current ula prefix
+          set - sets the ula prefix for the mesh backhaul based on the mesh id
+          revert - reverts a previously set ula prefix
 
-       Option: str_to_hex
-         Usage: mesh11sd str_to_hex [access_point_data_string]
-         Run length hex encodes access_point_data from apmond format
+        Option: str_to_hex
+          Usage: mesh11sd str_to_hex [access_point_data_string]
+          Run length hex encodes access_point_data from apmond format
 
-       Option: hex_to_str
-         Usage: mesh11sd hex_to_str [hex encoded_access_point_data_string]
-         Decode run length hex encoded access_point_data to apmond format
+    	    Option: hex_to_str
+          Usage: mesh11sd hex_to_str [hex encoded_access_point_data_string]
+          Decode run length hex encoded access_point_data to apmond format
 
-       Option: write_node_data
-         Usage: mesh11sd write_node_data [node_id] [querystring]
-         Called from apmond cgi script. Writes node data received by web server
+        Option: is_hex
+          Usage: mesh11sd is_hex [string]
+          Check if string contains only valid hex characters (0-9, a-f, A-F)
+          Return code 0 if string is valid hex, 1 otherwise.
 
-       Option: send_ap_data
-         Usage: mesh11sd send_ap_data
-         Sends hex encoded apmon data to portal/apmond web server
+        Option: is_ipv4addr_valid
+          Usage: mesh11sd is_ipv4addr_valid [string]
+          Check if string contains a single ipv4 address
+          Return code 0 if string is valid ipv4 address, 1 otherwise.
 
-       Option: get_ap_data
-         Usage: mesh11sd get_ap_data
-         Get json format access point data for this node
+        Option: write_node_data
+          Usage: mesh11sd write_node_data [node_id] [querystring]
+          Called from apmond cgi script. Writes node data received by web server
 
-       Option: show_ap_data
-         Usage: mesh11sd show_ap_data [node_id | all]
-         Shows json format access point data for requested node | all nodes
-         Valid on portal/apmond node
+        Option: send_ap_data
+          Usage: mesh11sd send_ap_data
+          Sends hex encoded apmon data to portal/apmond web server
+
+        Option: get_ap_data
+          Usage: mesh11sd get_ap_data
+          Get json format access point data for this node
+
+        Option: show_ap_data
+          Usage: mesh11sd show_ap_data [node_id | all]
+          Shows json format access point data for requested node | all nodes
+          Valid on portal/apmond node
+
+        Option: write_to_syslog
+          Usage: mesh11sd write_to_syslog [string to log] [debuglevel (debug, info, warn, notice, err or emerg)]
+          Writes to the syslog at the specified debuglevel
+
+        Option: write_log
+         Usage: mesh11sd write_log [string to log] [debuglevel (debug, info, warn, notice, err or emerg)]
+         Writes to the mesh11sd log at the specified debuglevel
+
+        Option: read_log
+         Usage: mesh11sd read_log [ -f ]
+         Displays the mesh11sd log
+         If -f is specified, the existing log will be deleted and all subsequent logs will be followed on the display
+
+        Option: country
+         Usage: mesh11sd country [country_code]
+         Shows the regulatory domain and country code if the optional country code is not supplied.
+         Sets the regulatory domain for the country code if it is supplied.
+         A restart or reboot is required for changes to take effect.
+
+        Option: get_valid_channels
+         Usage: mesh11sd get_valid_channels
+         Returns a list of valid wireless channels for the current country setting
 
 **Example status output:**
 
@@ -1952,7 +2013,7 @@ Mesh11sd is an OpenWrt service daemon and runs continuously in the background. I
 root@meshnode-256e:~# mesh11sd status
 {
   "setup":{
-    "version":"6.1.0",
+    "version":"6.2.0",
     "enabled":"1",
     "procd_status":"running",
     "portal_detect":"1",
@@ -2236,7 +2297,7 @@ BusyBox v1.36.1 (2023-11-14 13:38:11 UTC) built-in shell (ash)
  |_______||   __|_____|__|__||________||__|  |____|
           |__| W I R E L E S S   F R E E D O M
  -----------------------------------------------------
- OpenWrt 23.05.2, r23630-842932a63d
+ OpenWrt 24.10.4, r28959-29397011cc
  -----------------------------------------------------
 root@meshnode-1483:~# ll /tmp
 drwxrwxrwt   18 root     root           540 Feb 11 09:46 ./
@@ -2255,7 +2316,7 @@ drwxr-xr-x    2 root     root            60 Jan 19 18:58 hosts/
 drwxr-xr-x    3 root     root            60 Jan 19 18:54 lib/
 drwxrwxrwt    2 root     root           420 Jan 19 18:54 lock/
 drwxr-xr-x    2 root     root            80 Jan 19 18:54 log/
--rw-r--r--    1 root     root         15072 Feb 11 09:41 mesh11sd_3.0.1beta-1_all.ipk
+-rw-r--r--    1 root     root         15072 Feb 11 09:41 mesh11sd_6.2.0beta-1_all.ipk
 drwxr-xr-x    2 root     root            40 Jan 19 18:54 opkg-lists/
 drwxr-xr-x    2 root     root            40 Jan  1  1970 overlay/
 -rw-r--r--    1 root     root            47 Jan 19 18:58 resolv.conf
