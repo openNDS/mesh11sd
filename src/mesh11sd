@@ -1321,7 +1321,6 @@ wait_for_interface() {
 
 	for i in $(seq $timeout); do
 		if [ $(ip link show $ifname 2> /dev/null | grep -c -w "state UP") -eq 1 ] || [ $(ip link show $ifname 2> /dev/null | grep -c -w "state UNKNOWN") -eq 1 ]; then
-			write_to_syslog
 			ifstatus="up"
 			break
 		fi
@@ -1330,7 +1329,7 @@ wait_for_interface() {
 
 		if [ $i == $timeout ] ; then
 			syslogmessage="$ifname is not up - giving up for now."
-			debugtype="notice"
+			debugtype="debug"
 			write_to_syslog
 			ifstatus="down"
 		fi
@@ -1711,16 +1710,24 @@ get_portal_state() {
 	fi
 
 	if [ "$portal_detect" -eq 1 ] || [ "$portal_detect" -eq 3 ]; then
-		# - check if portal
+		default_gw=""
 
 		if [ "$firstloop" -eq 0 ]; then
-
-			# get the upstream default ipv4 gateway
+			#Check if portal - try to get the upstream default ipv4 gateway
 			up_zone=$(echo "get network.wan.device" | uci batch | awk '{printf "%s", $1}')
+			mute=1
 			wait_for_interface "$up_zone"
-			default_gw=$(ip route | grep "default via" | grep -w "dev $up_zone")
+			mute=0
 
+			if [ "$ifstatus" = "UP" ]; then
+				default_gw=$(ip route | grep "default via" | grep -w "dev $up_zone")
 
+				if [ -z "$default_gw" ]; then
+					dhcpdevice="$up_zone"
+					dhcp4_renew
+					default_gw=$(ip route | grep "default via" | grep -w "dev $up_zone")
+				fi
+			fi
 
 			if [ ! -z "$default_gw" ]; then
 				# This is a portal
@@ -3854,6 +3861,16 @@ set_ula_prefix() {
 get_portal_ula() {
 	set_ula_prefix "get"
 	portal_ula="$(echo "$ula_prefix" | awk -F "/" '{printf "%s", $1}')""1"
+	pingstatus=$(ping -q -W 1 -c 1 "$portal_ula" &>/dev/null ; echo $?)
+
+	if [ "$pingstatus" -eq 1 ]; then
+		portal_ula_vtun=$(echo "$portal_ula" | awk -F "::" '{printf "%s:1::%s", $1, $2}')
+		pingstatus=$(ping -q -W 1 -c 1 "$portal_ula_vtun" &>/dev/null ; echo $?)
+
+		if [ "$pingstatus" -eq 0 ]; then
+			portal_ula="$portal_ula_vtun"
+		fi
+	fi
 }
 
 str_to_hex() {
