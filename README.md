@@ -66,7 +66,7 @@ Mesh11sd provides an escapable "Confidence Test", a basic reflash image that all
 
 You can then begin the test by starting an ssh terminal session and issuing the command:
 
-        mesh11sd debuglevel 3; mesh11sd commit_changes commit; mesh11sd auto_config test; logread -f
+        mesh11sd debuglevel 3; mesh11sd commit_changes commit; mesh11sd auto_config test; mesh11sd read_log -f
 
 You will now see the auto_config process in progress. If all is well you can continue with the deployment.
 
