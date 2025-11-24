@@ -1,5 +1,8 @@
 mesh11sd (6.2.0)
 
+  * Add - Add - wifi_chipset_detect and auto detect ath11k and override beacon interval [bluewavenet]
+  * Add - Refactor portal detect [bluewavenet]
+  * Add - improvements to get_portal_ula and check for upstream ipv4 gateway [bluewavenet]
   * Fix - add missing help for cli commands [bluewavenet]
   * Add - Reload odhcpd to refresh RA timers when mesh interface comes up [bluewavenet]
   * Fix - set ula prefix only on portal and improve portal detection [bluewavenet]
@@ -34,7 +37,7 @@ mesh11sd (6.2.0)
   * Fix - mute debug message when mesh_leechmode config is null [bluewavenet]
   * Fix - mute some cosmetic hostapd debug messages [bluewavenet]
 
- -- Rob White <dot@blue-wave.net>  Tue, 18 Nov 2025 16:06:51 +0000
+ -- Rob White <dot@blue-wave.net>  Tue, 24 Nov 2025 11:34:47 +0000
 
 mesh11sd (5.1.3)
 
