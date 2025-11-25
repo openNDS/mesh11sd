@@ -6,7 +6,7 @@ It helps automate the process, which can be complex, especially for those new to
 
 ***Please read this entire document before installing the mesh11sd package!***
 
-***Note: This documentation applies to version 5.0.0 or higher.***
+***Note: This documentation applies to version 6.0.0 or higher.***
 
 ## 2. Overview
 
@@ -24,7 +24,7 @@ They’re also common in things like IoT (Internet of Things) devices, where gad
 
 The beauty of it is the self-healing nature: the network adapts as nodes join or drop out, keeping things running smoothly. It’s less centralized, more cooperative—like a team passing a ball around until it reaches the goal. [^2]
 
-### What is Mesh11sd
+### What is Mesh11sd?
 
 Mesh11sd is an OpenWrt package that autonomously manages all aspects of an 802.11s mesh network and its connected nodes. [^3]
 
@@ -39,6 +39,7 @@ The package acts as a service daemon, dynamically configuring network parameters
  6. **Portal-Node to Peer-Group Mode**, enabling "guest" networking over mesh backhaul without the need for setting up a VLAN (Default).
  7. **Access Point Monitoring** (AKA Mesh Gate Monitoring). Incorporates the code and functionality of the apmond package. A centralised Access Point usage database is created, enabling access point statistics, such as client connections, client data volumes etc., to be viewed on the Mesh Portal in json format (Default).
  8. **Leech Mode Peer**, enables a special type of peer that can join the mesh backhaul without contributing to the backhaul infrastructure. Useful for providing coverage "fill in" where access point signals are too weak for client devices. The Leech Mode peer forwards only the traffic of clients that are connected to it, it does not forward the traffic of other peers.
+ 9. **Mesh Node Mobility Level**, supports inter node relative velocities in excess of 1.5 metres per second where conditions allow. Enables mesh_hwmp_rts for on air collision avoidance, enables transmit queue and aql_threshold to minimise latency, enables rapid path convergence.
 
 ## 4. Getting Started:
 To get started, you will need at least two mesh capable devices to use as meshnodes. These meshnodes should have:
@@ -65,7 +66,7 @@ Mesh11sd provides an escapable "Confidence Test", a basic reflash image that all
 
 You can then begin the test by starting an ssh terminal session and issuing the command:
 
-        mesh11sd debuglevel 3; mesh11sd commit_changes commit; mesh11sd auto_config test; logread -f
+        mesh11sd debuglevel 3; mesh11sd commit_changes commit; mesh11sd auto_config test; mesh11sd read_log -f
 
 You will now see the auto_config process in progress. If all is well you can continue with the deployment.
 
@@ -113,11 +114,12 @@ At or near the end you will see wpad-basic-mbedtls. Add a minus sign (-) in fron
 At the end of the list add the following dependency packages:
 
   1. wpad-mbedtls
-  2. px5g-mbedtls
-  3. ip-full
-  4. kmod-nft-bridge
-  5. vxlan
-  6. mesh11sd
+  2. luci-ssl
+  3. luci-app-commands
+  4. ip-full
+  5. kmod-nft-bridge
+  6. vxlan
+  7. mesh11sd
 
 ***NOTE: If the node you are configuring uses ath10k-ct drivers, you must change to the none-ct versions. If you do not, mesh11sd will log an error to syslog and terminate.***
 
@@ -128,7 +130,7 @@ base-files busybox ca-bundle dnsmasq dropbear firewall4 fstools kmod-gpio-button
 kmod-leds-gpio kmod-mt7603 kmod-nft-offload kmod-usb-ohci kmod-usb2 libc libgcc
 libustream-mbedtls logd luci mtd netifd nftables odhcp6c odhcpd-ipv6only opkg
 ppp ppp-mod-pppoe procd procd-seccomp procd-ujail swconfig uci uclient-fetch urandom-seed
-urngd -wpad-basic-mbedtls wpad-mbedtls px5g-mbedtls ip-full kmod-nft-bridge vxlan mesh11sd
+urngd -wpad-basic-mbedtls wpad-mbedtls luci-ssl luci-app-commands ip-full kmod-nft-bridge vxlan mesh11sd
 ```
 
 On the Firmware Selector Window, it will be similar to this screenshot (changes highlighted in blue):
@@ -342,8 +344,8 @@ Now do the following:
  4. Install the ip-full package.
  5. Install the kmod-nft-bridge package.
  6. Install the vxlan package
- . Install the uhttpd and px5g-mbedtls packages (may already be installed along with the LuCi UI).
- 7. Finally - Install the mesh11sd package.
+ 7. Install the luci-ssl and luci-app-commands packages.
+ 8. Finally - Install the mesh11sd package.
 
 The mesh11sd daemon should now be running in a "safe" state (aka "manual mode").
 
@@ -657,21 +659,21 @@ config mesh11sd 'setup'
 	# 0 Disabled
 	# 1 Enabled
 	# 2 Same as 1 but executes `commit_all` and enables LuCi
-	# 	Warning, this will lock the auto config to the initial autoconfigured mode.
-	#	If you want a locked portal, ensure you have the upstream Internet connection active
-	#	BEFORE first boot after reflash or install.
-	# 	For example if the meshnode initially configures as a portal,
-	#	portal detect will be set to 0 permanently.
+	#   Warning, this will lock the auto config to the initial autoconfigured mode.
+	#   If you want a locked portal, ensure you have the upstream Internet connection active
+	#   BEFORE first boot after reflash or install.
+	#   For example if the meshnode initially configures as a portal,
+	#   portal detect will be set to 0 permanently.
 	#
-	#	The effect of option 2 can be reversed by issuing the command `mesh11sd revert_all revert`
+	#   The effect of option 2 can be reversed by issuing the command `mesh11sd revert_all revert`
 	#
 	# When set to 0, the mesh11sd daemon will check for an existing mesh configuration.
 	#
 	# Warning: If an existing mesh configuration is found, it will be honoured even if it is incorrect.
-	#	Manually configuring a mesh can soft brick the router if incorrectly done.
+	#   Manually configuring a mesh can soft brick the router if incorrectly done.
 	#
 	# Auto config can be tested using the command line function 'mesh11sd auto_config test'
-	#	See the documentation for further information (Hint: try 'mesh11sd --help')
+	#   See the documentation for further information (Hint: try 'mesh11sd --help')
 	#
 	#option auto_config '1'
 
@@ -722,7 +724,7 @@ config mesh11sd 'setup'
 	# Set a valid country code for all radios
 	# Defaults to DFS-ETSI if not explicitly set in wireless config
 	#
-	# If set here, will overide any setting in wireless config
+	# If set here, will override any setting in wireless config
 	#
 	# Example set to country code US:
 	#option country 'US'
@@ -733,7 +735,7 @@ config mesh11sd 'setup'
 	# Defaults to a sha256 key to be automatically used on all members of this mesh when auto_config is enabled
 	# Generates a secure sha256 key from the string value set in this option.
 	#
-	# If set, it must also be set to the same value on every mesh node
+	# If set here, it must also be set to the same value on every other node in this mesh
 	#
 	#option auto_mesh_key 'MySecretKey'
 
@@ -778,7 +780,7 @@ config mesh11sd 'setup'
 	# mesh_gate_encryption (optional)
 	# Determines whether this node's gate (Access Point) will be a encrypted
 	#
-	# Default: 0 (disabled)
+	# Default: 4 (Opportunistic Wireless Encryption - owe)
 	# Set to 0 (none/owe-transition), 1 (sae, aka wpa3), 2 (sae-mixed, aka wpa2/wpa3), 3 (psk2, aka wpa2)
 	# or 4 (Opportunistic Wireless Encryption - owe)
 	#
@@ -835,7 +837,7 @@ config mesh11sd 'setup'
 	# Sets the vxtunnel ipv4 gateway address to be used in the vxtunnel.
 	# Becomes active if the node becomes a portal (portal_detect 0 or 1).
 	#
-	# Default: 192.168.168.1
+	# Default: auto generated subnet
 	#
 	#option vtun_ip '10.69.1.1'
 
@@ -857,9 +859,10 @@ config mesh11sd 'setup'
 	# Note: All vtun options require the ip-full and vxlan packages to be installed, otherwise the options will be ignored
 	#
 	# Sets the vxtunnel gate encryption to be used on node gates (access points) connected to the vxtunnel.
-	#	Valid values are: 0 (none/owe_transition), 1 (sae, aka wpa3), 2 (sae-mixed, aka wpa2/wpa3), 3 (psk2, aka wpa2) or 4 (owe)"
 	#
-	# Default: 0 (none/owe transition)
+	# Default: 4 (Opportunistic Wireless Encryption - owe)
+	# Set to 0 (none/owe-transition), 1 (sae, aka wpa3), 2 (sae-mixed, aka wpa2/wpa3), 3 (psk2, aka wpa2)
+	# or 4 (Opportunistic Wireless Encryption - owe)
 	#
 	#option vtun_gate_encryption '3'
 
@@ -906,14 +909,22 @@ config mesh11sd 'setup'
 	# mesh_gate_enable (optional)
 	# Determines whether this node will be a gate
 	#
-	# Default: 1 (enabled)
-	# Set to 0 to disable (turns off the node's gate interface ie its access point and SSID)
+	# Default: 1 (enable all mesh gate access points)
 	#
+	# Possible values:
+	# 0 Disable all mesh gate access points.
+	# 1 Enable all mesh gate access points.
+	# 2 Enable ONLY access points on radios NOT shared with a mesh interface.
+	#
+	# Example:
 	#option mesh_gate_enable '0'
 
 	###########################################################################################
 	# mesh_leechmode_enable (optional)
 	# Determines whether this node will be a gate only leech node
+	#
+	# Valid only with mesh_node_mobility_level = 0 and not on a portal node.
+	#
 	# A gate only leech node acts as an access point with a mesh backhaul connection, but does not contribute to the mesh
 	#
 	# This is useful when a node is well within the coverage of 2 or more peer nodes,
@@ -954,17 +965,19 @@ config mesh11sd 'setup'
 	# mesh_path_stabilisation (optional)
 	#
 	# This enables mesh path stabilisation, preventing multi hop path changes due to multipath signal strength jitter
+	# Usually not required when mesh_node_mobility_level is set to greater than 0
 	#
-	# Default: 1 (enabled)
+	# Default: 0 (disabled)
 	#
-	# To disable, set to zero:
-	#option mesh_path_stabilisation '0'
+	# To enable, set to 1:
+	#option mesh_path_stabilisation '1'
 
 	###########################################################################################
 	# reactive_path_stabilisation_threshold (optional)
 	#
 	# If an unstable path to an immediate neighbour node is detected, a counter is incremented each checkinterval while the unstable condition continues.
 	# 	Mesh path stabilisation is activated once the counter exceeds the threshold.
+	# Usually not required when mesh_node_mobility_level is set to greater than 0
 	#
 	# Default: 10 checkinterval periods.
 	#
@@ -1015,7 +1028,7 @@ config mesh11sd 'setup'
 	# apmond_enable (optional)
 	#
 	# Enables the access point monitoring daemon
-	# 	Assumes the uhttpd and px5g-mbedtls packages are installed.
+	# 	Assumes the uhttpd and px5g-mbedtls (or luci-ssl) packages are installed.
 	#	But other portal based https web servers can be used.
 	# Default: 1 (enabled)
 	#
@@ -1061,7 +1074,128 @@ config mesh11sd 'setup'
 	# Synchronizes nft rulesets of opennds and mesh11sd
 	# Disabling may cause crash loops because the opennds gatewayinterface may not be up as mesh11sd starts.
 	#
+	# Example:
 	#option manage_opennds_startup '0'
+
+	###########################################################################################
+	# log_mountpoint (optional)
+	#
+	# Specifies the mountpoint of storage to be used for the mesh11sd logging system
+	# Default: /tmp
+	# A subdirectory "mesh11sd" will be created in the mountpoint where all logs and temporary files will be stored
+	# Ensure this mountpoint is NOT in system flash memory as it will lead to premature flash failure
+	# Typically a removable (and replaceable) usb drive is ideal.
+	#
+	# Example:
+	#option log_mountpoint '/logdrive'
+
+	###########################################################################################
+	# max_log_entries (optional)
+	#
+	# Specifies the number of rolling log entries to be kept by the logging system (displayed by the read_log cli command)
+	# Default: 500
+	# Log entries are stored in the mesh11sd directory on the log_mountpoint
+	#
+	# Example:
+	#option max_log_entries '1000'
+
+	###########################################################################################
+	# use_default_beacon_interval (optional)
+	#
+	# When set, forces the use of the default beacon interval on the mesh phy
+	# For most drivers, the beacon interval defaults to 100ms
+	# mesh11sd dynamically sets the beacon interval according to the mesh_node_mobility_level setting
+	# Some wireless drivers fail if the beacon interval is changed (eg Qualcomm Atheros IPQ6018)
+	# Default: 0 (disabled)
+	# Set to 1 to force
+	#
+	# Example:
+	#option use_default_beacon_interval '1'
+
+	###########################################################################################
+	# mesh_dtim_period (optional)
+	#
+	# Sets the mesh DTIM period
+	# DTIM - Discovery Timeout, Total timeout (in ms) for path discovery attempts.
+	# A discovery beacon is sent every mesh_dtim_period beacons.
+	# A larger value will slow the discovery process but reduce the overhead.
+	# mesh11sd dynamically sets the mesh_dtim_period according to the mesh_node_mobility_level setting
+	# Some wireless drivers ignore this option and continue to use the default (eg Qualcomm Atheros IPQ6018)
+	# Default: 2
+	#
+	# Example:
+	#option mesh_dtim_period '3'
+
+	###########################################################################################
+	# mesh_node_mobility_level (optional)
+	#
+	# Sets the mesh node mobility level
+	# Supported levels are 0, 1, 2, 3 and 4
+	# Level 0 - not recommended for normal use - node must be stationary and carefully positioned
+	# Level 1 - Enables mesh_hwmp_rts for on air collision avoidance, enables transmit queue and aql_threshold to minimise latency, enables rapid path convergence
+	#	Level 1 supports inter node relative velocities up to 1.5 metres per second
+	#
+	# Levels 2 to 4 support progressively higher relative inter node velocities at the expense of a larger and larger backhaul overhead
+	#
+	# Default: 1
+	#
+	# Example:
+	#option mesh_node_mobility_level '2'
+
+	###########################################################################################
+	# cpe_mode (optional)
+	#
+	# Sets the cpe ipv6 mode
+	# Applicable only when portal_detect is set to 3
+	#
+	# Possible modes are prefix_delegation, relay and nat66
+	#
+	# Prefix Delegation works with all client devices, including Android,
+	#	but the ISP needs to provide a prefix large enough to delegate a /64 subnet to every cpe mesh node.
+	#	Exhausting available delegations is a danger.
+	#
+	# Relay does not require any prefix delegation, but some versions of Android devices will detect the relay and turn off the device's interface within ~60 seconds - because - Google.
+	#
+	# NAT66 will work with all types of client devices, including Android, so is used as the default.
+	# Default: nat66
+	#
+	#
+	# Example:
+	#option cpe_mode 'prefix_delegation'
+
+	###########################################################################################
+	# apmon_verbose_debug_enable (optional)
+	#
+	# Enables apmon verbose debug logging.
+	# Logs can be read using the mesh11sd read_log command
+
+	# Default 0 (disabled)
+	#
+	# Example: Enable verbose logging
+	#option apmon_verbose_debug_enable '1'
+
+	###########################################################################################
+	# odhcpd_log_level (optional)
+	#
+	# Sets the odhcpd log level
+	# Used for monitoring ipv6 dhcp/ra
+	#
+	# Can be set from 0 to 7
+	# 0 - Emergency
+	# 1 - Alert
+	# 2 - Critical
+	# 3 - Error
+	# 4 - Warning
+	# 5 - Notice
+	# 6 - Info
+	# 7 - Debug
+	#
+	# Logs can be read using the logread command
+
+	# Default 3 (Error)
+	#
+	# Example: Set log level to debug
+	#option odhcpd_log_level '7'
 
 config mesh11sd 'mesh_params'
 	# A minimum set of parameters is automatically set for initial startup and do not have to be configured here
@@ -1089,477 +1223,370 @@ Access to the remote meshnode peers will not be possible using the default ipv4 
 
 
 ## 10. Setup Options
-* enabled - 0=disabled, 1=enabled. Default 1
 
-* debuglevel - 0=silent, 1=notice, 2=info, 3=debug. Default 1
-
-* checkinterval - the interval in seconds after which changes in parameters are detected and activated. Default 10 seconds
-
-* portal_detect (optional) - Ignored if auto_config is disabled.
-
-            Default 1
-
-            Possible values:
-
-            0  - Force ipv4 nat routed Portal mode regardless of an upstream connection.
-
-	        1  - Detect if the meshnode is a portal, meaning it has an upstream wan link.
-
-                 If the upstream link is active, the router hosting the meshnode will serve ipv4 dhcp into the mesh network.
-
-	             If the upstream link is not connected, dhcp will be disabled and the meshnode will function as a layer 2 bridge on the mesh network.
-
-            2  - Deprecated - no longer used - replaced by mode 5.
-
-	        3  - Force CPE mode (Customer Premises Equipment)
-
-	             This is a peer mode but treats the mesh backhaul as an upstream wan connection.
-	             A nat routed ipv4 lan is created with its own ipv4 subnet.
-
-	        4  - Force Bridge vxlan trunk portal node
-
-	             This mode should be used if a bridged connection to the upstream ISP router is required (ie bridged/no-nat ipv4 ).
-
-                 Functions in a similar way to 0, but forces BRIDGED rather than routed portal mode, ADDING the wan ethernet port to the vxtunnel bridge (default br-tun69)
-
-	             The wan port will be an ethernet end point into the vxtunnel, supporting vlans if required.
-
-	             The wan port and lan port(s) form independent layer 2 networks carried by the mesh backhaul to all peer meshnodes.
-
-	             The vxlan tunnel can be treated as a separate virtual ethernet tunnel to all mesh nodes.
-
-	             ie the wan port on a mode 4 portal is the end point of a virtual vlan supporting ethernet network connecting to the wan ports of all mode 5 bridge vxlantrunk peer nodes.
-
-	             In normal use, BOTH the wan and a lan port could be patched to the upstream router or an intermediate switch.
-
-             5  - Bridge vxlan trunk peer node
-
-	             Compatible with portal nodes configured with portal_detect 0, 1 or 4.
-
-	             Functions in a similar way to 0, but FORCES peer mode and adds wan ethernet port to the vxtunnel bridge (default br-tun69)
-
-	             The wan port will be an ethernet end point into the vxtunnel, supporting vlans if required.
-
-	             The lan port(s) will be ethernet end points into the mash backhaul and will NOT support vlans.
-
-	             Has no effect if auto_config is disabled.
-
-* portal_channel (optional) Applies to 2.4 GHz band only
-             Valid only when the meshnode is a portal.
-
-             If portal_detect is disabled (0), portal_channel can be set to:
-
-	             1. auto - a channel is auto selected
-
-                 2. default - the channel defined in /etc/config/wireless is used
-
-                 3. A valid 2.4 GHz channel (1 to 13, depending on the country setting)
-
-             Default: system default
-
-             All mesh peer and mesh gate nodes will autonomously track the mesh portal channel regardless of the configured auto_mesh_band.
-
-* portal_use_default_ipv4 (optional)
-             Effective only if node is a portal
-
-             Default 0
-
-             When set to 1, the default ipv4 address found in /etc/config/network is used
-
-             When set to 0 or not set, an ip subnet address is calulated based on the label mac address
-
-* channel_tracking_checkinterval (optional)
-
-	         The minimum interval in seconds after which channel tracking begins on peer nodes. Values less than checkinterval are ignored.
-
-             Default: 30 seconds
-
-* portal_detect_threshold (optional)
-
-             This controls the portal detect watchdog.
-
-             Sets the number of checkintervals before the portal detect watchdog begins actions to (re)establish a reconnection to a portal.
-
-             Default 10 (watchdog is triggered after 10 iterations)
-
-             If set to 0, the watchdog is never triggered.
-
-             Ignored if auto_config is disabled.
-
-             Each time the peer node fails to detect the portal, a counter is incremented.
-
-             If the threshold is reached, the node will take various actions in an attempt to find the portal.
-
-             If the portal is still not detected, the watchdog will reboot the peer node.
-
-* mesh_path_cost - sets the STP cost of the mesh network.
-
-             Can be set to any value from 0 to 65534. Setting to 0 disables STP.
-
-             Default: 10.
-
-* interface_timeout - the time in seconds that mesh11sd will wait for a mesh interface to establish before continuing.
-
-             Default 10 seconds
-
-* auto_config - (optional) - autonomously configures the mesh network.
-
-             Enables autonomous dynamic mesh configuration.
-             Auto configure mesh interfaces in the wireless configuration.
-             Default 0 (disabled). Set to 1 to enable.
-
-             Possible values:
-                0 Disabled
-                1 Enabled
-                2 Same as 1 but executes `commit_all` and enables LuCi
-                  Warning, this will lock the auto config to the initial autoconfigured mode.
-                    If you want a locked portal, ensure you have the upstream Internet connection active
-                    BEFORE first boot after reflash or install.
-                    For example if the meshnode initially configures as a portal,
-                      portal detect will be set to 0 permanently.
-
-                      The effect of option 2 can be reversed by issuing the command 'mesh11sd revert_all revert'
-
-             When set to 0, the mesh11sd daemon will check for an existing mesh configuration.
-
-             Warning: If an existing mesh configuration is found, it will be honoured even if it is incorrect.
-               Manually configuring a mesh can soft brick the router if incorrectly done.
-
-             Auto config can be tested using the command line function 'mesh11sd auto_config test'
-             See the documentation for further information (Hint: try 'mesh11sd --help')
-
-* auto_mesh_id - (optional) - specifies a string used to generate the mesh id hash.
-
-             If set, this must be the same on all mesh nodes.
-
-             Default --__
-
-* auto_mesh_band (optional)
-
-             Configure the band to use for the mesh network
-
-             Valid values: 2g, 2g40, 5g, 6g, 60g
-
-             Default 2g40
-
-             If set, it must also be set to the same value on every mesh node
-
-             All mesh peer and mesh gate nodes will autonomously track the mesh portal channel regardless of the configured auto_mesh_band.
-
-* mesh_phy_index (optional)
-
-             Force use of a particular radio for the mesh interface
-
-             Must be an integer value corresponding to the physical radio hardware (eg. phy0, phy1 etc.).
-
-             Default - Not Set
-
-             Useful for devices with more than one phy on a particular band allowing use of a particular radio to be forced
-
-             If not set, the first phy in the configured auto_mesh_band that the daemon encounters will be used for the mesh interface.
-
-             Example - Use the second 5GHz radio (phy2) of a three radio device, set option to the value 2
-
-
-* country (optional)
-
-             Set a valid country code for all radios.
-
-             Defaults to DFS-ETSI if not explicitly set in wireless config
-
-             If set here, will overide any setting in wireless config
-
-* auto_mesh_key (optional)
-
-             Defaults to a sha256 key to be automatically used on all members of this mesh when auto_config is enabled.
-
-             Generates a secure sha256 key from the string value set in this option.
-
-             If set, it must also be set to the same value on every mesh node
-
-* auto_mesh_network - (optional) - specifies the firewall zone used for the mesh.
-
-             Typical values "lan", "guest" etc.
-
-             This can be set differently on each meshnode as required.
-
-             Firewall zone "wan" is not valid.
-
-             Default lan
-
-* mesh_basename - (optional)
-
-             The first 4 characters after non alphanumerics (ie special characters) are removed are used as the mesh_basename.
-
-             The mesh_basename is used to construct a unique mesh interface name of the form m-xxxx-n.
-
-             Default: 11s
-
-* mesh_gate_base_ssid
-
-             Sets the mesh gate base ssid string
-
-             If ssid_suffix_enable is set to 0, must be a maximum of 30 characters in length.
-
-             If ssid_suffix_enable is set to 1, must be a maximum of 22 characters in length
-
-             Excess characters will be truncated
-
-             Default - uses the ssid string set in the wireless config
-
-             When set, overrides the ssid string set in the wireless config
-
-* mesh_gate_encryption (optional)
-
-             Determines whether this node's gate (Access Point) will be a encrypted.
-
-             Default: 0 (disabled)
-             Set to
-
-                 0 (none/owe-transition)
-
-                 1 (sae, aka wpa3)
-
-                 2 (sae-mixed, aka wpa2/wpa3)
-
-                 3 (psk2, aka wpa2)
-
-                 4 (Opportunistic Wireless Encryption - owe)
-
-* mesh_gate_key (optional)
-
-             Determines the encryption key for this node's gate.
-
-             Default: not set (encryption disabled)
-
-             Set to a secret string value to use for encrypting the node's gate
-
-             Ignored if mesh_gate_encryption is set to 0 or 4
-
-* ssid_suffix_enable - Add a 4 digit suffix to the ssid.
-
-              The 4 digits are the last 4 digits of the mac address of the mesh interface.
-
-* vtun_enable (optional)
-
-              Note: All vtun options require the ip-full and vxlan packages to be installed, otherwise the options will be ignored
-
-              Enables point to multi-point vxlan tunneling from portal to all compatible nodes
-
-              Default: 1 (enabled) unless portal_detect is set to 3 (cpe mode), in which case the default is 0 (disabled)
-
-              To disable, set to zero:
-
-* tun_id (optional)
-
-              Note: All vtun options require the ip-full and vxlan packages to be installed, otherwise the options will be ignored
-
-              Sets the vxtunnel id, a decimal number between 1 and 16777216 (24 bits)
-
-              Default: 69
-
-* vtun_ip (optional)
-
-              Note: All vtun options require the ip-full and vxlan packages to be installed, otherwise the options will be ignored
-
-              Sets the vxtunnel ipv4 gateway address to be used in the vxtunnel.
-
-              Becomes active if the node becomes a portal (portal_detect 0 or 1).
-
-              Default: 192.168.168.1
-
-* vtun_mask (optional)
-
-              Note: All vtun options require the ip-full and vxlan packages to be installed, otherwise the options will be ignored
-
-              Sets the vxtunnel ipv4 address mask to be used in the vxtunnel.
-
-              Becomes active if the node becomes a portal (portal_detect 0 or 1).
-
-              Default: 255.255.255.0
-
-* vtun_gate_encryption (optional)
-
-              Note: All vtun options require the ip-full and vxlan packages to be installed, otherwise the options will be ignored
-
-              Sets the vxtunnel gate encryption to be used on node gates (access points) connected to the vxtunnel.
-
-              Valid values are: 0 (none/owe_transition), 1 (sae, aka wpa3), 2 (sae-mixed, aka wpa2/wpa3), 3 (psk2, aka wpa2) or 4 (owe)"
-
-              Default: 0 (none/owe transition)
-
-* vtun_gate_key (optional)
-
-              Note: All vtun options require the ip-full and vxlan packages to be installed, otherwise the options will be ignored
-
-              Sets the vxtunnel gate encryption key to be used on node gates (access points) connected to the vxtunnel.
-
-              Must be a minimum of 8 characters in length
-
-              Default: not set
-
-* vtun_base_ssid (optional)
-
-              Note: All vtun options require the ip-full and vxlan packages to be installed, otherwise the options will be ignored
-
-              Sets the vxtunnel base ssid string
-
-              If ssid_suffix_enable is set to 0, must be a maximum of 30 characters in length
-
-              If ssid_suffix_enable is set to 1, must be a maximum of 22 characters in length
-
-              Excess characters will be truncated
-
-              Default: Guest
-
-* vtun_path_cost (optional)
-
-              Note: All vtun options require the ip-full and vxlan packages to be installed, otherwise the options will be ignored
-
-              sets the STP cost of the vxtunnel network
-
-              Default: 10
-
-              Can be set to any value from 0 to 65534
-
-              Setting to 0 disables STP
-
-* mesh_gate_enable - enables any access points configured on the meshnode.
-
-             Default 1 (enabled).
-
-             Set to 0 to disable.
-
-             **Note:** If there is an interface level "disable option" (in wireless config), mesh11sd will use that setting.
-
-* mesh_leechmode_enable - Determines whether this node will be a gate only leech node
-
-              A gate only leech node acts as an access point with a mesh backhaul connection, but does not contribute to the mesh.
-
-              This is useful when a node is well within the coverage of 2 or more peer nodes, as otherwise it could create unstable multi hop paths within the backhaul.
-
-              Can also be set dynamically using the command line option 'mesh11sd mesh_leechmode [enable/disable]'
-
-              Default: 0 (disabled).
-
-              Set to 1 to enable (turns off the node's mesh forwarding and HWMP mac-routing).
-
-* txpower - set the mesh radio transmit power in dBm.
-
-              Takes effect immediately.
-
-* watchdog_nonvolatile_log - (optional - FOR DEBUGGING PURPOSES ONLY).
-
-              This enables logging of the portal detect watchdog actions in non-volatile storage.
-
-              The log file /mesh11sd_log/mesh11sd.log is created.
-
-              THIS OPTION IS FOR PORTAL DETECT WATCHDOG DEBUGGING PURPOSES ONLY.
-
-              IF LEFT ENABLED FOR A LENGTH OF TIME IT MAY CAUSE NONE REPAIRABLE FLASH MEMORY WEAR AND USE UP FREE STORAGE SPACE.
-
-              DISABLE IMMEDIATELY AFTER DEBUGGING OPERATIONS ARE COMPLETE.
-
-* mesh_path_stabilisation - This enables mesh path stabilisation, preventing multi hop path changes due to multipath signal strength jitter.
-
-              Default: 1 (enabled).
-
-              To disable, set to zero.
-
-* reactive_path_stabilisation_threshold (optional)
-
-              If an unstable path to an immediate neighbour node is detected, a counter is incremented each checkinterval while the unstable condition continues.
-
-              Mesh path stabilisation is activated once the counter exceeds the threshold.
-
-              Default: 10 checkinterval periods.
-
-* mesh_mac_forced_forwarding (optional)
-
-              This enables mac forced forwarding on the mesh interface
-
-              Default: 1 (enabled)
-
-              To disable, set to zero
-
-* gateway_proxy_arp (optional)
-
-              This enables proxy arp on the gateway bridge interface
-
-              Default: 1 (enabled)
-
-              To disable, set to zero
-
-* reboot_on_error (optional)
-
-              If the watchdog detects a failure of ipv4 communication with a portal, the daemon will reboot the node
-
-              Default: 1 (enabled)
-
-              To disable, set to 1
-
-* stop_on_error (optional)
-
-              If the watchdog detects a failure of ipv4 communication with a portal, the daemon will go into idle mode.
-
-              This is useful if the meshnode does not have a reset button and a critical error occurs, blocking access
-
-              Default: 0 (disabled)
-
-              To enable, set to 1. This setting will override the reboot_on_error setting
-
-
-* apmond_enable (optional)
-
-              Enables the access point monitoring daemon
-
-              Assumes the uhttpd and px5g-mbedtls packages are installed, but other portal based https web servers can be used.
-
-              Default: 1 (enabled)
-
-              Data is collected from access point interfaces on this node and sent to the portal node
-
-* apmond_cgi_dir (optional)
-
-              Sets the apmond cgi directory
-
-              Takes effect when this node becomes a portal (portal detect 0, 1 and 4)
-
-              Default: /www/cgi-bin
-
-* mesh_backhaul_led (optional)
-
-              Enables the mesh backhaul heartbeat led indicator
-
-              The led indicator will be on when the mesh interface is up, changing to the Linux heartbeat signal when peer nodes are connected
-
-              Default: auto
-
-              By default, the power or system led will be used if present.
-
-              Other leds can be found listed in /sys/class/leds with the format "color:function"
-
-              Disable this option by setting its value to "none"
-
-              Example, enable the "blue:run" led:
-
-              option mesh_backhaul_led 'blue:run'
-
-              Example, disable the mesh backhaul led:
-
-              option mesh_backhaul_led 'none'
-
-* manage_opennds_startup (optional)
-
-              Enables management of opennds startup
-
-              If opennds is installed, mesh11sd will manage its startup.
-
-              Default: 1 Enabled
-
-              Synchronizes nft rulesets of opennds and mesh11sd
-
-              Disabling may cause crash loops because the opennds gatewayinterface may not be up as mesh11sd starts.
+- **enabled** - 0=disabled, 1=enabled. Default 1
+
+- **debuglevel** - 0=silent, 1=notice, 2=info, 3=debug. Default 1
+
+- **checkinterval** - the interval in seconds after which changes in parameters are detected and activated. Default 10 seconds
+
+- **portal_detect** (optional) - Ignored if auto_config is disabled.  
+  Default 1  
+  Possible values:  
+  **0** - Force ipv4 nat routed Portal mode regardless of an upstream connection.  
+  **1** - Detect if the meshnode is a portal, meaning it has an upstream wan link.  
+  If the upstream link is active, the router hosting the meshnode will serve ipv4 dhcp into the mesh network.  
+  If the upstream link is not connected, dhcp will be disabled and the meshnode will function as a layer 2 bridge on the mesh network.  
+  **2**  - Deprecated - no longer used - replaced by mode 5.  
+  **3**  - Force CPE mode (Customer Premises Equipment)  
+  This is a peer mode but treats the mesh backhaul as an upstream wan connection.  
+  A nat routed ipv4 lan is created with its own ipv4 subnet.  
+  **4**  - Force Bridge vxlan trunk portal node  
+  This mode should be used if a bridged connection to the upstream ISP router is required (ie bridged/no-nat ipv4 ).  
+  Functions in a similar way to 0, but forces BRIDGED rather than routed portal mode, ADDING the wan ethernet port to the vxtunnel bridge (default br-tun69)  
+The wan port will be an ethernet end point into the vxtunnel, supporting vlans if required.  
+The wan port and lan port(s) form independent layer 2 networks carried by the mesh backhaul to all peer meshnodes.  
+The vxlan tunnel can be treated as a separate virtual ethernet tunnel to all mesh nodes.  
+ie the wan port on a mode 4 portal is the end point of a virtual vlan supporting ethernet network connecting to the wan ports of all mode 5 bridge vxlantrunk peer nodes.  
+In normal use, BOTH the wan and a lan port could be patched to the upstream router or an intermediate switch.  
+**5**  - Bridge vxlan trunk peer node  
+Compatible with portal nodes configured with portal_detect 0, 1 or 4.  
+Functions in a similar way to 0, but FORCES peer mode and adds wan ethernet port to the vxtunnel bridge (default br-tun69)  
+The wan port will be an ethernet end point into the vxtunnel, supporting vlans if required.  
+The lan port(s) will be ethernet end points into the mash backhaul and will NOT support vlans.  
+Has no effect if auto_config is disabled.
+
+- **portal_channel** (optional) Applies to 2.4 GHz band only.  
+Valid only when the meshnode is a portal.  
+If portal_detect is disabled (0), portal_channel can be set to:  
+**1** - auto; a channel is auto selected  
+**2** - default; the channel defined in /etc/config/wireless is used  
+**3** A valid 2.4 GHz channel (1 to 13, depending on the country setting)  
+Default: system default.  
+All mesh peer and mesh gate nodes will autonomously track the mesh portal channel regardless of the configured auto_mesh_band.
+
+- **portal_use_default_ipv4** (optional).  
+Effective only if node is a portal.  
+Default 0
+When set to 1, the default ipv4 address found in /etc/config/network is used.  
+When set to 0 or not set, an ip subnet address is calulated based on the label mac address.  
+
+- **channel_tracking_checkinterval** (optional).  
+The minimum interval in seconds after which channel tracking begins on peer nodes. Values less than checkinterval are ignored.  
+Default: 30 seconds
+
+- **portal_detect_threshold** (optional).  
+This controls the portal detect watchdog.  
+Sets the number of checkintervals before the portal detect watchdog begins actions to (re)establish a reconnection to a portal.  
+Default 10 (watchdog is triggered after 10 iterations).  
+If set to 0, the watchdog is never triggered.  
+Ignored if auto_config is disabled.  
+Each time the peer node fails to detect the portal, a counter is incremented.  
+If the threshold is reached, the node will take various actions in an attempt to find the portal.  
+If the portal is still not detected, the watchdog will reboot the peer node.
+
+- **mesh_path_cost** - sets the STP cost of the mesh network.  
+Can be set to any value from 0 to 65534. Setting to 0 disables STP.  
+Default: 10.
+
+- **interface_timeout** - the time in seconds that mesh11sd will wait for a mesh interface to establish before continuing.  
+Default 10 seconds
+
+- **auto_config** - (optional) - autonomously configures the mesh network.  
+Enables autonomous dynamic mesh configuration.  
+Auto configure mesh interfaces in the wireless configuration.  
+Default 0 (disabled). Set to 1 to enable.  
+Possible values:  
+0 Disabled  
+1 Enabled  
+2 Same as 1 but executes `commit_all` and enables LuCi  
+Warning, this will lock the auto config to the initial autoconfigured mode.  
+If you want a locked portal, ensure you have the upstream Internet connection active BEFORE first boot after reflash or install.  
+For example if the meshnode initially configures as a portal, portal detect will be set to 0 permanently.  
+The effect of option 2 can be reversed by issuing the command 'mesh11sd revert_all revert'  
+When set to 0, the mesh11sd daemon will check for an existing mesh configuration.  
+Warning: If an existing mesh configuration is found, it will be honoured even if it is incorrect.  
+Manually configuring a mesh can soft brick the router if incorrectly done.  
+Auto config can be tested using the command line function 'mesh11sd auto_config test'  
+See the documentation for further information (Hint: try 'mesh11sd --help')
+
+- **auto_mesh_id** - (optional) - specifies a string used to generate the mesh id hash.  
+If set, this must be the same on all mesh nodes.  
+Default --__  
+
+- **auto_mesh_band** (optional).  
+Configure the band to use for the mesh network.  
+Valid values: 2g, 2g40, 5g, 6g, 60g  
+Default 2g40  
+If set, it must also be set to the same value on every mesh node  
+All mesh peer and mesh gate nodes will autonomously track the mesh portal channel regardless of the configured auto_mesh_band.
+
+- **mesh_phy_index** (optional).  
+Force use of a particular radio for the mesh interface.  
+Must be an integer value corresponding to the physical radio hardware (eg. phy0, phy1 etc.).  
+Default - Not Set.  
+Useful for devices with more than one phy on a particular band allowing use of a particular radio to be forced.  
+If not set, the first phy in the configured auto_mesh_band that the daemon encounters will be used for the mesh interface.  
+Example - Use the second 5GHz radio (phy2) of a three radio device, set option to the value 2.
+
+- **country** (optional).  
+Set a valid country code for all radios.  
+Defaults to DFS-ETSI if not explicitly set in wireless config.  
+If set here, will overide any setting in wireless config.
+
+- **auto_mesh_key** (optional).  
+Defaults to a sha256 key to be automatically used on all members of this mesh when auto_config is enabled.  
+Generates a secure sha256 key from the string value set in this option.  
+If set, it must also be set to the same value on every mesh node.  
+
+- **auto_mesh_network** - (optional) - specifies the firewall zone used for the mesh.  
+Typical values "lan", "guest" etc.  
+This can be set differently on each meshnode as required.  
+Firewall zone "wan" is not valid.  
+Default lan
+
+- **mesh_basename** - (optional).  
+The first 4 characters after non alphanumerics (ie special characters) are removed are used as the mesh_basename.  
+The mesh_basename is used to construct a unique mesh interface name of the form m-xxxx-n.  
+Default: 11s
+
+- **mesh_gate_base_ssid**  
+Sets the mesh gate base ssid string.  
+If ssid_suffix_enable is set to 0, must be a maximum of 30 characters in length.  
+If ssid_suffix_enable is set to 1, must be a maximum of 22 characters in length.  
+Excess characters will be truncated.  
+Default - uses the ssid string set in the wireless config.  
+When set, overrides the ssid string set in the wireless config.
+
+- **mesh_gate_encryption** (optional).  
+Determines whether this node's gate (Access Point) will be a encrypted.  
+Default: 0 (disabled).  
+Set to:  
+0 (none/owe-transition).  
+1 (sae, aka wpa3).  
+2 (sae-mixed, aka wpa2/wpa3).  
+3 (psk2, aka wpa2).  
+4 (Opportunistic Wireless Encryption - owe).
+
+- **mesh_gate_key** (optional)  
+Determines the encryption key for this node's gate.  
+Default: not set (encryption disabled).  
+Set to a secret string value to use for encrypting the node's gate.  
+Ignored if mesh_gate_encryption is set to 0 or 4.
+
+- **ssid_suffix_enable** - Add a 4 digit suffix to the ssid.  
+The 4 digits are the last 4 digits of the mac address of the mesh interface.
+
+- **vtun_enable** (optional).  
+Note: All vtun options require the ip-full and vxlan packages to be installed, otherwise the options will be ignored.  
+Enables point to multi-point vxlan tunneling from portal to all compatible nodes.  
+Default: 1 (enabled) unless portal_detect is set to 3 (cpe mode), in which case the default is 0 (disabled)  
+To disable, set to 0.
+
+- **tun_id** (optional).  
+Note: All vtun options require the ip-full and vxlan packages to be installed, otherwise the options will be ignored.  
+Sets the vxtunnel id, a decimal number between 1 and 16777216 (24 bits).  
+Default: 69
+
+- **vtun_ip** (optional).  
+Note: All vtun options require the ip-full and vxlan packages to be installed, otherwise the options will be ignored.  
+Sets the vxtunnel ipv4 gateway address to be used in the vxtunnel.  
+Becomes active if the node becomes a portal (portal_detect 0 or 1).  
+Default: auto generated subnet.
+
+- **vtun_mask** (optional).  
+Note: All vtun options require the ip-full and vxlan packages to be installed, otherwise the options will be ignored.  
+Sets the vxtunnel ipv4 address mask to be used in the vxtunnel.  
+Becomes active if the node becomes a portal (portal_detect 0 or 1).  
+Default: 255.255.255.0
+
+- **vtun_gate_encryption** (optional).  
+Note: All vtun options require the ip-full and vxlan packages to be installed, otherwise the options will be ignored.  
+Sets the vxtunnel gate encryption to be used on node gates (access points) connected to the vxtunnel.  
+Valid values are: 0 (none/owe_transition), 1 (sae, aka wpa3), 2 (sae-mixed, aka wpa2/wpa3), 3 (psk2, aka wpa2) or 4 (owe)  
+Default: 4 (owe)
+
+- **vtun_gate_key** (optional)  
+Note: All vtun options require the ip-full and vxlan packages to be installed, otherwise the options will be ignored.  
+Sets the vxtunnel gate encryption key to be used on node gates (access points) connected to the vxtunnel.  
+Must be a minimum of 8 characters in length.  
+Default: not set
+
+- **vtun_base_ssid** (optional).  
+Note: All vtun options require the ip-full and vxlan packages to be installed, otherwise the options will be ignored.  
+Sets the vxtunnel base ssid string.  
+If ssid_suffix_enable is set to 0, must be a maximum of 30 characters in length.  
+If ssid_suffix_enable is set to 1, must be a maximum of 22 characters in length.  
+Excess characters will be truncated.  
+Default: Guest
+
+- **vtun_path_cost** (optional).  
+Note: All vtun options require the ip-full and vxlan packages to be installed, otherwise the options will be ignored.  
+Sets the STP cost of the vxtunnel network.  
+Default: 10  
+Can be set to any value from 0 to 65534.  
+Setting to 0 disables STP.
+
+- **mesh_gate_enable** - enables any access points configured on the meshnode.  
+Default: 1 (enable all mesh gate access points)  
+Possible values:  
+0 Disable all mesh gate access points.  
+1 Enable all mesh gate access points.  
+2 Enable ONLY access points on radios NOT shared with a mesh interface.  
+Set to 0 to disable.  
+**Note:** If there is an interface level "disable option" (in wireless config), mesh11sd will use that setting.
+
+- **mesh_leechmode_enable** - Determines whether this node will be a gate only leech node.  
+A gate only leech node acts as an access point with a mesh backhaul connection, but does not contribute to the mesh.  
+This is useful when a node is well within the coverage of 2 or more peer nodes, as otherwise it could create unstable multi hop paths within the backhaul. It functions only on non-portal peers. It is less useful and less efficient than setting mesh_node_mobility_level greater than 0, but can help reduce backhaul overheads in congested networks.  
+Can also be set dynamically using the command line option 'mesh11sd mesh_leechmode [enable/disable]'  
+Default: 0 (disabled).  
+Set to 1 to enable (turns off the node's mesh forwarding and HWMP mac-routing).
+
+- **txpower** - set the mesh radio transmit power in dBm.  
+Takes effect immediately.
+
+- **watchdog_nonvolatile_log** - (optional - **FOR DEBUGGING PURPOSES ONLY**).  
+This enables logging of the portal detect watchdog actions in non-volatile storage.  
+The log file /mesh11sd_log/mesh11sd.log is created.  
+**THIS OPTION IS FOR PORTAL DETECT WATCHDOG DEBUGGING PURPOSES ONLY.**  
+**IF LEFT ENABLED FOR A LENGTH OF TIME IT MAY CAUSE NONE REPAIRABLE FLASH MEMORY WEAR AND USE UP FREE STORAGE SPACE.**  
+**DISABLE IMMEDIATELY AFTER DEBUGGING OPERATIONS ARE COMPLETE.**
+
+- **mesh_path_stabilisation** - This enables mesh path stabilisation, preventing multi hop path changes due to multipath signal strength jitter.  
+Useful only in cases with high levels of signal multipath interference. Enable mesh_node_mobility_level option instead.  
+Default: 0 (disabled).  
+To enable, set to 1  
+
+- **reactive_path_stabilisation_threshold** (optional).  
+If an unstable path to an immediate neighbour node is detected, a counter is incremented each checkinterval while the unstable condition continues.  
+Mesh path stabilisation is activated once the counter exceeds the threshold.  
+Default: 10 checkinterval periods.
+
+- **mesh_mac_forced_forwarding** (optional).  
+This enables mac forced forwarding on the mesh interface.  
+Default: 1 (enabled).  
+To disable, set to zero.
+
+- **gateway_proxy_arp** (optional).  
+This enables proxy arp on the gateway bridge interface.  
+Default: 1 (enabled)  
+To disable, set to zero.
+
+- **reboot_on_error** (optional).  
+If the watchdog detects a failure of ipv4 communication with a portal, the daemon will reboot the node.  
+Default: 1 (enabled)  
+To disable, set to 1
+
+- **stop_on_error** (optional).  
+If the watchdog detects a failure of ipv4 communication with a portal, the daemon will go into idle mode.  
+This is useful if the meshnode does not have a reset button and a critical error occurs, blocking access.  
+Default: 0 (disabled)  
+To enable, set to 1. This setting will override the reboot_on_error setting. 
+
+- **apmond_enable** (optional).  
+Enables the access point monitoring daemon  
+Assumes the uhttpd and px5g-mbedtls packages are installed, but other portal based https web servers can be used.  
+Default: 1 (enabled).  
+Data is collected from access point interfaces on this node and sent to the portal node.
+
+- **apmond_cgi_dir** (optional).  
+Sets the apmond cgi directory.  
+Takes effect when this node becomes a portal (portal detect 0, 1 and 4).  
+Default: /www/cgi-bin  
+
+- **mesh_backhaul_led** (optional).  
+Enables the mesh backhaul heartbeat led indicator.  
+The led indicator will be on when the mesh interface is up, changing to the Linux heartbeat signal when peer nodes are connected.  
+Default: auto  
+By default, the power or system led will be used if present.  
+Other leds can be found listed in /sys/class/leds with the format "color:function"  
+Disable this option by setting its value to "none"  
+Example, enable the "blue:run" led: option mesh_backhaul_led 'blue:run'  
+Example, disable the mesh backhaul led: option mesh_backhaul_led 'none'  
+
+- **manage_opennds_startup** (optional).  
+Enables management of opennds startup.  
+If opennds is installed, mesh11sd will manage its startup.  
+Default: 1 Enabled  
+Synchronizes nft rulesets of opennds and mesh11sd.  
+Disabling may cause crash loops in openNDS because the captive portal gatewayinterface may not be up until mesh11sd has started.
+
+- **log_mountpoint** (optional).  
+Specifies the mountpoint of storage to be used for the mesh11sd logging system.  
+Default: /tmp  
+A subdirectory "mesh11sd" will be created in the mountpoint where all logs and temporary files will be stored.  
+Ensure this mountpoint is NOT in system flash memory as it will lead to premature flash failure.  
+Typically a removable (and replaceable) usb drive is ideal.  
+Example: option log_mountpoint '/logdrive'
+
+- **max_log_entries** (optional)  
+Specifies the number of rolling log entries to be kept by the logging system (displayed by the read_log cli command).  
+Default: 500  
+Log entries are stored in the mesh11sd directory on the log_mountpoint.  
+Example: option max_log_entries '1000'
+
+- **use_default_beacon_interval** (optional).  
+When set, forces the use of the default beacon interval on the mesh phy.  
+For most drivers, the beacon interval defaults to 100ms.  
+mesh11sd dynamically sets the beacon interval according to the mesh_node_mobility_level setting.  
+Some wireless drivers fail if the beacon interval is changed (eg Qualcomm Atheros IPQ6018).  
+Default: 0 (disabled).  
+Set to 1 to force.  
+Example: option use_default_beacon_interval '1'
+
+- **mesh_dtim_period** (optional).  
+Sets the mesh DTIM period.  
+DTIM - Discovery Timeout, Total timeout (in ms) for path discovery attempts.  
+A discovery beacon is sent every mesh_dtim_period beacons.  
+A larger value will slow the discovery process but reduce the overhead.  
+mesh11sd dynamically sets the mesh_dtim_period according to the mesh_node_mobility_level setting.  
+Some wireless drivers ignore this option and continue to use the default (eg Qualcomm Atheros IPQ6018).  
+Default: 2  
+Example: option mesh_dtim_period '1'
+
+- **mesh_node_mobility_level** (optional).  
+Sets the mesh node mobility level.  
+Supported levels are 0, 1, 2, 3 and 4  
+Level 0 - not recommended for normal use - node must be stationary and carefully positioned.  
+Level 1 - Enables mesh_hwmp_rts for on air collision avoidance, enables transmit queue and aql_threshold to minimise latency, enables rapid path convergence.  
+Level 1 supports inter node relative velocities up to 1.5 metres per second.  
+Levels 2 to 4 support progressively higher relative inter node velocities at the expense of a larger and larger backhaul overhead.  
+Default: 1  
+Example: option mesh_node_mobility_level '2'
+
+- **cpe_mode** (optional).  
+Sets the cpe ipv6 mode.  
+Applicable only when portal_detect is set to 3.  
+Possible modes are prefix_delegation, relay and nat66.  
+Prefix Delegation works with all client devices, including Android, but the ISP needs to provide a prefix large enough to delegate a /64 subnet to every cpe mesh node.  
+Exhausting available delegations is a danger.  
+Relay does not require any prefix delegation, but some versions of Android devices will detect the relay and turn off the device's interface within ~60 seconds - because - Google.  
+NAT66 will work with all types of client devices, including Android, so is used as the default.  
+Default: nat66  
+Example: option cpe_mode 'prefix_delegation'
+
+- **apmon_verbose_debug_enable** (optional).  
+Enables apmon verbose debug logging.  
+Logs can be read using the mesh11sd read_log command.  
+Default 0 (disabled).  
+Example - Enable verbose logging: option apmon_verbose_debug_enable '1'
+
+- **odhcpd_log_level** (optional).  
+Sets the odhcpd log level.  
+Used for monitoring ipv6 dhcp/ra.  
+Can be set from 0 to 7  
+0 - Emergency  
+1 - Alert  
+2 - Critical  
+3 - Error  
+4 - Warning  
+5 - Notice  
+6 - Info  
+7 - Debug  
+Logs can be read using the logread command.  
+Default 3 (Error)  
+Example - Set log level to debug: option odhcpd_log_level '7'
 
 ## 11. Mesh Parameter Options
 
@@ -1568,65 +1595,65 @@ Mesh parameters can be changed only while the mesh is active.
 
 Here is a list of available parameters and their function:
 
- * mesh_retry_timeout - the initial retry timeout in millisecond units used by the Mesh Peering Open message
+ * **mesh_retry_timeout** - the initial retry timeout in millisecond units used by the Mesh Peering Open message
 
- * mesh_confirm_timeout - the initial confirm timeout in millisecond units used by the Mesh Peering Open message
+ * **mesh_confirm_timeout** - the initial confirm timeout in millisecond units used by the Mesh Peering Open message
 
- * mesh_holding_timeout - the confirm timeout in millisecond units used by the mesh peering management to close a mesh peering
+ * **mesh_holding_timeout** - the confirm timeout in millisecond units used by the mesh peering management to close a mesh peering
 
- * mesh_max_peer_links - the maximum number of peer links allowed on this mesh interface
+ * **mesh_max_peer_links** - the maximum number of peer links allowed on this mesh interface
 
- * mesh_max_retries - the maximum number of peer link open retries that can be sent to establish a new peer link instance in a mesh
+ * **mesh_max_retries** - the maximum number of peer link open retries that can be sent to establish a new peer link instance in a mesh
 
- * mesh_ttl - the value of TTL field set at a source mesh STA (STAtion)
+ * **mesh_ttl** - the value of TTL field set at a source mesh STA (STAtion)
 
- * mesh_element_ttl - the value of TTL field set at a mesh STA for path selection elements
+ * **mesh_element_ttl** - the value of TTL field set at a mesh STA for path selection elements
 
- * mesh_auto_open_plinks - whether peer links should be automatically opened when compatible mesh peers are detected [deprecated - most implementations hard coded to enabled]
+ * **mesh_auto_open_plinks** - whether peer links should be automatically opened when compatible mesh peers are detected [deprecated - most implementations hard coded to enabled]
 
- * mesh_sync_offset_max_neighor - (note the odd spelling)- the maximum number of neighbors to synchronize to
+ * **mesh_sync_offset_max_neighor** - (note the odd spelling)- the maximum number of neighbors to synchronize to
 
- * mesh_hwmp_max_preq_retries - the number of action frames containing a PREQ (PeerREQuest) that an originator mesh STA can send to a particular path target
+ * **mesh_hwmp_max_preq_retries** - the number of action frames containing a PREQ (PeerREQuest) that an originator mesh STA can send to a particular path target
 
- * mesh_path_refresh_time - how frequently to refresh mesh paths in milliseconds
+ * **mesh_path_refresh_time** - how frequently to refresh mesh paths in milliseconds
 
- * mesh_min_discovery_timeout - the minimum length of time to wait until giving up on a path discovery in milliseconds
+ * **mesh_min_discovery_timeout** - the minimum length of time to wait until giving up on a path discovery in milliseconds
 
- * mesh_hwmp_active_path_timeout - the time in milliseconds for which mesh STAs receiving a PREQ shall consider the forwarding information from the root to be valid.
+ * **mesh_hwmp_active_path_timeout** - the time in milliseconds for which mesh STAs receiving a PREQ shall consider the forwarding information from the root to be valid.
 
- * mesh_hwmp_preq_min_interval - the minimum interval of time in milliseconds during which a mesh STA can send only one action frame containing a PREQ element
+ * **mesh_hwmp_preq_min_interval** - the minimum interval of time in milliseconds during which a mesh STA can send only one action frame containing a PREQ element
 
- * mesh_hwmp_net_diameter_traversal_time - the interval of time in milliseconds that it takes for an HWMP (Hybrid Wireless Mesh Protocol) information element to propagate across the mesh
+ * **mesh_hwmp_net_diameter_traversal_time** - the interval of time in milliseconds that it takes for an HWMP (Hybrid Wireless Mesh Protocol) information element to propagate across the mesh
 
- * mesh_hwmp_rootmode - the configuration of a mesh STA as root mesh STA
+ * **mesh_hwmp_rootmode** - the configuration of a mesh STA as root mesh STA
 
- * mesh_hwmp_rann_interval - the interval of time in milliseconds between root announcements (rann - RootANNouncement)
+ * **mesh_hwmp_rann_interval** - the interval of time in milliseconds between root announcements (rann - RootANNouncement)
 
- * mesh_gate_announcements - whether to advertise that this mesh station has access to a broader network beyond the MBSS (Mesh Basic Service Set, a self-contained network of mesh stations that share a mesh profile)
+ * **mesh_gate_announcements** - whether to advertise that this mesh station has access to a broader network beyond the MBSS (Mesh Basic Service Set, a self-contained network of mesh stations that share a mesh profile)
 
- * mesh_fwding - whether the Mesh STA is forwarding or non-forwarding
+ * **mesh_fwding** - whether the Mesh STA is forwarding or non-forwarding
 
- * mesh_rssi_threshold - the threshold for average signal strength of candidate station to establish a peer link
+ * **mesh_rssi_threshold** - the threshold for average signal strength of candidate station to establish a peer link
 
- * mesh_hwmp_active_path_to_root_timeout - The time in milliseconds for which mesh STAs receiving a proactive PREQ shall consider the forwarding information to the root mesh STA to be valid
+ * **mesh_hwmp_active_path_to_root_timeout** - The time in milliseconds for which mesh STAs receiving a proactive PREQ shall consider the forwarding information to the root mesh STA to be valid
 
- * mesh_hwmp_root_interval - The interval of time in milliseconds between proactive PREQs
+ * **mesh_hwmp_root_interval** - The interval of time in milliseconds between proactive PREQs
 
- * mesh_hwmp_confirmation_interval: The minimum interval of time in milliseconds during which a mesh STA can send only one Action frame containing a PREQ element for root path confirmation
+ * **mesh_hwmp_confirmation_interval**: The minimum interval of time in milliseconds during which a mesh STA can send only one Action frame containing a PREQ element for root path confirmation
 
- * mesh_power_mode - The default mesh power save mode which will be the initial setting for new peer links
+ * **mesh_power_mode** - The default mesh power save mode which will be the initial setting for new peer links
 
- * mesh_awake_window - The duration in milliseconds the STA will remain awake after transmitting its beacon
+ * **mesh_awake_window** - The duration in milliseconds the STA will remain awake after transmitting its beacon
 
- * mesh_plink_timeout - If no tx activity is seen from a peered STA for longer than this time (in seconds), then remove it from the STA's list of peers.  Default is 0, equating to 30 minutes
+ * **mesh_plink_timeout** - If no tx activity is seen from a peered STA for longer than this time (in seconds), then remove it from the STA's list of peers.  Default is 0, equating to 30 minutes
 
- * mesh_connected_to_as - if set to true then this mesh STA will advertise in the mesh station information field that it is connected to a captive portal authentication server, or in the simplest case, an upstream router
+ * **mesh_connected_to_as** - if set to true then this mesh STA will advertise in the mesh station information field that it is connected to a captive portal authentication server, or in the simplest case, an upstream router
 
- * mesh_connected_to_gate - if set to true then this mesh STA will advertise in the mesh station information field that it is connected to a separate network infrastucture such as a wireless network or downstream router
+ * **mesh_connected_to_gate** - if set to true then this mesh STA will advertise in the mesh station information field that it is connected to a separate network infrastucture such as a wireless network or downstream router
 
- * mesh_nolearn - Try to avoid multi-hop path discovery if the destination is a direct neighbour. Note that this will not be optimal as multi-hop mac-routes will not be discovered. If using this setting, disable mesh forwarding and use another mesh routing protocol
+ * **mesh_nolearn** - Try to avoid multi-hop path discovery if the destination is a direct neighbour. Note that this will not be optimal as multi-hop mac-routes will not be discovered. This setting is most useful when using some other mesh routing protocol and is not normally used.
 
-**Acronyms used**
+**Acronyms used in mesh parameters**
 
 TTL - Time To Live
 
@@ -1656,7 +1683,16 @@ HOP_COUNT - Number of hops (intermediate nodes) to the destination.
 
 PATH_CHANGE - Number of times a path has been updated/changed.
 
-## 12. Mesh Path FLAGS Values
+MP_FLAGS - Mesh Path FLAGS, a bitmask representing the status of a backhaul peer path.
+
+HWMPSeqL - HWMP Sequence Lifetime, the number of milliseconds of remaining validity of a peer path sequence number.
+
+
+## 12. HWMP Peer Status and MP_FLAGS (Mesh Path FLAGS) Values
+Hybrid Wireless Mesh Protocol (HWMP) is the underlying protocol used for dynamic backhaul mac-routing. Its maintains a distributed mac routing table within the backhaul.  
+The stability of the path to any particular peer node can be seen in the output of the mesh11sd status command (See the Command Line Interface below).  
+The current state of links to a peer node is indicated by the Mesh Path FLAGS value for the path.    
+
 Typical Mesh FLAGS values are `0x5`, `0x15`, and `0x17`. To decode these, we refer to the Linux kernel's 802.11s implementation, specifically the `nl80211` attributes for mesh paths, as defined in the kernel source (e.g., `net/wireless/nl80211.c` and `net/mac80211/mesh.h`).
 
 The FLAGS bitmask is defined by the `NL80211_MPATH_FLAG_*` attributes in the Linux kernel. The relevant flags for mesh paths include:
@@ -1682,7 +1718,26 @@ These flags are combined into a bitmask, and the hexadecimal value in the FLAGS 
   - Meaning: The path is active, has a valid sequence number, is a root path, and is currently in the process of being resolved (e.g., HWMP is refreshing or rediscovering the path, possibly due to a timeout or metric update).
 
 ## 13. Command Line Interface
-Mesh11sd is an OpenWrt service daemon and runs continuously in the background. It does however also have a CLI interface:
+Mesh11sd is an OpenWrt service daemon and runs continuously in the background. It does however also have a CLI interface. CLI commands have multiple functions including verification of operational parameters, making runtime changes, reading of access point data and reading of logs.
+
+**CLI Quick Guide:**
+
+| Command | Description |
+|---------|-------------|
+| `mesh11sd status` | Primary verifier (config, links, apmond summary). |
+| `mesh11sd show_ap_data all` | Full apmond stats (clients per AP, rx/tx, signal, bitrates). |
+| `mesh11sd read_log [-f]` | View/follow internal logs (v6+; minimal syslog). |
+| `mesh11sd debuglevel [0-3]` | Set logging verbosity (0=quiet, 3=verbose). Runtime! |
+| `mesh11sd mesh_rssi_threshold <value>` | Set RSSI link threshold (e.g., -70 dBm). Runtime! |
+| `mesh11sd wireless channel <channel>` | Change backhaul channel (1/6/11). Runtime! |
+| `mesh11sd mobility_level <0-4>` | Switch mobility mode runtime (see Section 8). |
+| `mesh11sd commit_changes [commit-test]` | Apply/test UCI changes. |
+| `mesh11sd commit_all commit` | Persist *all* dynamic changes to disk. |
+| `mesh11sd auto_config [start-stop]` | Toggle auto-setup. |
+
+**Pro Tip**: Runtime CLI (debuglevel, RSSI, channel, mobility) = no restart. UCI changes require `system mesh11sd stop` → set → `system mesh11sd start`.
+
+**CLI Full List:**
 
       Usage: mesh11sd [option] [argument...]]
 
@@ -1735,6 +1790,15 @@ Mesh11sd is an OpenWrt service daemon and runs continuously in the background. I
           Usage: mesh11sd mesh_leechmode [enable/disable]
           Takes effect immediately
 
+        Option: mesh_node_mobility_level
+          Usage: mesh11sd mesh_node_mobility_level [level]
+          Sets the mesh node mobility level
+          Supported levels are 0, 1, 2, 3 and 4
+          Level 0 - not recommended for normal use - node must be stationary and carefully positioned
+          Level 1 - Enables mesh_hwmp_rts for on air collision avoidance, enables transmit queue and aql_threshold to minimise latency, enables rapid path convergence
+          Level 1 supports inter node relative velocities up to 1.5 metres per second
+          Levels 2 to 4 support progressively higher relative inter node velocities at the expense of a larger and larger backhaul overhead
+
         Option: stations
           List all mesh peer stations directly connected to this mesh peer station (one hop)
           Usage: mesh11sd stations
@@ -1763,68 +1827,104 @@ Mesh11sd is an OpenWrt service daemon and runs continuously in the background. I
 
         Option: force_ipv4_download
           Usage: mesh11sd force_ipv4_download
-          Forces opkg to use ipv4 for its downloads
+          Forces opkg/apk to use ipv4 for its downloads
 
         Option: download_revert_to_default
           Usage: mesh11sd download_revert_to_default
-          Reverts opkg to default for its downloads
+          Reverts opkg/apk to default for its downloads
 
         Option: dhcp4_renew
           Usage: mesh11sd dhcp4_renew
           Renews the current dhcp4 lease
 
-       Option: is_installed
-         Usage: mesh11sd is_installed [packagename]
+        Option: is_installed
+          Usage: mesh11sd is_installed [packagename]
          Checks if \"packagename\" is installed
          Returns the installation status of the package and exit code 0 if installed
 
-       Option: get_portal_ula
-         Usage: mesh11sd get_portal_ula
-         Gets the portal unique local ipv6 address (ula)
+        Option: get_portal_ula
+          Usage: mesh11sd get_portal_ula
+          Gets the portal unique local ipv6 address (ula)
 
-       Option: set_ula_prefix
-         Usage: mesh11sd set_ula_prefix [get|set|revert]
-         get - gets the current ula prefix
-         set - sets the ula prefix for the mesh backhaul based on the mesh id
-         revert - reverts a previously set ula prefix
+        Option: set_ula_prefix
+          Usage: mesh11sd set_ula_prefix [get|set|revert]
+          get - gets the current ula prefix
+          set - sets the ula prefix for the mesh backhaul based on the mesh id
+          revert - reverts a previously set ula prefix
 
-       Option: str_to_hex
-         Usage: mesh11sd str_to_hex [access_point_data_string]
-         Run length hex encodes access_point_data from apmond format
+        Option: str_to_hex
+          Usage: mesh11sd str_to_hex [access_point_data_string]
+          Run length hex encodes access_point_data from apmond format
 
-       Option: hex_to_str
-         Usage: mesh11sd hex_to_str [hex encoded_access_point_data_string]
-         Decode run length hex encoded access_point_data to apmond format
+    	    Option: hex_to_str
+          Usage: mesh11sd hex_to_str [hex encoded_access_point_data_string]
+          Decode run length hex encoded access_point_data to apmond format
 
-       Option: write_node_data
-         Usage: mesh11sd write_node_data [node_id] [querystring]
-         Called from apmond cgi script. Writes node data received by web server
+        Option: is_hex
+          Usage: mesh11sd is_hex [string]
+          Check if string contains only valid hex characters (0-9, a-f, A-F)
+          Return code 0 if string is valid hex, 1 otherwise.
 
-       Option: send_ap_data
-         Usage: mesh11sd send_ap_data
-         Sends hex encoded apmon data to portal/apmond web server
+        Option: is_ipv4addr_valid
+          Usage: mesh11sd is_ipv4addr_valid [string]
+          Check if string contains a single ipv4 address
+          Return code 0 if string is valid ipv4 address, 1 otherwise.
 
-       Option: get_ap_data
-         Usage: mesh11sd get_ap_data
-         Get json format access point data for this node
+        Option: write_node_data
+          Usage: mesh11sd write_node_data [node_id] [querystring]
+          Called from apmond cgi script. Writes node data received by web server
 
-       Option: show_ap_data
-         Usage: mesh11sd show_ap_data [node_id | all]
-         Shows json format access point data for requested node | all nodes
-         Valid on portal/apmond node
+        Option: send_ap_data
+          Usage: mesh11sd send_ap_data
+          Sends hex encoded apmon data to portal/apmond web server
+
+        Option: get_ap_data
+          Usage: mesh11sd get_ap_data
+          Get json format access point data for this node
+
+        Option: show_ap_data
+          Usage: mesh11sd show_ap_data [node_id | all]
+          Shows json format access point data for requested node | all nodes
+          Valid on portal/apmond node
+
+        Option: write_to_syslog
+          Usage: mesh11sd write_to_syslog [string to log] [debuglevel (debug, info, warn, notice, err or emerg)]
+          Writes to the syslog at the specified debuglevel
+
+        Option: write_log
+         Usage: mesh11sd write_log [string to log] [debuglevel (debug, info, warn, notice, err or emerg)]
+         Writes to the mesh11sd log at the specified debuglevel
+
+        Option: read_log
+         Usage: mesh11sd read_log [ -f ]
+         Displays the mesh11sd log
+         If -f is specified, the existing log will be deleted and all subsequent logs will be followed on the display
+
+        Option: country
+         Usage: mesh11sd country [country_code]
+         Shows the regulatory domain and country code if the optional country code is not supplied.
+         Sets the regulatory domain for the country code if it is supplied.
+         A restart or reboot is required for changes to take effect.
+
+        Option: get_valid_channels
+         Usage: mesh11sd get_valid_channels
+         Returns a list of valid wireless channels for the current country setting.
+         Note: DFS channels are not suitable for use in a mesh backhaul so are excluded.
 
 **Example status output:**
 
 ```
+root@meshnode-256e:~# mesh11sd status
 {
   "setup":{
-    "version":"5.0.0",
+    "version":"6.2.0",
     "enabled":"1",
     "procd_status":"running",
     "portal_detect":"1",
-    "portal_detect_threshold":"10",
+    "portal_detect_threshold":"5",
     "portal_channel":"default",
-    "channel_tracking_checkinterval":"30",
+    "portal_use_default_ipv4":"0",
+    "channel_tracking_checkinterval":"120",
     "mesh_mac_forced_forwarding":"1",
     "gateway_proxy_arp":"1",
     "reboot_on_error":"1",
@@ -1837,19 +1937,27 @@ Mesh11sd is an OpenWrt service daemon and runs continuously in the background. I
     "auto_mesh_id":"92d490daf46cfe534c56ddd669297e",
     "mesh_gate_enable":"1",
     "mesh_leechmode_enable":"0",
-    "mesh_gate_encryption":"0",
+    "mesh_node_mobility_level":"1",
+    "use_default_beacon_interval":"0",
+    "mesh_beacon_interval":"50",
+    "mesh_dtim_period":"2",
+    "mesh_rts_threshold":"500",
+    "mesh_queue_limit":"1000",
+    "mesh_ddr_scheduler_quantum":"3000",
+    "mesh_airtime_queue_limit":"2000",
+    "mesh_gate_encryption":"4",
     "mesh_backhaul_led":"auto",
     "vtun_enable":"1",
     "tun_id":"69",
-    "vtun_ip":"192.168.168.1",
+    "vtun_ip":"192.168.138.1",
     "vtun_mask":"255.255.255.0",
-    "vtun_gate_encryption":"0",
+    "vtun_gate_encryption":"4",
     "vtun_base_ssid":"Guest",
-    "vtun_path_cost":"10",
+    "vtun_path_cost":"65525",
     "txpower":"20",
-    "mesh_path_cost":"10",
-    "mesh_path_stabilisation":"1",
-    "reactive_path_stabilisation_threshold":"10",
+    "mesh_path_cost":"65525",
+    "mesh_path_stabilisation":"0",
+    "reactive_path_stabilisation_threshold":"5",
     "checkinterval":"10",
     "interface_timeout":"10",
     "ssid_suffix_enable":"1",
@@ -1858,7 +1966,7 @@ Mesh11sd is an OpenWrt service daemon and runs continuously in the background. I
     "debuglevel":"3"
   },
   "mesh_interfaces":{
-    "m-11s-0":{
+    "m-11s-1":{
       "mesh_retry_timeout":"255",
       "mesh_confirm_timeout":"255",
       "mesh_holding_timeout":"255",
@@ -1870,11 +1978,11 @@ Mesh11sd is an OpenWrt service daemon and runs continuously in the background. I
       "mesh_hwmp_max_preq_retries":"4",
       "mesh_path_refresh_time":"1000",
       "mesh_min_discovery_timeout":"100",
-      "mesh_hwmp_active_path_timeout":"5000",
-      "mesh_hwmp_preq_min_interval":"10",
+      "mesh_hwmp_active_path_timeout":"1465",
+      "mesh_hwmp_preq_min_interval":"586",
       "mesh_hwmp_net_diameter_traversal_time":"50",
-      "mesh_hwmp_rootmode":"4",
-      "mesh_hwmp_rann_interval":"5000",
+      "mesh_hwmp_rootmode":"3",
+      "mesh_hwmp_rann_interval":"1953",
       "mesh_gate_announcements":"1",
       "mesh_fwding":"1",
       "mesh_sync_offset_max_neighor":"50",
@@ -1884,60 +1992,97 @@ Mesh11sd is an OpenWrt service daemon and runs continuously in the background. I
       "mesh_hwmp_confirmation_interval":"2000",
       "mesh_power_mode":"active",
       "mesh_awake_window":"10",
-      "mesh_plink_timeout":"10",
+      "mesh_plink_timeout":"500",
       "mesh_connected_to_gate":"1",
       "mesh_nolearn":"0",
-      "mesh_connected_to_as":"1",
+      "mesh_connected_to_as":"0",
       "mesh_id":"92d490daf46cfe534c56ddd669297e",
-      "device":"radio0",
+      "device":"radio1",
       "channel":"1",
-      "tx_packets":"1545600",
-      "tx_bytes":"1963833436",
-      "rx_packets":"1341979",
-      "rx_bytes":"179684310",
-      "this_node":"94:83:c4:a2:8e:cb",
-      "active_peers":"2",
+      "tx_packets":"43000",
+      "tx_bytes":"6658069",
+      "rx_packets":"146966",
+      "rx_bytes":"16254142",
+      "this_node":"94:83:c4:5c:25:6e",
+      "active_peers":"4",
       "peers":{
-        "96:83:c4:30:12:8d":{
-          "next_hop":"96:83:c4:30:12:8d",
+        "96:83:c4:a3:8e:cb":{
+          "next_hop":"96:83:c4:a3:8e:cb",
           "hop_count":"1",
           "path_change_count":"1",
-          "metric":"50"
+          "metric":"18"
+          "sequence_number":"38770",
+          "hwmp_flags_bitmask":"0x15",
         },
-        "96:83:c4:24:1a:a5":{
-          "next_hop":"96:83:c4:24:1a:a5",
+        "96:83:c4:28:78:8f":{
+          "next_hop":"96:83:c4:a3:8e:cb",
+          "hop_count":"2",
+          "path_change_count":"1686",
+          "metric":"36"
+          "sequence_number":"44344",
+          "hwmp_flags_bitmask":"0x15",
+        },
+        "96:83:c4:5e:2a:52":{
+          "next_hop":"96:83:c4:a3:8e:cb",
+          "hop_count":"2",
+          "path_change_count":"23",
+          "metric":"81"
+          "sequence_number":"21275",
+          "hwmp_flags_bitmask":"0x15",
+        },
+        "96:83:c4:2f:f9:d1":{
+          "next_hop":"96:83:c4:2f:f9:d1",
           "hop_count":"1",
-          "path_change_count":"5",
-          "metric":"1051"
+          "path_change_count":"13",
+          "metric":"225"
+          "sequence_number":"39886",
+          "hwmp_flags_bitmask":"0x15",
         }
       },
-      "active_stations":"3",
+      "active_stations":"6",
       "stations":{
-        "ce:fe:af:7f:3b:e1":{
-          "proxy_node":"94:83:c4:a2:8e:cb"
+        "b4:8c:9d:ea:26:21":{
+          "proxy_node":"94:83:c4:5c:25:6e"
         },
-        "94:83:c4:30:12:8d":{
-          "proxy_node":"96:83:c4:30:12:8d"
+        "00:e0:4c:68:08:a2":{
+          "proxy_node":"96:83:c4:a3:8e:cb"
         },
-        "94:83:c4:24:1a:a5":{
-          "proxy_node":"96:83:c4:24:1a:a5"
+        "94:83:c4:2e:f9:d1":{
+          "proxy_node":"96:83:c4:2f:f9:d1"
+        },
+        "94:83:c4:5c:2a:52":{
+          "proxy_node":"96:83:c4:5e:2a:52"
+        },
+        "94:83:c4:27:78:8f":{
+          "proxy_node":"96:83:c4:28:78:8f"
+        },
+        "94:83:c4:a2:8e:cb":{
+          "proxy_node":"96:83:c4:a3:8e:cb"
         }
       }
     }
   },
   "layer2_connections":{
     "br-lan":{
-      "94:83:c4:24:1a:a5":"m-11s-0",
-      "94:83:c4:30:12:8d":"m-11s-0",
-      "96:83:c4:24:1a:a5":"m-11s-0",
-      "00:e0:4c:68:08:a2":"lan3"
+      "00:e0:4c:68:08:a2":"m-11s-1",
+      "94:83:c4:27:78:8f":"m-11s-1",
+      "94:83:c4:2e:f9:d1":"m-11s-1",
+      "94:83:c4:5c:2a:52":"m-11s-1",
+      "94:83:c4:a2:8e:cb":"m-11s-1",
+      "96:83:c4:28:78:8f":"m-11s-1"
     },
     "br-tun69":{
-      "ce:fe:af:7f:3b:e1":"owe2-0",
-      "96:83:c4:2d:1a:a5":"vxlan69"
+      "96:83:c4:2c:78:8f":"vxlan69",
+      "96:83:c4:2f:78:8f":"vxlan69",
+      "96:83:c4:31:f9:d1":"vxlan69",
+      "96:83:c4:61:2a:52":"vxlan69",
+      "96:83:c4:a7:8e:cb":"vxlan69",
+      "b4:8c:9d:ea:26:21":"vxradio0"
     }
   }
 }
+root@meshnode-256e:~#
+
 
 ```
 
@@ -2056,7 +2201,7 @@ BusyBox v1.36.1 (2023-11-14 13:38:11 UTC) built-in shell (ash)
  |_______||   __|_____|__|__||________||__|  |____|
           |__| W I R E L E S S   F R E E D O M
  -----------------------------------------------------
- OpenWrt 23.05.2, r23630-842932a63d
+ OpenWrt 24.10.4, r28959-29397011cc
  -----------------------------------------------------
 root@meshnode-1483:~# ll /tmp
 drwxrwxrwt   18 root     root           540 Feb 11 09:46 ./
@@ -2075,7 +2220,7 @@ drwxr-xr-x    2 root     root            60 Jan 19 18:58 hosts/
 drwxr-xr-x    3 root     root            60 Jan 19 18:54 lib/
 drwxrwxrwt    2 root     root           420 Jan 19 18:54 lock/
 drwxr-xr-x    2 root     root            80 Jan 19 18:54 log/
--rw-r--r--    1 root     root         15072 Feb 11 09:41 mesh11sd_3.0.1beta-1_all.ipk
+-rw-r--r--    1 root     root         15072 Feb 11 09:41 mesh11sd_6.2.0beta-1_all.ipk
 drwxr-xr-x    2 root     root            40 Jan 19 18:54 opkg-lists/
 drwxr-xr-x    2 root     root            40 Jan  1  1970 overlay/
 -rw-r--r--    1 root     root            47 Jan 19 18:58 resolv.conf
@@ -2100,16 +2245,15 @@ In an **802.11s mesh network**, the **Airtime Link Metric (ALM)** update frequen
 - **Typical Values**: Default is 100 TU (~100 ms). For mobile mesh nodes, reducing it to 50–20 TU (~20–50 ms) can improve ALM responsiveness.
 - **Configuration**: In practice, this can be set in the mesh11sd config with mesh_node_mobility_level :
 
-    ```uci set mesh11sd.setup.mesh_node_mobility_level='N'
-    ```
+    `uci set mesh11sd.setup.mesh_node_mobility_level='N'`
 
     Where "N" is 0, 1, 2, 3 or 4. The default is 1.
 
-	A value of "0" is for stationary mesh nodes with leechmode enabled.
+    A value of "0" is for stationary mesh nodes with leechmode enabled.
 
-	A value of "1" is for slowly moving or overlapping coverage area meshnodes.
+    A value of "1" is for slowly moving or overlapping coverage area meshnodes.
 
-	Values 2, 3 and 4 are for nodes with increasing relative velocities at the expense of an increasing management overhead.
+    Values 2, 3 and 4 are for nodes with increasing relative velocities at the expense of an increasing management overhead.
 
 ### Additional Influences
 - **PREQ Interval**: The `mesh_hwmp_preq_min_interval` parameter controls how often Path Request messages are sent for route discovery. Since PREQ messages can trigger link quality assessments, reducing this interval (e.g., from 2000 TU to 500 TU) indirectly affects ALM updates.
