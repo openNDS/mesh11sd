@@ -1818,44 +1818,6 @@ get_portal_state() {
 		fi
 	fi
 
-
-
-###	config_ipaddr=$(uci get network.$auto_mesh_network.ipaddr)
-#	brg_check=$(echo "$default_gw" | grep -q -w "$device"; echo -n "$?" ) # 0 if contains $device, 1 if does not
-#	gw_ip=$(echo "$default_gw" | awk -F" " 'NR==1 {printf "%s", $3}')
-#
-#	if [ -z "$default_gw" ] || [ "$brg_check" -eq 0 ]; then
-#		is_portal=""
-#		gwstatus=""
-#	else
-#
-#		if [ -z "$gw_ip" ] && [ "$config_ipaddr" = "$gw_ip" ]; then
-#			is_portal=""
-#		else
-#
-#			gwproto=$(echo "$default_gw" | grep -q -w "proto"; echo -n "$?" ) # 0 if contains proto, 1 if does not
-#			gwsrc=$(echo "$default_gw" | grep -q -w "src"; echo -n "$?" ) # 0 if contains src, 1 if does not
-#
-#			if [ "$gwproto" -eq 1 ] || [ "$gwsrc" -eq 1 ]; then
-#				# must test if upstream gateway is actually up
-#				# On an ethernet link to eg an isp router, trigger arp with a ping:
-#				gwstatus=$(ping -q -c 2 -W 1 "$gw_ip" &>/dev/null; ip neigh | grep -w "$gw_ip" | awk 'NR==1 {printf "%s", $NF}')
-#
-#			else
-#				gwstatus="REACHABLE"
-#			fi
-#
-#			if [ -z "$gwstatus" ]; then
-#				is_portal=""
-#			elif [ "$gwstatus" = "REACHABLE" ] || [ "$gwstatus" = "DELAY" ] || [ "$gwstatus" = "STALE" ]; then
-#				is_portal=$gwstatus
-#			elif [ "$gwstatus" = "PROBE" ] || [ "$gwstatus" = "INCOMPLETE" ] || [ "$gwstatus" = "FAILED" ]; then
-#				is_portal=""
-#			fi
-#		fi
-###	fi
-
-
 	if [ "$portal_detect" -eq 5 ]; then
 		detected_state="peer"
 	fi
@@ -1984,6 +1946,20 @@ portal_watchdog() {
 		else
 			failcount=0
 			network_restart=0
+		fi
+	fi
+
+	if [ "$detected_state" = "portal" ]; then
+		ipv4statusdev=$(ip -4 addr show "$device" 2> /dev/null | grep -q "inet"; echo $?)
+
+		if [ "$vtun_enable" -eq 1 ]; then
+			ipv4statustun=$(ip -4 addr show "br-tun$tun_id" 2> /dev/null | grep -q "inet"; echo $?)
+		else
+			ipv4statustun=0
+		fi
+
+		if [ "$ipv4statusdev" -eq 1 ] || [ "$ipv4statustun" -eq 1 ]; then
+			/sbin/service network restart
 		fi
 	fi
 }
