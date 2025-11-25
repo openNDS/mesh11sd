@@ -4238,33 +4238,50 @@ luci_add_custom() {
 
 		uci del luci.mesh11sd_status 2> /dev/null
 		uci set luci.mesh11sd_status=command
-		uci set luci.mesh11sd_status.name='Status of This MeshNode'
+		uci set luci.mesh11sd_status.name='Mesh11sd: MeshNode Status'
 		uci set luci.mesh11sd_status.command='mesh11sd status'
 
 		uci del luci.mesh11sd_stations 2> /dev/null
 		uci set luci.mesh11sd_stations=command
-		uci set luci.mesh11sd_stations.name='MeshNodes 1 Hop Away'
+		uci set luci.mesh11sd_stations.name='Mesh11sd: MeshNodes 1 Hop Away'
 		uci set luci.mesh11sd_stations.command='mesh11sd stations'
 
 		uci del luci.mesh11sd_connect 2> /dev/null
 		uci set luci.mesh11sd_connect=command
-		uci set luci.mesh11sd_connect.name='MeshNode List'
+		uci set luci.mesh11sd_connect.name='Mesh11sd: MeshNode List'
 		uci set luci.mesh11sd_connect.command='mesh11sd connect'
+
+		uci del luci.mesh11sd_portal_ap_data 2> /dev/null
+		uci set luci.mesh11sd_portal_ap_data=command
+		uci set luci.mesh11sd_portal_ap_data.name='Mesh11sd: Mesh Gate (AP) Data (portal node only)'
+		uci set luci.mesh11sd_portal_ap_data.command='mesh11sd show_ap_data all'
 
 		uci del luci.mesh11sd_ap_data 2> /dev/null
 		uci set luci.mesh11sd_ap_data=command
-		uci set luci.mesh11sd_ap_data.name='Mesh Gate (AP) Data'
-		uci set luci.mesh11sd_ap_data.command='mesh11sd show_ap_data all'
+		uci set luci.mesh11sd_ap_data.name='Mesh11sd: Mesh Gate (AP) Data (this node only)'
+		uci set luci.mesh11sd_ap_data.command='mesh11sd get_ap_data'
 
 		uci del luci.mesh11sd_get_portal_ula 2> /dev/null
 		uci set luci.mesh11sd_get_portal_ula=command
-		uci set luci.mesh11sd_get_portal_ula.name='Mesh Portal ULA'
+		uci set luci.mesh11sd_get_portal_ula.name='Mesh11sd: Mesh Portal ULA'
 		uci set luci.mesh11sd_get_portal_ula.command='mesh11sd get_portal_ula'
+
+		uci del luci.mesh11sd_verbose_log 2> /dev/null
+		uci set luci.mesh11sd_verbose_log=command
+		uci set luci.mesh11sd_verbose_log.name='Mesh11sd: Enable verbose debugging'
+		uci set luci.mesh11sd_verbose_log.command='mesh11sd debuglevel 3'
+
+		uci del luci.mesh11sd_normal_log 2> /dev/null
+		uci set luci.mesh11sd_normal_log=command
+		uci set luci.mesh11sd_normal_log.name='Mesh11sd: Restore notification only logging'
+		uci set luci.mesh11sd_normal_log.command='mesh11sd debuglevel 1'
 
 		uci del luci.mesh11sd_read_log 2> /dev/null
 		uci set luci.mesh11sd_read_log=command
-		uci set luci.mesh11sd_read_log.name='Read Mesh Log'
+		uci set luci.mesh11sd_read_log.name='Mesh11sd: Read Mesh Log'
 		uci set luci.mesh11sd_read_log.command='mesh11sd read_log'
+
+
 	fi
 }
 
@@ -4837,6 +4854,15 @@ wifi_chipset_detect() {
 		[ -z "$chipset" ] && chipset="unknown"
 		echo "name=\"$name\"; chipset_$name=\"$chipset\"; driver_$name=\"$driver\"" >> $tmpdir/detect
 	done
+}
+
+fix_dropbear() {
+	local fixed=$(grep -q -w "STOP=15" /etc/init.d/dropbear; echo $?)
+
+	if [ "$fixed" -eq 1 ]; then
+		sed -i '/^[[:space:]]*STOP=/c\STOP=15' /etc/init.d/dropbear
+		/sbin/service dropbear restart
+	fi
 }
 
 ##############
@@ -5997,8 +6023,11 @@ elif [ "$1" = "revert_all" ]; then
 
 			echo
 			echo "=========================================================================================================="
-
+			echo
+			echo "Rebooting..."
+			sync  # Flush disks
 			reboot
+			kill -9 $PPID
 		else
 			echo "Aborting revert_all"
 		fi
@@ -6325,6 +6354,7 @@ elif [ "$1" = "get_valid_channels" ]; then
 elif [ "$1" = "daemon" ]; then
 	# Detect what we are running on - Write $tmpdir/detect file with os, device wireless chipset and driver info
 	wifi_chipset_detect
+	fix_dropbear
 
 	debugtype="notice"
 	syslogmessage="mesh11sd is in startup"
