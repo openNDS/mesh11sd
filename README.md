@@ -114,11 +114,12 @@ At or near the end you will see wpad-basic-mbedtls. Add a minus sign (-) in fron
 At the end of the list add the following dependency packages:
 
   1. wpad-mbedtls
-  2. px5g-mbedtls
-  3. ip-full
-  4. kmod-nft-bridge
-  5. vxlan
-  6. mesh11sd
+  2. luci-ssl
+  3. luci-app-commands
+  4. ip-full
+  5. kmod-nft-bridge
+  6. vxlan
+  7. mesh11sd
 
 ***NOTE: If the node you are configuring uses ath10k-ct drivers, you must change to the none-ct versions. If you do not, mesh11sd will log an error to syslog and terminate.***
 
@@ -129,7 +130,7 @@ base-files busybox ca-bundle dnsmasq dropbear firewall4 fstools kmod-gpio-button
 kmod-leds-gpio kmod-mt7603 kmod-nft-offload kmod-usb-ohci kmod-usb2 libc libgcc
 libustream-mbedtls logd luci mtd netifd nftables odhcp6c odhcpd-ipv6only opkg
 ppp ppp-mod-pppoe procd procd-seccomp procd-ujail swconfig uci uclient-fetch urandom-seed
-urngd -wpad-basic-mbedtls wpad-mbedtls px5g-mbedtls ip-full kmod-nft-bridge vxlan mesh11sd
+urngd -wpad-basic-mbedtls wpad-mbedtls luci-ssl luci-app-commands ip-full kmod-nft-bridge vxlan mesh11sd
 ```
 
 On the Firmware Selector Window, it will be similar to this screenshot (changes highlighted in blue):
@@ -343,8 +344,8 @@ Now do the following:
  4. Install the ip-full package.
  5. Install the kmod-nft-bridge package.
  6. Install the vxlan package
- . Install the uhttpd and px5g-mbedtls packages (may already be installed along with the LuCi UI).
- 7. Finally - Install the mesh11sd package.
+ 7. Install the luci-ssl and luci-app-commands packages.
+ 8. Finally - Install the mesh11sd package.
 
 The mesh11sd daemon should now be running in a "safe" state (aka "manual mode").
 
