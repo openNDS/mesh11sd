@@ -175,7 +175,7 @@ check_mesh_mtu() {
 
 }
 
-get_current_setup () {
+get_current_setup() {
 	debuglevel=$(uci get mesh11sd.setup.debuglevel 2> /dev/null | awk '{printf "%i", $1}')
 
 	if [ -z "$debuglevel" ]; then
@@ -1709,7 +1709,7 @@ get_portal_state() {
 		return 0
 	fi
 
-	if [ "$portal_detect" -eq 1 ] || [ "$portal_detect" -eq 3 ]; then
+	if [ "$portal_detect" -eq 1 ] || [ "$portal_detect" -eq 3 ] || [ "$portal_detect" -eq 5 ]; then
 		default_gw=""
 
 		if [ "$firstloop" -eq 0 ]; then
@@ -1782,10 +1782,10 @@ get_portal_state() {
 		detected_state="peer"
 		uci set dhcp.@dnsmasq[0].authoritative='0'
 
-	elif [ "$portal_detect" -eq 5 ]; then
-		# 5 - force peer mode
-		detected_state="peer"
-		is_portal="backhaul"
+###	elif [ "$portal_detect" -eq 5 ]; then
+###		# 5 - force peer mode
+###		detected_state="peer"
+###		is_portal="backhaul"
 
 	elif [ "$portal_detect" -eq 0 ] || [ "$portal_detect" -eq 4 ]; then
 		# 0 - force portal mode
@@ -2072,6 +2072,12 @@ check_portal() {
 				echo "set dhcp.$auto_mesh_network.dhcpv6='disabled'" | uci batch
 				echo "set dhcp.$auto_mesh_network.dhcpv4='disabled'" | uci batch
 				echo "set dhcp.$auto_mesh_network.ra='disabled'" | uci batch
+				echo "del_list dhcp.$auto_mesh_network.ra_flags='managed-config'" | uci batch 2> /dev/null
+				echo "del_list dhcp.$auto_mesh_network.ra_flags='other-config'" | uci batch 2> /dev/null
+				echo "add_list dhcp.$auto_mesh_network.ra_flags='none'" | uci batch
+				echo "del_list dhcp.$auto_mesh_network.ra_dns='$portal_ula'" | uci batch 2> /dev/null
+				uci set dhcp.@dnsmasq[0].rebind_protection='0'
+
 				uci set dhcp.@dnsmasq[0].logfacility='-'
 				uci set dhcp.@dnsmasq[0].quietdhcp='1'
 
@@ -2082,6 +2088,11 @@ check_portal() {
 					uci set dhcp.vtunlan.dhcpv6='disabled'
 					uci set dhcp.vtunlan.ra='disabled'
 					uci set dhcp.vtunlan.ignore='1'
+					echo "del_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
+					echo "del_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
+					echo "add_list dhcp.vtunlan.ra_flags='none'" | uci batch
+					echo "del_list dhcp.vtunlan.ra_dns='$portal_ula'" | uci batch 2> /dev/null
+					uci set dhcp.@dnsmasq[0].rebind_protection='0'
 				fi
 
 
@@ -2197,12 +2208,23 @@ check_portal() {
 					echo "set dhcp.$auto_mesh_network.dhcpv6='server'" | uci batch
 					echo "set dhcp.$auto_mesh_network.dhcpv4='server'" | uci batch
 					echo "set dhcp.$auto_mesh_network.ra='server'" | uci batch
+					echo "del_list dhcp.$auto_mesh_network.ra_flags='none'" | uci batch 2> /dev/null
+					echo "add_list dhcp.$auto_mesh_network.ra_flags='managed-config'" | uci batch 2> /dev/null
+					echo "add_list dhcp.$auto_mesh_network.ra_flags='other-config'" | uci batch 2> /dev/null
+					echo "add_list dhcp.$auto_mesh_network.ra_dns='$portal_ula'" | uci batch 2> /dev/null
+					uci set dhcp.@dnsmasq[0].rebind_protection='1'
+
 
 
 					uci set dhcp.vtunlan.dhcpv4='disabled'
 					uci set dhcp.vtunlan.dhcpv6='disabled'
 					uci set dhcp.vtunlan.ra='disabled'
 					uci set dhcp.vtunlan.ignore='1'
+					echo "del_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
+					echo "del_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
+					echo "add_list dhcp.vtunlan.ra_flags='none'" | uci batch 2> /dev/null
+					echo "del_list dhcp.vtunlan.ra_dns='$portal_ula'" | uci batch 2> /dev/null
+					uci set dhcp.@dnsmasq[0].rebind_protection='0'
 
 				else
 					echo "set dhcp.$auto_mesh_network.ignore='0'" | uci batch
@@ -2210,12 +2232,24 @@ check_portal() {
 					echo "set dhcp.$auto_mesh_network.dhcpv6='server'" | uci batch
 					echo "set dhcp.$auto_mesh_network.dhcpv4='server'" | uci batch
 					echo "set dhcp.$auto_mesh_network.ra='server'" | uci batch
+					echo "del_list dhcp.$auto_mesh_network.ra_flags='none'" | uci batch 2> /dev/null
+					echo "add_list dhcp.$auto_mesh_network.ra_flags='managed-config'" | uci batch 2> /dev/null
+					echo "add_list dhcp.$auto_mesh_network.ra_flags='other-config'" | uci batch 2> /dev/null
+					echo "add_list dhcp.$auto_mesh_network.ra_dns='$portal_ula'" | uci batch 2> /dev/null
+					uci set dhcp.@dnsmasq[0].rebind_protection='1'
+
 
 					if [ "$vxlan_status" -eq 0 ]; then
 						uci set dhcp.vtunlan.dhcpv4='server'
 						uci set dhcp.vtunlan.dhcpv6='server'
 						uci set dhcp.vtunlan.ra='server'
 						uci set dhcp.vtunlan.ignore='0'
+						echo "del_list dhcp.vtunlan.ra_flags='none'" | uci batch 2> /dev/null
+						echo "add_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
+						echo "add_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
+						echo "add_list dhcp.vtunlan.ra_dns='$portal_ula'" | uci batch 2> /dev/null
+						uci set dhcp.@dnsmasq[0].rebind_protection='1'
+
 					fi
 				fi
 
@@ -3545,11 +3579,23 @@ create_vxlan_if() {
 		uci set dhcp.vtunlan.dhcpv6='disabled'
 		uci set dhcp.vtunlan.ra='disabled'
 		uci set dhcp.vtunlan.ignore='1'
+		echo "del_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
+		echo "del_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
+		echo "add_list dhcp.vtunlan.ra_flags='none'" | uci batch
+		echo "del_list dhcp.vtunlan.ra_dns='$portal_ula'" | uci batch 2> /dev/null
+		uci set dhcp.@dnsmasq[0].rebind_protection='0'
 	else
 		uci set dhcp.vtunlan.dhcpv4='server'
 		uci set dhcp.vtunlan.dhcpv6='server'
 		uci set dhcp.vtunlan.ra='server'
 		uci set dhcp.vtunlan.ignore='0'
+		echo "del_list dhcp.vtunlan.ra_flags='none'" | uci batch
+		echo "add_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
+		echo "add_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
+		echo "add_list dhcp.vtunlan.ra_dns='$portal_ula'" | uci batch 2> /dev/null
+		uci set dhcp.@dnsmasq[0].rebind_protection='1'
+
+
 	fi
 }
 
@@ -3657,6 +3703,11 @@ check_vtunnel() {
 						uci set dhcp.vtunlan.dhcpv6='server'
 						uci set dhcp.vtunlan.ra='server'
 						uci set dhcp.vtunlan.ignore='0'
+						echo "del_list dhcp.vtunlan.ra_flags='none'" | uci batch
+						echo "add_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
+						echo "add_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
+						echo "add_list dhcp.vtunlan.ra_dns='$portal_ula'" | uci batch 2> /dev/null
+						uci set dhcp.@dnsmasq[0].rebind_protection='1'
 					fi
 
 					if [ "$portal_detect" -eq 4 ]; then
@@ -3665,6 +3716,11 @@ check_vtunnel() {
 						uci set dhcp.vtunlan.dhcpv6='disabled'
 						uci set dhcp.vtunlan.ra='disabled'
 						uci set dhcp.vtunlan.ignore='1'
+						echo "del_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
+						echo "del_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
+						echo "add_list dhcp.vtunlan.ra_flags='none'" | uci batch
+						echo "del_list dhcp.vtunlan.ra_dns='$portal_ula'" | uci batch 2> /dev/null
+						uci set dhcp.@dnsmasq[0].rebind_protection='0'
 					fi
 				fi
 			fi
@@ -3781,7 +3837,13 @@ check_vtunnel() {
 					uci set dhcp.vtunlan.dhcpv6='disabled'
 					uci set dhcp.vtunlan.ra='disabled'
 					uci set dhcp.vtunlan.ignore='1'
+					echo "del_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
+					echo "del_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
+					echo "add_list dhcp.vtunlan.ra_flags='none'" | uci batch
+					echo "del_list dhcp.vtunlan.ra_dns='$portal_ula'" | uci batch 2> /dev/null
+					uci set dhcp.@dnsmasq[0].rebind_protection='0'
 					/sbin/service dnsmasq restart
+					/sbin/service odhcpd restart
 				fi
 			fi
 		fi
@@ -6637,6 +6699,8 @@ elif [ "$1" = "daemon" ]; then
 
 	luci_add_custom
 
+	get_portal_ula
+
 	# Start the main loop
 	while true; do
 		meshindex=0
@@ -6845,6 +6909,11 @@ elif [ "$1" = "daemon" ]; then
 									uci set dhcp.vtunlan.dhcpv6='disabled'
 									uci set dhcp.vtunlan.ra='disabled'
 									uci set dhcp.vtunlan.ignore='1'
+									echo "del_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
+									echo "del_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
+									echo "add_list dhcp.vtunlan.ra_flags='none'" | uci batch
+									echo "del_list dhcp.vtunlan.ra_dns='$portal_ula'" | uci batch 2> /dev/null
+									uci set dhcp.@dnsmasq[0].rebind_protection='0'
 								fi
 
 							fi
