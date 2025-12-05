@@ -4435,7 +4435,54 @@ send_ap_data() {
 	return "$retcode"
 }
 
+usi(){
+	ubus call system "$1" |
+	sed 's/\t/  /g' |
+	awk '{
+		out = ""
+		in_string = 0
+		for (i = 1; i <= length($0); i++) {
+			c = substr($0, i, 1)
+
+			if (c == "\"") {
+				in_string = !in_string
+				out = out c
+				continue
+			}
+
+			if (in_string) {
+				out = out c
+				continue
+			}
+
+			if (c ~ /[0-9tf]/) {
+				match(substr($0, i), /^[0-9]+|[tf][a-z]+/)
+				val = substr($0, i, RLENGTH)
+				if (val ~ /^(true|false|null|[0-9]+)$/) {
+					out = out "\"" val "\""
+					i += RLENGTH - 1
+					continue
+				}
+			}
+
+			out = out c
+		}
+		print out
+	}'
+}
+
+usi_full(){
+	printf '{\n  "board":'
+	usi board | sed 's/^/    /' | sed -e '${/^$/d;}' -e '$d'   # remove final } AND any blank line before it
+	printf '    },\n  "info":'
+	usi info  | sed 's/^/    /' | sed -e '${/^$/d;}' -e '$d'   # same for info
+	printf '  }\n}\n'
+}
+
 get_ap_data() {
+
+	usi_full
+
 	aplist=$(uci show wireless | grep "mode='ap'" | awk -F "." '{printf "%s ", $2}')
 	json_init=1
 	first_ap=1
