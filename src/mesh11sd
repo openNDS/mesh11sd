@@ -2209,6 +2209,8 @@ check_portal() {
 					echo "set dhcp.$auto_mesh_network.dhcpv4='server'" | uci batch
 					echo "set dhcp.$auto_mesh_network.ra='server'" | uci batch
 					echo "del_list dhcp.$auto_mesh_network.ra_flags='none'" | uci batch 2> /dev/null
+					echo "del_list dhcp.$auto_mesh_network.ra_flags='managed-config'" | uci batch 2> /dev/null
+					echo "del_list dhcp.$auto_mesh_network.ra_flags='other-config'" | uci batch 2> /dev/null
 					echo "add_list dhcp.$auto_mesh_network.ra_flags='managed-config'" | uci batch 2> /dev/null
 					echo "add_list dhcp.$auto_mesh_network.ra_flags='other-config'" | uci batch 2> /dev/null
 					echo "add_list dhcp.$auto_mesh_network.ra_dns='$portal_ula'" | uci batch 2> /dev/null
@@ -2233,6 +2235,8 @@ check_portal() {
 					echo "set dhcp.$auto_mesh_network.dhcpv4='server'" | uci batch
 					echo "set dhcp.$auto_mesh_network.ra='server'" | uci batch
 					echo "del_list dhcp.$auto_mesh_network.ra_flags='none'" | uci batch 2> /dev/null
+					echo "del_list dhcp.$auto_mesh_network.ra_flags='managed-config'" | uci batch 2> /dev/null
+					echo "del_list dhcp.$auto_mesh_network.ra_flags='other-config'" | uci batch 2> /dev/null
 					echo "add_list dhcp.$auto_mesh_network.ra_flags='managed-config'" | uci batch 2> /dev/null
 					echo "add_list dhcp.$auto_mesh_network.ra_flags='other-config'" | uci batch 2> /dev/null
 					echo "add_list dhcp.$auto_mesh_network.ra_dns='$portal_ula'" | uci batch 2> /dev/null
@@ -2245,6 +2249,8 @@ check_portal() {
 						uci set dhcp.vtunlan.ra='server'
 						uci set dhcp.vtunlan.ignore='0'
 						echo "del_list dhcp.vtunlan.ra_flags='none'" | uci batch 2> /dev/null
+						echo "del_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
+						echo "del_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
 						echo "add_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
 						echo "add_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
 						echo "add_list dhcp.vtunlan.ra_dns='$portal_ula'" | uci batch 2> /dev/null
@@ -3590,6 +3596,8 @@ create_vxlan_if() {
 		uci set dhcp.vtunlan.ra='server'
 		uci set dhcp.vtunlan.ignore='0'
 		echo "del_list dhcp.vtunlan.ra_flags='none'" | uci batch
+		echo "del_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
+		echo "del_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
 		echo "add_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
 		echo "add_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
 		echo "add_list dhcp.vtunlan.ra_dns='$portal_ula'" | uci batch 2> /dev/null
@@ -3648,8 +3656,10 @@ check_vtunnel() {
 					uci set dhcp.vtunlan.ra_slaac='1'
 
 					if [ "$commit_all" -eq 0 ]; then
-						uci add_list dhcp.vtunlan.ra_flags='managed-config'
-						uci add_list dhcp.vtunlan.ra_flags='other-config'
+						echo "del_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
+						echo "del_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
+						echo "add_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
+						echo "add_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
 					fi
 
 					uci set dhcp.vtunlan.ignore='1'
@@ -3704,6 +3714,8 @@ check_vtunnel() {
 						uci set dhcp.vtunlan.ra='server'
 						uci set dhcp.vtunlan.ignore='0'
 						echo "del_list dhcp.vtunlan.ra_flags='none'" | uci batch
+						echo "del_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
+						echo "del_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
 						echo "add_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
 						echo "add_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
 						echo "add_list dhcp.vtunlan.ra_dns='$portal_ula'" | uci batch 2> /dev/null
@@ -5441,13 +5453,13 @@ elif [ "$1" = "status" ]; then
 					echo "          \"path_change_count\":\"$path_change_count\","
 
 					metric=$(echo "$peer" | awk -F"/" '{printf "%s", $3}')
-					echo "          \"metric\":\"$metric\""
+					echo "          \"metric\":\"$metric\","
 
 					sequence_number=$(echo "$peer" | awk -F"/" '{printf "%s", $6}')
 					echo "          \"sequence_number\":\"$sequence_number\","
 
 					flags_bitmask=$(echo "$peer" | awk -F"/" '{printf "%s", $7}')
-					echo "          \"hwmp_flags_bitmask\":\"$flags_bitmask\","
+					echo "          \"hwmp_flags_bitmask\":\"$flags_bitmask\""
 
 					if [ "$peers" = "$peernum" ]; then
 						echo "        }"
