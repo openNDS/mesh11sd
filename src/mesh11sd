@@ -4356,7 +4356,7 @@ send_ap_data() {
 		return "$retcode"
 	fi
 
-	maxchunksize=4096
+	maxchunksize=2048
 	strindex=0
 	chunkstr=""
 	hostname=$(uci get system.@system[0].hostname 2> /dev/null | awk '{printf "%s", $1}')
@@ -4472,21 +4472,40 @@ usi(){
 }
 
 usi_full(){
-	printf '{\n  "board":'
-	usi board | sed 's/^/    /' | sed -e '${/^$/d;}' -e '$d'   # remove final } AND any blank line before it
-	printf '    },\n  "info":'
-	usi info  | sed 's/^/    /' | sed -e '${/^$/d;}' -e '$d'   # same for info
-	printf '  }\n}\n'
+	node="node@$devicemac"
+	system="system@$devicemac"
+	status="status@$devicemac"
+
+	printf '{\n  "%s": {' $node
+	printf '\n    "%s": {' $system
+	usi board | sed 's/^.'// | sed 's/^/     /' | sed -e '${/^$/d;}' -e '$d'   # remove final } AND any blank line before it
+	printf '    },\n    "%s": {' $status
+	usi info  | sed 's/^.'// | sed 's/^/     /' | sed -e '${/^$/d;}' -e '$d'   # same for info
 }
 
 get_ap_data() {
-
-	usi_full
-
 	aplist=$(uci show wireless | grep "mode='ap'" | awk -F "." '{printf "%s ", $2}')
-	json_init=1
+	json_init=0
 	first_ap=1
 	sta_flag=0
+	clients="clients@$devicemac"
+
+	local timeout=4
+
+	for i in $(seq $timeout); do
+		if [ ! -e $tmpdir/apmond/clients.loc ]; then
+			touch $tmpdir/apmond/clients.loc
+			break
+		else
+			sleep 1
+		fi
+	done
+
+	if [ "$i" -eq $timeout ]; then
+		return 0
+	fi
+
+	printf '    },\n    "%s": {\n' $clients > $tmpdir/apmond/clients
 
 	for ap in $aplist; do
 		first_sta=1
@@ -4516,35 +4535,35 @@ get_ap_data() {
 			if [ ! -z "$is_station_id" ]; then
 
 				if [ "$first_ap" -eq 0 ]; then
-					echo -n ","
+					echo "," >> $tmpdir/apmond/clients
 				fi
 
 				if [ "$first_sta" -eq 1 ]; then
-					echo -e "\n  \"$ap_ssid@$ap_ifname@$devicemac\":{"
+					echo -e "      \"$ap_ssid@$ap_ifname\": {" >> $tmpdir/apmond/clients
 				else
-					echo ","
+					echo "," >> $tmpdir/apmond/clients
 				fi
 
-				echo "$line" | awk '{printf "    \"%s\":{", $2}'; echo
+				echo "$line" | awk '{printf "        \"%s\": {", $2}' >> $tmpdir/apmond/clients; echo >> $tmpdir/apmond/clients
 			else
-				ap_param_str=$(echo "$line" | tr -d \\t | tr -s " " "_" | awk -F ":" '{printf "\"%s\":\"%s\"", $1, $2}'; echo)
+				ap_param_str=$(echo "$line" | tr -d \\t | tr -s " " "_" | awk -F ":" '{printf "\"%s\": \"%s\"", $1, $2}'; echo)
 				ap_param=$(echo "$ap_param_str" | awk -F "\"" '{printf "%s", $2}')
 
 				case $ap_param in
-					"rx_bytes") echo	"      $ap_param_str,";;
-					"tx_bytes") echo	"      $ap_param_str,";;
-					"tx_retries") echo	"      $ap_param_str,";;
-					"signal_avg") echo	"      $ap_param_str,";;
-					"tx_bitrate") echo	"      $ap_param_str,";;
-					"rx_bitrate") echo	"      $ap_param_str,";;
-					"avg_ack_signal") echo	"      $ap_param_str,";;
-					"connected_time") echo	"      $ap_param_str,";;
+					"rx_bytes") echo	"          $ap_param_str," >> $tmpdir/apmond/clients;;
+					"tx_bytes") echo	"          $ap_param_str," >> $tmpdir/apmond/clients;;
+					"tx_retries") echo	"          $ap_param_str," >> $tmpdir/apmond/clients;;
+					"signal_avg") echo	"          $ap_param_str," >> $tmpdir/apmond/clients;;
+					"tx_bitrate") echo	"          $ap_param_str," >> $tmpdir/apmond/clients;;
+					"rx_bitrate") echo	"          $ap_param_str," >> $tmpdir/apmond/clients;;
+					"avg_ack_signal") echo	"          $ap_param_str," >> $tmpdir/apmond/clients;;
+					"connected_time") echo	"          $ap_param_str," >> $tmpdir/apmond/clients;;
 					"current_time") \
 						ap_param_str=$(echo -n "$ap_param_str" | sed s/current_time/timestamp/g);\
-						echo "      $ap_param_str,";\
+						echo "          $ap_param_str," >> $tmpdir/apmond/clients;\
 						ms_to_dt "$ap_param_str"
-						echo "      \"date_time\":\"$date_time\"";\
-						echo -n "    }"\
+						echo "          \"date_time\":\"$date_time\"" >> $tmpdir/apmond/clients;\
+						echo -n "        }" >> $tmpdir/apmond/clients\
 					;;
 				esac
 			fi
@@ -4553,13 +4572,17 @@ get_ap_data() {
 		done
 
 		first_ap=0
-		echo -n -e "\n  }"
+		echo -n -e "\n      }" >> $tmpdir/apmond/clients
 
 	done
 
 	if [ "$sta_flag" -eq 1 ]; then
-		echo -e "\n}"
+		echo -e "\n    }\n  }\n}" >> $tmpdir/apmond/clients
+		usi_full
+		cat $tmpdir/apmond/clients
 	fi
+
+	rm $tmpdir/apmond/clients.loc
 }
 
 is_default() {
