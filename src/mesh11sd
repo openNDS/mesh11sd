@@ -4398,7 +4398,13 @@ send_ap_data() {
 			debugtype="debug"
 			syslogmessage="apmond - send_ap_data - chunkstatus [ $chunkstatus ], chunksize [ $chunksize ], return code [ $retcode ]"
 			write_to_syslog
-			echo "send_status=$send_status!"
+
+			if [ "$apmon_verbose_debug_enable" -eq 1 ]; then
+				debugtype="debug"
+				syslogmessage="apmond - send_status [ $send_status ]"
+				write_to_syslog
+			fi
+
 			break
 
 		elif [ "$strindex" -eq 0 ]; then
@@ -4414,7 +4420,14 @@ send_ap_data() {
 		debugtype="debug"
 		syslogmessage="apmond - send_ap_data - chunkstatus [ $chunkstatus ], chunksize [ $chunksize ], return code [ $retcode ], send_status [ $send_status ], sent [ $strindex ] "
 		write_to_syslog
-		echo "send_status=$send_status!"
+
+		if [ "$apmon_verbose_debug_enable" -eq 1 ]; then
+			debugtype="debug"
+			syslogmessage="apmond - send_command [ wget -6 -O - -U \"apmond;$hostname;$ap_macaddr;$chunkstatus;$strindex\" --no-check-certificate https://[$portal_ula]/cgi-bin/apmon.cgi?\"$chunk\" ]"
+			write_to_syslog
+			syslogmessage="apmond - send_status [ $send_status ]"
+			write_to_syslog
+		fi
 
 		if [ "$send_status" = "nack" ]; then
 			break
@@ -5676,6 +5689,7 @@ elif [ "$1" = "connect" ]; then
 		for connectto in $connectlist; do
 			linklocal="${connectto%,*}"
 			ndpmac="${connectto##*,}"
+			nodeid=$(echo "$ndpmac" | awk -F ":" '{printf "%s%s", $5. $6}')
 
 			check_if_peer
 
@@ -5688,7 +5702,7 @@ elif [ "$1" = "connect" ]; then
 
 			if [ -z "$nodeaddr" ]; then
 				ula_pref=$(uci get network.globals.ula_prefix 2>/dev/null | awk -F ":" '{printf "%s:%s:%s", $1, $2, $3}')
-				node_ula=$(ip -6 neigh | grep "$ula_pref" | grep "$ndpmac" | awk -F " " '{printf "%s", $1}')
+				node_ula=$(ip -6 neigh | grep "$ula_pref" | grep "$ndpmac" | grep "$nodeid" | awk -F " " '{printf "%s", $1}')
 
 				if [ ! -z "$node_ula" ]; then
 					echo "$ndpmacf [ ipaddress: $ip6addr] [ web_ui: https://[$node_ula] ]"
