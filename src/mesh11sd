@@ -5679,7 +5679,7 @@ elif [ "$1" = "connect" ]; then
 
 	if [ -z "$nodeaddr" ]; then
 		echo " If the node you are looking for is not in the list - re-run this command."
-		echo "=========================================================================================="
+		echo "===================================================================================================================="
 		echo " The following meshnodes are available for remote connection:"
 	fi
 
@@ -5725,7 +5725,7 @@ elif [ "$1" = "connect" ]; then
 		done
 	fi
 
-	echo "=========================================================================================="
+	echo "===================================================================================================================="
 	echo
 
 	exit 0
@@ -7067,6 +7067,8 @@ elif [ "$1" = "daemon" ]; then
 					fi
 
 				elif [ "$portal_detect" -eq 0 ]; then
+					/sbin/service dnsmasq restart
+					/sbin/service odhcpd restart
 
 					if [ -z "$opennds_conf" ] || [ "$opennds_conf" -eq 0 ]; then
 						opennds_conf=1
