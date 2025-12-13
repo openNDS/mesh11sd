@@ -18,6 +18,8 @@ version="6.2.0~be7a"
 fixup1=0
 failcount=0
 network_restart=0
+
+# initial tmpdir, use $log_mountpoint/mesh11sd once startup begins
 tmpdir="/tmp/mesh11sd"
 mkdir -p "$tmpdir"
 
@@ -194,6 +196,40 @@ get_current_setup() {
 	fi
 
 	syslogmessage="option enabled [ $enabled ]"
+	debugtype="info"
+	mute="$mutestate"
+	write_to_syslog
+
+
+	#####
+	log_mountpoint=$(uci get mesh11sd.setup.log_mountpoint 2> /dev/null)
+
+	if [ -z "$log_mountpoint" ]; then
+		log_mountpoint="/tmp"
+	fi
+
+	mountcheck=$(df | grep -w  "$log_mountpoint")
+
+	if [ -z "$mountcheck" ]; then
+		log_mountpoint="/tmp"
+	fi
+
+	syslogmessage="option log_mountpoint [ $log_mountpoint ]"
+	debugtype="info"
+	mute="$mutestate"
+	write_to_syslog
+
+	tmpdir="$log_mountpoint/mesh11sd"
+	mkdir -p "$tmpdir"
+
+	#####
+	max_log_entries=$(uci get mesh11sd.setup.max_log_entries 2> /dev/null)
+
+	if [ -z "$max_log_entries" ]; then
+		max_log_entries="500"
+	fi
+
+	syslogmessage="option max_log_entries [ $max_log_entries ]"
 	debugtype="info"
 	mute="$mutestate"
 	write_to_syslog
@@ -1013,36 +1049,6 @@ get_current_setup() {
 	write_to_syslog
 
 	#####
-	log_mountpoint=$(uci get mesh11sd.setup.log_mountpoint 2> /dev/null)
-
-	if [ -z "$log_mountpoint" ]; then
-		log_mountpoint="/tmp"
-	fi
-
-	mountcheck=$(df | grep -w  "$log_mountpoint")
-
-	if [ -z "$mountcheck" ]; then
-		log_mountpoint="/tmp"
-	fi
-
-	syslogmessage="option log_mountpoint [ $log_mountpoint ]"
-	debugtype="info"
-	mute="$mutestate"
-	write_to_syslog
-
-	#####
-	max_log_entries=$(uci get mesh11sd.setup.max_log_entries 2> /dev/null)
-
-	if [ -z "$max_log_entries" ]; then
-		max_log_entries="500"
-	fi
-
-	syslogmessage="option max_log_entries [ $max_log_entries ]"
-	debugtype="info"
-	mute="$mutestate"
-	write_to_syslog
-
-	#####
 	use_default_beacon_interval=$(uci get mesh11sd.setup.use_default_beacon_interval 2> /dev/null)
 
 	if [ -z "$use_default_beacon_interval" ] || [ "$use_default_beacon_interval" -lt 1 ]; then
@@ -1782,11 +1788,6 @@ get_portal_state() {
 		detected_state="peer"
 		uci set dhcp.@dnsmasq[0].authoritative='0'
 
-###	elif [ "$portal_detect" -eq 5 ]; then
-###		# 5 - force peer mode
-###		detected_state="peer"
-###		is_portal="backhaul"
-
 	elif [ "$portal_detect" -eq 0 ] || [ "$portal_detect" -eq 4 ]; then
 		# 0 - force portal mode
 		is_portal="forced"
@@ -1835,8 +1836,11 @@ get_portal_state() {
 }
 
 portal_watchdog() {
-	# Set auto_detect state
+	debugtype="debug"
+	syslogmessage="Portal Watchdog - checking status ...."
+	write_to_syslog
 
+	# Set auto_detect state
 	case $portal_detect in
 		"0") auto_detect="0";;
 		"1") auto_detect="1";;
@@ -2036,6 +2040,21 @@ check_portal() {
 	if [ "$enabled" -eq 1 ]; then
 		get_portal_state
 		. $tmpdir/devicemac
+
+		if [ "$portal_detect" -eq 3 ]; then
+			debugtype="debug"
+			syslogmessage="Checking CPE status"
+			write_to_syslog
+
+			wait_for_mesh
+			vxlan_status=$(ip link show vxlan$tun_id &> /dev/null; echo $?)
+
+			if [ "$vxlan_status" -eq 1 ]; then
+				check_vtunnel
+			fi
+
+			return 0
+		fi
 
 		if [ "$detected_state" != "portal" ]; then
 			# This IS NOT a layer 3 mesh portal
@@ -3093,16 +3112,13 @@ mobility_settings() {
 		write_to_syslog
 	fi
 
-	if [ -f "$tmpdir/detect" ]; then
-		. "$tmpdir/detect"
-		eval "driver=\"\$driver_phy$phyindex\""
+	mesh_driver=$(grep -A 3 "$phy" "$tmpdir/wifidetect" | grep "Driver" | awk -F "\"" '{printf "%s", $4}')
 
-		if [ "$driver" = "ath11k" ]; then
-			beacon_int=100
-			debugtype="info"
-			syslogmessage="Qualcomm ath11k detected, beacon interval override to [ $beacon_int ms ] (workaround for ath11k bug). Mesh mobility may be suboptimal."
-			write_to_syslog
-		fi
+	if [ "$mesh_driver" = "ath11k" ]; then
+		beacon_int=100
+		debugtype="info"
+		syslogmessage="Qualcomm ath11k detected, beacon interval override to [ $beacon_int ms ] (workaround for ath11k bug). Mesh mobility may be suboptimal."
+		write_to_syslog
 	fi
 
 	echo "mesh_node_mobility_level=\"$mesh_node_mobility_level\"; rootmode=\"$rootmode\"; beacon_int=\"$beacon_int\"; dtim_period=\"$dtim_period\"; \
@@ -3542,6 +3558,11 @@ check_package_list() {
 }
 
 create_vxlan_if() {
+
+	if [ "$portal_detect" -eq 3 ]; then
+		device="br-wan"
+	fi
+
 	debugtype="debug"
 	syslogmessage="create_vxlan_if [ vxlan$tun_id ], address [ $vxmac_indexed ], link_local [ $link_local_addr ], group [ ff02::$tun_id ], device [ $device ]"
 	write_to_syslog
@@ -3566,6 +3587,7 @@ create_vxlan_if() {
 
 	for retry in $(seq $retries); do
 		wait_for_interface "vxlan$tun_id"
+		vxlanstate="%ifstatus"
 
 		if [ "$ifstatus" = "down" ]; then
 			ip link set "vxlan$tun_id" up
@@ -3605,6 +3627,8 @@ create_vxlan_if() {
 
 
 	fi
+
+	. $tmpdir/devicemac
 }
 
 check_vtunnel() {
@@ -4865,128 +4889,159 @@ commit_single_change() {
 }
 
 wifi_chipset_detect() {
-	# Works on OpenWrt 23.05 → master (21 Nov 2025), radios up or down
-	# Handles phy* and wl* + all known Qualcomm/MediaTek/Ralink quirks
-
-	# 1. OpenWrt version
 	. /etc/openwrt_release 2>/dev/null
-	echo "OpenWrt=\"${DISTRIB_RELEASE:-unknown} ${DISTRIB_DESCRIPTION:-$(uname -r)}\"" >> $tmpdir/detect
+	echo "{" > /tmp/wifidetect
+	echo "  \"System\": {" >> /tmp/wifidetect
+	echo "    \"Distribution\": \"${DISTRIB_ID:-unknown}\"," >> /tmp/wifidetect
+	echo "    \"Release\": \"${DISTRIB_RELEASE:-unknown}\"," >> /tmp/wifidetect
+	echo "    \"Revision\": \"${DISTRIB_REVISION:-unknown}\"," >> /tmp/wifidetect
+	echo "    \"Target\": \"${DISTRIB_TARGET:-unknown}\"," >> /tmp/wifidetect
+	echo "    \"Architecture\": \"${DISTRIB_ARCH:-unknown}\"," >> /tmp/wifidetect
+	echo "    \"Description\": \"${DISTRIB_DESCRIPTION:-unknown}\"," >> /tmp/wifidetect
 
-	# 2. Router model – clean, no LED garbage
 	if [ -f /etc/board.json ]; then
 		device=$(grep -m1 '"name":' /etc/board.json | sed 's/.*"name": *"\([^"]*\)".*/\1/' 2>/dev/null)
-
-		if [ -n "$device" ] && ! echo "$device" | grep -Eq "(WAN|LAN|ACT|LINK|DSL|WLAN|POWER|USB|WPS)"; then
-			echo "Device=\"$device\"" >> $tmpdir/detect
+		if [ -n "$device" ] && ! echo "$device" | grep -Eqw "(WAN|LAN|ACT|LINK|DSL|WLAN|POWER|USB|WPS)"; then
+			echo "    \"Device\": \"$device\"" >> /tmp/wifidetect
 		fi
-
 	elif [ -f /tmp/sysinfo/model ]; then
-		echo "Device=\"$(cat /tmp/sysinfo/model)\"" >> $tmpdir/detect
+		echo "    \"Device\": \"$(cat /tmp/sysinfo/model)\"" >> /tmp/wifidetect
 	elif [ -f /tmp/sysinfo/board_name ]; then
-		echo "Device=\"$(cat /tmp/sysinfo/board_name)\"" >> $tmpdir/detect
+		echo "    \"Device\": \"$(cat /tmp/sysinfo/board_name)\"" >> /tmp/wifidetect
 	else
-		echo "Device=\"unknown\"" >> $tmpdir/detect
+		echo "    \"Device\": \"unknown\"" >> /tmp/wifidetect
 	fi
 
-	# 3. Wi-Fi radios – support both phy* and wl*
+	echo "  }," >> /tmp/wifidetect
+	echo "  \"phy\": {" >> /tmp/wifidetect
+
 	for dir in /sys/class/ieee80211/phy* /sys/class/ieee80211/wl*; do
 		[ -d "$dir" ] || continue
 		name="${dir##*/}"
 		driver=$(awk -F= '/^DRIVER=/ {print $2; exit}' "$dir/device/uevent" 2>/dev/null || echo "n/a")
-
 		chipset=""
 
-		# 1. Direct labels
 		chipset=$(cat "$dir/device/label" "$dir/device/name" \
 		              "$dir/mac80211/label" "$dir/mac80211/name" 2>/dev/null | head -n1 | xargs)
 
-		# 2. MediaTek Filogic / mt79xx family
+		# Broadcom brcmfmac
+		if [ -z "$chipset" ] && echo "$driver" | grep -q brcmfmac; then
+			modalias=$(tr '\0' '\n' < "$dir/device/modalias" 2>/dev/null)
+			fw=$(ls "$dir"/device/firmware/*/brcmfmac* 2>/dev/null | head -n1 | xargs basename 2>/dev/null || true)
+			case "$modalias:$fw" in
+				*bcm4329*|*bcm4330*) chipset="Broadcom BCM4329/BCM4330 (Wi-Fi 4)" ;;
+				*bcm43430*)          chipset="Broadcom BCM43430 (Wi-Fi 5)" ;;
+				*bcm43455*)          chipset="Broadcom BCM43455 (Wi-Fi 5)" ;;
+				*bcm4356*)           chipset="Broadcom BCM4356 (Wi-Fi 5)" ;;
+				*bcm4378*)           chipset="Broadcom BCM4378 (Wi-Fi 6)" ;;
+				*)                   chipset="Broadcom brcmfmac (Wi-Fi)" ;;
+			esac
+		fi
+
+		# MediaTek Filogic / mt79xx family – now includes MT7996 Wi-Fi 7
 		if [ -z "$chipset" ] && [ -f "$dir/device/modalias" ]; then
 			modalias=$(tr '\0' '\n' < "$dir/device/modalias" 2>/dev/null)
-
 			if echo "$modalias" | grep -iq 'mt79'; then
-
-				if echo "$modalias" | grep -iq '798'; then
-					chipset="MediaTek Filogic 830/810/880 (MT798x integrated WiFi)"
-				elif echo "$modalias" | grep -iq '7915'; then
-					chipset="MediaTek MT7915E (Wi-Fi 6)"
-				elif echo "$modalias" | grep -iq '7976'; then
-					chipset="MediaTek MT7976CN (Wi-Fi 6)"
-				elif echo "$modalias" | grep -iq '792'; then
-					chipset="MediaTek MT792x"
+				if echo "$modalias" | grep -iq '7996'; then chipset="MediaTek MT7996 (Wi-Fi 7)"
+				elif echo "$modalias" | grep -iq '798'; then chipset="MediaTek Filogic 830/810/880 (MT798x integrated WiFi)"
+				elif echo "$modalias" | grep -iq '7916'; then chipset="MediaTek MT7916 (Wi-Fi 6E)"
+				elif echo "$modalias" | grep -iq '7915'; then chipset="MediaTek MT7915E (Wi-Fi 6)"
+				elif echo "$modalias" | grep -iq '792'; then chipset="MediaTek MT792x"
 				fi
 			fi
 		fi
 
-		# 3. Older MediaTek PCIe drivers
-		if [ -z "$chipset" ] && echo "$driver" | grep -q -E 'mt7603e|mt76x2e|mt7662|mt7915e'; then
+		# Older MediaTek PCIe + USB
+		if [ -z "$chipset" ] && echo "$driver" | grep -q -E 'mt7603e|mt76x2e|mt7915e|mt7615e|mt76x0u'; then
 			case "$driver" in
 				mt7915e) chipset="MediaTek MT7915E (Wi-Fi 6)" ;;
 				mt7615e) chipset="MediaTek MT7615E (Wi-Fi 5)" ;;
 				mt7603e) chipset="MediaTek MT7603E (2.4 GHz)" ;;
 				mt76x2e) chipset="MediaTek MT76x2E (5 GHz)" ;;
-				mt7662*) chipset="MediaTek MT7662 (2.4/5 GHz)" ;;
+				mt76x0u) chipset="MediaTek MT7610U (Wi-Fi 5 USB) (mt76x0u)" ;;
 			esac
 		fi
 
-		# 4. Legacy MediaTek SoCs with mt76_wmac
+		# Legacy MediaTek SoCs with mt76_wmac – all patterns quoted (hyphen-safe)
 		if [ -z "$chipset" ] && echo "$driver" | grep -q mt76_wmac; then
 			compat=$(grep -h '^OF_COMPATIBLE_' "$dir"/hwmon/hwmon*/uevent "$dir"/hwmon*/uevent 2>/dev/null | head -n1 | cut -d= -f2)
 			case "$compat" in
-				*mt7628*|*mt7628an*) chipset="MediaTek MT7628AN (integrated 2.4 GHz)" ;;
-				*mt7621*|*mt7621an*) chipset="MediaTek MT7621AN/AT (integrated 2.4 GHz)" ;;
-				*mt7622*)            chipset="MediaTek MT7622 (integrated 2.4/5 GHz)" ;;
-				*mt7620*)            chipset="MediaTek MT7620N (integrated 2.4 GHz)" ;;
-				*)                   chipset="Legacy MediaTek mt76_wmac SoC" ;;
+				*"mt7628"*) chipset="MediaTek MT7628AN (integrated 2.4 GHz)" ;;
+				*"mt7621"*) chipset="MediaTek MT7621AN/AT (integrated 2.4 GHz)" ;;
+				*"mt7622"*) chipset="MediaTek MT7622 (integrated 2.4/5 GHz)" ;;
+				*"mt7620"*) chipset="MediaTek MT7620N (integrated 2.4 GHz)" ;;
+				*)          chipset="Legacy MediaTek mt76_wmac SoC" ;;
 			esac
 		fi
 
-		# 5. Ralink rt2800pci
-		if [ -z "$chipset" ] && echo "$driver" | grep -q rt2800pci; then
-			chipset="Ralink RT3062 / RT3562 / RT3593 (rt2800pci – Wi-Fi 4)"
+		# MediaTek Filogic 820/830 integrated (mt7622-wmac – E8450 etc.)
+		if [ -z "$chipset" ] && echo "$driver" | grep -q mt7622-wmac; then
+			chipset="MediaTek MT7622 (integrated 2.4 GHz)"
 		fi
 
-		# 6. Marvell mwlwifi (Linksys WRT1900ACS, WRT1200AC, WRT32X, etc.)
-		if [ -z "$chipset" ] && echo "$driver" | grep -q mwlwifi; then
-			chipset="Marvell 88W8864 (Wi-Fi 5) (mwlwifi)"
+		# Ralink rt2800pci / rt2800usb
+		if [ -z "$chipset" ] && echo "$driver" | grep -q -E 'rt2800pci|rt2800usb'; then
+			chipset="Ralink RT5370/RT3070 (2.4 GHz, Wi-Fi 4)"
 		fi
 
-		# 7. Qualcomm Atheros – ath9k + ath10k + ath11k
+		# Realtek rtl8192cu
+		if [ -z "$chipset" ] && echo "$driver" | grep -q rtl8192cu; then
+			chipset="Realtek RTL8192CU (2.4/5 GHz, Wi-Fi 4)"
+		fi
+
+		# Marvell mwlwifi mwifiex_sdio
+		if [ -z "$chipset" ] && echo "$driver" | grep -q -E 'mwlwifi|mwifiex_sdio'; then
+			compat=$(grep -Eh 'PCI_ID|SDIO_ID' "$dir"/device/uevent 2>/dev/null | cut -d= -f2)
+			case "$compat" in
+				"11AB:2A55") chipset="Marvell 88W8864 (2.4/5 GHz, Wi-Fi 5)" ;;
+				"11AB:2B40") chipset="Marvell 88W8964 (2.4/5 GHz, Wi-Fi 5)" ;;
+				"11AB:2B38") chipset="Marvell 88W8897 (2.4/5 GHz, Wi-Fi 5)" ;;
+				"02DF:9135") chipset="Marvell 88W8887 (2.4/5 GHz, Wi-Fi 5)" ;;
+				*) chipset="unknown Marvell Wi-Fi" ;;
+			esac
+		fi
+
+		# Qualcomm Atheros – ath9k + ath10k + ath11k
 		if [ -z "$chipset" ] && echo "$driver" | grep -q -E 'ath9k|ath10k|ath11k'; then
 			compat=$(grep -h '^OF_COMPATIBLE_' "$dir"/hwmon/hwmon*/uevent "$dir"/hwmon*/uevent 2>/dev/null | head -n1 | cut -d= -f2)
 
+			if [ -z "$compat" ]; then
+				compat=$(grep -h '^OF_COMPATIBLE_' "$dir"/device/uevent 2>/dev/null | head -n1 | cut -d= -f2)
+			fi
+
 			case "$driver" in
 				ath9k)
-					label=$(cat "$dir/device/label" 2>/dev/null || true)
+					case "$compat" in
+						*"qca,qca9530-wmac"*) chipset="Qualcomm Atheros AR953x series (2.4 GHz, Wi-Fi 4)" ;;
+						*)                    chipset="Qualcomm Atheros AR93xx/AR5416 series" ;;
+					esac
+					;;
 
-					if [ -n "$label" ]; then
-						chipset="Qualcomm Atheros $label (ath9k)"
-					else
-						chipset="Qualcomm Atheros AR93xx/AR5416 series (ath9k)"
-					fi
-					;;
-				ath10k_ahb)
-					chipset="Qualcomm Atheros QCA9886 (ath10k_ahb – older Lantiq VRX518 platform)"
-					;;
-				ath10k_pci)
-					chipset="Qualcomm Atheros QCA9984/QCA9886 (ath10k_pci – ipq40xx, etc.)"
-					;;
+				ath10k_ahb) chipset="Qualcomm Atheros QCA9886 (Lantiq)" ;;
+				ath10k_pci) chipset="Qualcomm Atheros QCA9984/QCA9886" ;;
 				ath11k)
 					case "$compat" in
-						*ipq5018-wifi*) chipset="Qualcomm IPQ5018 integrated 2.4 GHz (ath11k)" ;;
-						*qcn6122*)      chipset="Qualcomm QCN6122 (Wi-Fi 6E) (ath11k)" ;;
-						*qcn9074*)      chipset="Qualcomm QCN9074 (ath11k)" ;;
-						*ipq6018-wifi*) chipset="Qualcomm QCN9074 (ath11k)" ;;
-						*ipq807*)       chipset="Qualcomm QCN9074/QCN5024 (ath11k)" ;;
-						*)              chipset="Qualcomm ath11k Wi-Fi 6" ;;
+						*"ipq5018-wifi"*) chipset="Qualcomm IPQ5018 integrated 2.4 GHz" ;;
+						*"qcn6122"*)      chipset="Qualcomm QCN6122 (Wi-Fi 6E)" ;;
+						*"qcn9074"*)      chipset="Qualcomm QCN9074" ;;
+						*"ipq6018-wifi"*) chipset="Qualcomm QCN9074" ;;
+						*"ipq807"*)       chipset="Qualcomm QCN9074/QCN5024" ;;
+						*)                chipset="Qualcomm QCN9074/QCN5024" ;;
 					esac
 					;;
 			esac
 		fi
 
 		[ -z "$chipset" ] && chipset="unknown"
-		echo "name=\"$name\"; chipset_$name=\"$chipset\"; driver_$name=\"$driver\"" >> $tmpdir/detect
+		echo "    \"$name\": {" >> /tmp/wifidetect
+		echo "      \"Chipset\": \"$chipset\"," >> /tmp/wifidetect
+		echo "      \"Driver\": \"$driver\"" >> /tmp/wifidetect
+		echo "    }," >> /tmp/wifidetect
 	done
+
+	sed -i '$ s/.$//' /tmp/wifidetect
+	echo "  }" >> /tmp/wifidetect
+	echo "}" >> /tmp/wifidetect
 }
 
 fix_dropbear() {
@@ -6485,9 +6540,17 @@ elif [ "$1" = "get_valid_channels" ]; then
 	echo "$valid_channels"
 	exit 0
 
-elif [ "$1" = "daemon" ]; then
-	# Detect what we are running on - Write $tmpdir/detect file with os, device wireless chipset and driver info
+elif [ "$1" = "wifi_chipset_detect" ]; then
 	wifi_chipset_detect
+	exit 0
+
+elif [ "$1" = "daemon" ]; then
+	# Detect what we are running on - Write $tmpdir/wifidetect file with os, device wireless chipset and driver info
+	# vars Sdriver, $chipset and others are set
+	wifi_chipset_detect
+	mv "/tmp/wifidetect" "$tmpdir/wifidetect"
+
+	# Fix dropbear - make sure reboot terminates ssh session before closing wireless
 	fix_dropbear
 
 	debugtype="notice"
@@ -6514,6 +6577,7 @@ elif [ "$1" = "daemon" ]; then
 	apmondloopcount=0
 	apmondloopstart=6
 	setroute=0
+	check_channel_now=0
 
 	#loop counter for Mesh Reactive Stabilsation Threshold:
 	mrstloopcount=0
@@ -6558,10 +6622,20 @@ elif [ "$1" = "daemon" ]; then
 		for config in $configs; do
 			uci revert "$config"
 
+			# Copy the default config if we have not already done so
 			if [ ! -f "/etc/config/$config""_mesh11sd_default" ]; then
 				cp "/etc/config/$config" "/etc/config/$config""_mesh11sd_default"
 			fi
 
+		done
+
+		# Force a restart of ethernet ports - some built in switch chips do not initialise on reboot, only on cold start
+		ports=$(cat /etc/config/network_mesh11sd_default | grep "list ports" | awk -F "'" '{printf "%s ", $2}' )
+		wanport=$(uci get network_mesh11sd_default.wan.device)
+		ports="$ports""$wanport"
+
+		for port in $ports; do
+			ip link set $port down && sleep 1 && ip link set $port up
 		done
 
 		# Do we have a previously commited auto_config? If so get the active_mesh_ifname.
@@ -6579,6 +6653,10 @@ elif [ "$1" = "daemon" ]; then
 				fi
 			done
 		fi
+
+		# Disable mld - ensures odhcp6c does not use ubus calls, as this fails with some wireless drivers in a bridge eg ath11k
+		echo "set network.$auto_mesh_network.disable_mld='1'" | uci batch
+		echo "set network.wan6.disable_mld='1'" | uci batch
 
 		if [ "$portal_detect" -ne 3 ]; then
 			echo "set network.$auto_mesh_network.ip6assign='64'" | uci batch
