@@ -1590,43 +1590,9 @@ check_channel() {
 			mode=$(echo "$ucibatch" | uci batch)
 
 			if [ "$mode" = "mesh" ]; then
-				ucibatch="get wireless.$iface.network"
-				network=$(echo "$ucibatch" | uci batch)
-				ucibatch="get network.$network.device"
-				device=$(echo "$ucibatch" | uci batch)
-
-				if [ -f "$tmpdir/dhcp6probe" ]; then
-					mv "$tmpdir/dhcp6probe" "$tmpdir/dhcp6probe.prev"
-				fi
-
-				debugtype="debug"
-				syslogmessage="Checking portal ipv6 connectivity on device [ $device ]..."
-				write_to_syslog
-
-
-				odhcp6c -p /var/run/odhcp6c-renew-$device.pid -e -v -k "$device" 2>$tmpdir/dhcp6probe &
-
-				local retries=20
-
-				for retry in $(seq $retries); do
-
-					if [ -f "$tmpdir/dhcp6probe" ]; then
-						sleep 4
-						break
-					else
-						sleep 1
-						continue
-					fi
-				done
-
-				link_to_portal=$(cat $tmpdir/dhcp6probe 2>/dev/null | grep -q -w "Got a valid ADVERTISE" ; echo -n "$?")
-
-				# NOTE: odhcp6c -p option does not work and pid is not recorded, so we have to look up the pid using ps utility
-				instances=$(ps | grep "odhcp6c" | grep "/var/run/odhcp6c-renew-$device.pid" | awk '{printf "%s ", $1}')
-
-				for instance in $instances; do
-					kill "$instance"
-				done
+				network=$(echo "get wireless.$iface.network" | uci batch)
+				device=$(echo "get network.$network.device" | uci batch)
+				get_portal_ula
 
 				debugtype="debug"
 
@@ -3984,9 +3950,12 @@ set_ula_prefix() {
 }
 
 get_portal_ula() {
+	# Calculates portal ula from common mesh id etc and ping it 
+	# If failed, tries vxlan tunnel
+	# returns $portal_ula if found and $pingstatus (>0 if failed)
 	set_ula_prefix "get"
 	portal_ula="$(echo "$ula_prefix" | awk -F "/" '{printf "%s", $1}')""1"
-	pingstatus=$(ping -q -W 1 -c 1 "$portal_ula" &>/dev/null ; echo $?)
+	pingstatus=$(ping -q -W 10 -c 1 "$portal_ula" &>/dev/null ; echo $?)
 
 	if [ "$pingstatus" -eq 1 ]; then
 		portal_ula_vtun=$(echo "$portal_ula" | awk -F "::" '{printf "%s:1::%s", $1, $2}')
@@ -3996,6 +3965,8 @@ get_portal_ula() {
 			portal_ula="$portal_ula_vtun"
 		fi
 	fi
+
+	link_to_portal=$pingstatus
 }
 
 str_to_hex() {
@@ -4889,9 +4860,23 @@ commit_single_change() {
 }
 
 wifi_chipset_detect() {
+	# Attempt to get the label mac
+	ifaces="wan eth1 eth0"
+
+	for iface in $ifaces; do
+		labelmac=$(cat /sys/class/net/$iface/address 2>/dev/null)
+
+		if [ -z "$labelmac" ]; then
+			continue
+		else
+			labelmac="@$labelmac"
+			break
+		fi
+	done
+
 	. /etc/openwrt_release 2>/dev/null
 	echo "{" > /tmp/wifidetect
-	echo "  \"System\": {" >> /tmp/wifidetect
+	echo "  \"System$labelmac\": {" >> /tmp/wifidetect
 	echo "    \"Distribution\": \"${DISTRIB_ID:-unknown}\"," >> /tmp/wifidetect
 	echo "    \"Release\": \"${DISTRIB_RELEASE:-unknown}\"," >> /tmp/wifidetect
 	echo "    \"Revision\": \"${DISTRIB_REVISION:-unknown}\"," >> /tmp/wifidetect
@@ -4902,24 +4887,62 @@ wifi_chipset_detect() {
 	if [ -f /etc/board.json ]; then
 		device=$(grep -m1 '"name":' /etc/board.json | sed 's/.*"name": *"\([^"]*\)".*/\1/' 2>/dev/null)
 		if [ -n "$device" ] && ! echo "$device" | grep -Eqw "(WAN|LAN|ACT|LINK|DSL|WLAN|POWER|USB|WPS)"; then
-			echo "    \"Device\": \"$device\"" >> /tmp/wifidetect
+			echo "    \"Device\": \"$device\"," >> /tmp/wifidetect
 		fi
 	elif [ -f /tmp/sysinfo/model ]; then
-		echo "    \"Device\": \"$(cat /tmp/sysinfo/model)\"" >> /tmp/wifidetect
+		echo "    \"Device\": \"$(cat /tmp/sysinfo/model)\"," >> /tmp/wifidetect
 	elif [ -f /tmp/sysinfo/board_name ]; then
-		echo "    \"Device\": \"$(cat /tmp/sysinfo/board_name)\"" >> /tmp/wifidetect
+		echo "    \"Device\": \"$(cat /tmp/sysinfo/board_name)\"," >> /tmp/wifidetect
 	else
-		echo "    \"Device\": \"unknown\"" >> /tmp/wifidetect
+		echo "    \"Device\": \"unknown\"," >> /tmp/wifidetect
 	fi
 
-	echo "  }," >> /tmp/wifidetect
-	echo "  \"phy\": {" >> /tmp/wifidetect
+	echo "    \"phy\": {" >> /tmp/wifidetect
 
 	for dir in /sys/class/ieee80211/phy* /sys/class/ieee80211/wl*; do
 		[ -d "$dir" ] || continue
 		name="${dir##*/}"
 		driver=$(awk -F= '/^DRIVER=/ {print $2; exit}' "$dir/device/uevent" 2>/dev/null || echo "n/a")
 		chipset=""
+
+		# Band detection for multi-band capable PHYs (works even if radio is down)
+		phy_info=$(iw phy "$name" info 2>/dev/null)
+		bands=""
+
+		# Dynamically detect each band section and determine its type based on frequencies
+		for band_num in 1 2 3 4; do
+			if echo "$phy_info" | grep -q "Band ${band_num}:"; then
+				next_band=$((band_num + 1))
+				# Extract the band section up to the next band or EOF
+				band_info=$(echo "$phy_info" | sed -n "/Band ${band_num}:/,/Band ${next_band}:/p")
+				# If next band exists, remove the last line (which is "Band ${next_band}:")
+				if echo "$band_info" | grep -q "Band ${next_band}:"; then
+					band_info=$(echo "$band_info" | sed '$d')
+				fi
+
+				# Detect band type from frequencies in this section
+				if echo "$band_info" | grep -qE "[* ]+24[0-9]{2}(\.0)? MHz"; then
+					[ -n "$bands" ] && bands="$bands/2.4GHz" || bands="2.4GHz"
+				elif echo "$band_info" | grep -qE "[* ]+5[0-9]{3}(\.0)? MHz"; then
+					[ -n "$bands" ] && bands="$bands/5GHz" || bands="5GHz"
+				elif echo "$band_info" | grep -qE "[* ]+[6-7][0-9]{3}(\.0)? MHz"; then
+					[ -n "$bands" ] && bands="$bands/6GHz" || bands="6GHz"
+				fi
+			fi
+		done
+
+		# Fallback: if no Band sections found or no bands detected, try raw frequency matching
+		if [ -z "$bands" ]; then
+			if echo "$phy_info" | grep -qE "24[0-9]{2}(\.0)? MHz"; then
+				bands="2.4GHz"
+			fi
+			if echo "$phy_info" | grep -qE "5[0-9]{3}(\.0)? MHz"; then
+				[ -n "$bands" ] && bands="$bands/5GHz" || bands="5GHz"
+			fi
+			if echo "$phy_info" | grep -qE "[6-7][0-9]{3}(\.0)? MHz"; then
+				[ -n "$bands" ] && bands="$bands/6GHz" || bands="6GHz"
+			fi
+		fi
 
 		chipset=$(cat "$dir/device/label" "$dir/device/name" \
 		              "$dir/mac80211/label" "$dir/mac80211/name" 2>/dev/null | head -n1 | xargs)
@@ -5033,13 +5056,14 @@ wifi_chipset_detect() {
 		fi
 
 		[ -z "$chipset" ] && chipset="unknown"
-		echo "    \"$name\": {" >> /tmp/wifidetect
-		echo "      \"Chipset\": \"$chipset\"," >> /tmp/wifidetect
-		echo "      \"Driver\": \"$driver\"" >> /tmp/wifidetect
-		echo "    }," >> /tmp/wifidetect
+		echo "      \"$name\": {" >> /tmp/wifidetect
+		echo "        \"Chipset\": \"$bands $chipset\"," >> /tmp/wifidetect
+		echo "        \"Driver\": \"$driver\"" >> /tmp/wifidetect
+		echo "      }," >> /tmp/wifidetect
 	done
 
 	sed -i '$ s/.$//' /tmp/wifidetect
+	echo "    }" >> /tmp/wifidetect
 	echo "  }" >> /tmp/wifidetect
 	echo "}" >> /tmp/wifidetect
 }
@@ -5762,7 +5786,13 @@ elif [ "$1" = "connect" ]; then
 				if [ ! -z "$node_ula" ]; then
 					echo "$ndpmacf [ ipaddress: $ip6addr] [ web_ui: https://[$node_ula] ]"
 				else
-					echo "$ndpmacf [ ipaddress: $ip6addr]"
+					node_ula=$(ip -6 neigh | grep "$ula_pref" | grep "$ndpmac" | awk -F " " '{printf "%s", $1}')
+
+					if [ ! -z "$node_ula" ]; then
+						echo "$ndpmacf [ ipaddress: $ip6addr] [ web_ui: https://[$node_ula] ]"
+					else
+						echo "$ndpmacf [ ipaddress: $ip6addr]"
+					fi
 				fi
 
 			elif [ ! -z "$nodeaddr" ]; then
@@ -6653,10 +6683,6 @@ elif [ "$1" = "daemon" ]; then
 				fi
 			done
 		fi
-
-		# Disable mld - ensures odhcp6c does not use ubus calls, as this fails with some wireless drivers in a bridge eg ath11k
-		echo "set network.$auto_mesh_network.disable_mld='1'" | uci batch
-		echo "set network.wan6.disable_mld='1'" | uci batch
 
 		if [ "$portal_detect" -ne 3 ]; then
 			echo "set network.$auto_mesh_network.ip6assign='64'" | uci batch
