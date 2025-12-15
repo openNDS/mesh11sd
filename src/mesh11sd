@@ -6767,7 +6767,7 @@ elif [ "$1" = "daemon" ]; then
 				write_to_syslog
 			fi
 
-			suffix=$(echo $devicemac | awk -F":" '{printf "%s%s", $5, $6}')
+			suffix=$(echo $bridge_mac | awk -F":" '{printf "%s%s", $5, $6}')
 
 			if [ "$cpe_mode" = "relay" ]; then
 				## Relay Mode - May fail with some versions of Android, Android turns off its interface after ~60 seconds - because Google
