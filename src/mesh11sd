@@ -2565,13 +2565,6 @@ refresh_bridgemac() {
 
 	wait_for_interface "$device"
 	devicemac=$(ip link | grep -A 1 "$device:" | grep -w "link/ether" | awk '{printf "%s", $2}')
-
-	if [ ! -f "/etc/factory_mac" ]; then
-		echo "factory_mac=\"$devicemac\"" > /etc/factory_mac
-	fi
-
-	. /etc/factory_mac
-
 	echo "device=\"$device\" ; devicemac=\"$devicemac\"" > $tmpdir/devicemac
 }
 
@@ -2932,6 +2925,8 @@ urlencode() {
 		s/>/%3E/g
 		s/</%3C/g
 		s/'/%27/g
+		s/(/%28/g
+		s/)/%29/g
 		s/\`/%60/g
 	"
 	local buffer="$1"
@@ -2952,6 +2947,8 @@ urldecode() {
 		s/%3E/>/g
 		s/%3C/</g
 		s/%27/'/g
+		s/%28/(/g
+		s/%29/)/g
 		s/%60/\`/g
 		s/%25/%/g
 	"
@@ -4484,22 +4481,24 @@ usi_full(){
 	system="system@$devicemac"
 	status="status@$devicemac"
 
-	printf '{\n  "%s": {' $node
-	printf '\n    "%s": {' $system
-	usi board | sed 's/^.'// | sed 's/^/     /' | sed -e '${/^$/d;}' -e '$d'   # remove final } AND any blank line before it
-	printf '    },\n    "%s": {' $status
-	usi info  | sed 's/^.'// | sed 's/^/     /' | sed -e '${/^$/d;}' -e '$d'   # same for info
+	detect=$(cat "$tmpdir/wifidetect")
+	strlen="$((${#detect}))"
+	detect=${detect:0:strlen-12}
+	echo "$detect"
+	echo "    },"
+	echo "    \"status\": \"placeholder\","
+	#usi info  | sed 's/^.'// | sed 's/^/     /' | sed -e '${/^$/d;}' -e '$d'   # same for info
 }
 
 get_ap_data() {
 	aplist=$(uci show wireless | grep "mode='ap'" | awk -F "." '{printf "%s ", $2}')
-	json_init=0
 	first_ap=1
 	sta_flag=0
 	clients="clients@$devicemac"
 
 	local timeout=4
 
+	# create a lock file
 	for i in $(seq $timeout); do
 		if [ ! -e $tmpdir/apmond/clients.loc ]; then
 			touch $tmpdir/apmond/clients.loc
@@ -4509,29 +4508,29 @@ get_ap_data() {
 		fi
 	done
 
+	# abort if unable to lock
 	if [ "$i" -eq $timeout ]; then
 		return 0
 	fi
 
-	printf '    },\n    "%s": {\n' $clients > $tmpdir/apmond/clients
+	# Output the clients at node_mac line for this node
+	printf '    "%s": {\n' $clients > $tmpdir/apmond/clients
 
+	# Scan around the aps on this node
 	for ap in $aplist; do
 		first_sta=1
 		ap_ifname=$(uci get wireless."$ap".ifname)
 		ap_ssid=$(uci get wireless."$ap".ssid)
 		iw dev "$ap_ifname" station dump 2>/dev/null > $tmpdir/stations
 
+		# if no stations, skip to next ap
 		if [ ! -s "$tmpdir/stations" ]; then
 			continue
 		else
-			sta_flag=1
+			sta_flag=1 # flag that we have some stations
 		fi
 
-		if [ "$json_init" -eq 1 ]; then
-			echo -n "{"
-			json_init=0
-		fi
-
+		# Scan around stations on this ap
 		cat /tmp/mesh11sd/stations | while read line; do
 
 			if [ -z "$line" ]; then
@@ -4542,14 +4541,14 @@ get_ap_data() {
 
 			if [ ! -z "$is_station_id" ]; then
 
-				if [ "$first_ap" -eq 0 ]; then
-					echo "," >> $tmpdir/apmond/clients
-				fi
+				#if [ "$first_ap" -eq 0 ]; then
+				#	echo -n "," >> $tmpdir/apmond/clients
+				#fi
 
 				if [ "$first_sta" -eq 1 ]; then
-					echo -e "      \"$ap_ssid@$ap_ifname\": {" >> $tmpdir/apmond/clients
-				else
-					echo "," >> $tmpdir/apmond/clients
+					echo -e "      \"$ap_ssid@$ap_ifname\": {" >> $tmpdir/apmond/clients # this is the first sta on the list for this ap
+				#else
+				#	echo "," >> $tmpdir/apmond/clients
 				fi
 
 				echo "$line" | awk '{printf "        \"%s\": {", $2}' >> $tmpdir/apmond/clients; echo >> $tmpdir/apmond/clients
@@ -4571,25 +4570,27 @@ get_ap_data() {
 						echo "          $ap_param_str," >> $tmpdir/apmond/clients;\
 						ms_to_dt "$ap_param_str"
 						echo "          \"date_time\":\"$date_time\"" >> $tmpdir/apmond/clients;\
-						echo -n "        }" >> $tmpdir/apmond/clients\
+						echo "        }," >> $tmpdir/apmond/clients\
 					;;
 				esac
 			fi
 
-			first_sta=0
+			first_sta=0 # finished with the first sta
 		done
 
-		first_ap=0
-		echo -n -e "\n      }" >> $tmpdir/apmond/clients
+		first_ap=0 # finished with the first ap
+		#echo -n -e "\n" >> $tmpdir/apmond/clients
 
 	done
 
 	if [ "$sta_flag" -eq 1 ]; then
-		echo -e "\n    }\n  }\n}" >> $tmpdir/apmond/clients
+		sed -i '$ s/.$//' "$tmpdir/apmond/clients"
+		echo -e "      }\n    }\n  }\n}" >> $tmpdir/apmond/clients
 		usi_full
 		cat $tmpdir/apmond/clients
 	fi
 
+	# remove the lock file
 	rm $tmpdir/apmond/clients.loc
 }
 
@@ -4636,19 +4637,15 @@ set_led() {
 	if [ "$led_action" = "init" ]; then
 
 		for led in $leds; do
-			ledaction=$(cat "/sys/class/leds/$led/trigger" | awk -F "[" '{printf "%s", $2}' | awk -F "]" '{printf "%s", $1}')
-
-			if [ "$ledaction" = "none" ] || [ "$ledaction" = "heartbeat" ]; then
-				echo "default-on" > "/sys/class/leds/$led/trigger"
-
-				sleep 1
-				echo "none" > "/sys/class/leds/$led/trigger"
-			else
-				echo "none" > "/sys/class/leds/$led/trigger"
-			fi
+			echo "default-on" > "/sys/class/leds/$led/trigger"
 		done
 
-		sleep 3
+		sleep 1
+
+		for led in $leds; do
+			echo "none" > "/sys/class/leds/$led/trigger"
+		done
+
 		return 0
 	fi
 
@@ -4661,17 +4658,27 @@ set_led() {
 		led_action="heartbeat"
 	fi
 
+	# Check if backhaul led is specified in config
 	if [ "$mesh_backhaul_led" != "auto" ] && [ -e "/sys/class/leds/$mesh_backhaul_led/" ]; then
 		echo "$led_action" > "/sys/class/leds/$mesh_backhaul_led/trigger"
 		return 0
 	fi
 
+	# Backhaul led is set (default) to auto - try to find a suitable led
 	for led in $leds; do
 		last_param=$(echo "$led" | awk -F":" '{printf "%s", $NF}')
 
-		if [ "$last_param" = "power" ] || [ "$last_param" = "pwr" ] || [ "$last_param" = "system" ] || [ "$last_param" = "status" ] || [ "$last_param" = "run" ]; then
+		# Most common leds
+		if [ "$last_param" = "mesh" ] || [ "$last_param" = "power" ] || [ "$last_param" = "pwr" ] || [ "$last_param" = "system" ] || [ "$last_param" = "status" ] || 	[ "$last_param" = "run" ]; then
 			echo "$led_action" > "/sys/class/leds/$led/trigger"
 			break
+
+		# Fallback to wlan
+		elif [ "$last_param" = "wlan" ]; then
+			echo "$led_action" > "/sys/class/leds/$led/trigger"
+			break
+
+		# Some known edge cases
 		elif [ "$led" = "green-2" ] || [ "$led" = "pwr" ] || [ "$led" = "system" ] || [ "$led" = "status" ] || [ "$led" = "run" ]; then
 			echo "$led_action" > "/sys/class/leds/$led/trigger"
 			break
@@ -4905,43 +4912,74 @@ wifi_chipset_detect() {
 		driver=$(awk -F= '/^DRIVER=/ {print $2; exit}' "$dir/device/uevent" 2>/dev/null || echo "n/a")
 		chipset=""
 
-		# Band detection for multi-band capable PHYs (works even if radio is down)
+		# Band and 802.11 standards detection (robust, no false positives)
 		phy_info=$(iw phy "$name" info 2>/dev/null)
 		bands=""
+		standards=""
 
-		# Dynamically detect each band section and determine its type based on frequencies
+		# Per-band detection
 		for band_num in 1 2 3 4; do
 			if echo "$phy_info" | grep -q "Band ${band_num}:"; then
 				next_band=$((band_num + 1))
-				# Extract the band section up to the next band or EOF
 				band_info=$(echo "$phy_info" | sed -n "/Band ${band_num}:/,/Band ${next_band}:/p")
-				# If next band exists, remove the last line (which is "Band ${next_band}:")
 				if echo "$band_info" | grep -q "Band ${next_band}:"; then
 					band_info=$(echo "$band_info" | sed '$d')
 				fi
 
-				# Detect band type from frequencies in this section
+				# Bands (unchanged)
 				if echo "$band_info" | grep -qE "[* ]+24[0-9]{2}(\.0)? MHz"; then
-					[ -n "$bands" ] && bands="$bands/2.4GHz" || bands="2.4GHz"
+					[ -n "$bands" ] && bands="$bands 2.4GHz" || bands="2.4GHz"
 				elif echo "$band_info" | grep -qE "[* ]+5[0-9]{3}(\.0)? MHz"; then
-					[ -n "$bands" ] && bands="$bands/5GHz" || bands="5GHz"
+					[ -n "$bands" ] && bands="$bands 5GHz" || bands="5GHz"
 				elif echo "$band_info" | grep -qE "[* ]+[6-7][0-9]{3}(\.0)? MHz"; then
-					[ -n "$bands" ] && bands="$bands/6GHz" || bands="6GHz"
+					[ -n "$bands" ] && bands="$bands 6GHz" || bands="6GHz"
+				fi
+
+				# Standards per band (add only if not already present)
+				if echo "$band_info" | grep -qE "HT20|HT40|HT Capabilities"; then
+					echo "$standards" | grep -qw "n" || standards="${standards:+$standards }n"
+				fi
+				if echo "$band_info" | grep -qE "VHT Capabilities|VHT RX MCS|VHT TX MCS"; then
+					echo "$standards" | grep -qw "ac" || standards="${standards:+$standards }ac"
+				fi
+				if echo "$band_info" | grep -qE "HE Capabilities|HE MAC Capabilities|HE PHY Capabilities|HE Iftypes"; then
+					echo "$standards" | grep -qw "ax" || standards="${standards:+$standards }ax"
+				fi
+				if echo "$band_info" | grep -qE "EHT Capabilities|EHT MAC|EHT PHY"; then
+					echo "$standards" | grep -qw "be" || standards="${standards:+$standards }be"
 				fi
 			fi
 		done
 
-		# Fallback: if no Band sections found or no bands detected, try raw frequency matching
+		# Fallback bands
 		if [ -z "$bands" ]; then
-			if echo "$phy_info" | grep -qE "24[0-9]{2}(\.0)? MHz"; then
-				bands="2.4GHz"
+			if echo "$phy_info" | grep -qE "24[0-9]{2}(\.0)? MHz"; then bands="2.4GHz"; fi
+			if echo "$phy_info" | grep -qE "5[0-9]{3}(\.0)? MHz"; then [ -n "$bands" ] && bands="$bands 5GHz" || bands="5GHz"; fi
+			if echo "$phy_info" | grep -qE "[6-7][0-9]{3}(\.0)? MHz"; then [ -n "$bands" ] && bands="$bands 6GHz" || bands="6GHz"; fi
+		fi
+
+		# Fallback standards ONLY if still empty
+		if [ -z "$standards" ]; then
+			if echo "$phy_info" | grep -qE "HT20|HT40|HT Capabilities"; then standards="n"; fi
+			if echo "$phy_info" | grep -qE "VHT Capabilities|VHT RX MCS|VHT TX MCS"; then
+				standards="${standards:+$standards }ac"
 			fi
-			if echo "$phy_info" | grep -qE "5[0-9]{3}(\.0)? MHz"; then
-				[ -n "$bands" ] && bands="$bands/5GHz" || bands="5GHz"
+			if echo "$phy_info" | grep -qE "HE Capabilities|HE MAC Capabilities|HE PHY Capabilities|HE Iftypes"; then
+				standards="${standards:+$standards }ax"
 			fi
-			if echo "$phy_info" | grep -qE "[6-7][0-9]{3}(\.0)? MHz"; then
-				[ -n "$bands" ] && bands="$bands/6GHz" || bands="6GHz"
+			if echo "$phy_info" | grep -qE "EHT Capabilities|EHT MAC|EHT PHY"; then
+				standards="${standards:+$standards }be"
 			fi
+		fi
+
+		# Final defaults
+		[ -z "$bands" ] && bands="unknown"
+		[ -z "$standards" ] && standards="legacy"
+
+		# 802.11s mesh support detection
+		mesh="no"
+		if echo "$phy_info" | grep -q "mesh point"; then
+			mesh="yes"
 		fi
 
 		chipset=$(cat "$dir/device/label" "$dir/device/name" \
@@ -5012,6 +5050,11 @@ wifi_chipset_detect() {
 			chipset="Realtek RTL8192CU (2.4/5 GHz, Wi-Fi 4)"
 		fi
 
+		# Realtek rtl7620/rt2880
+		if [ -z "$chipset" ] && [ "$driver" = "rt2800_wmac" ]; then
+			chipset="Realtek RTL7620-RTL2880 series(Wi-Fi 4)"
+		fi
+
 		# Marvell mwlwifi mwifiex_sdio
 		if [ -z "$chipset" ] && echo "$driver" | grep -q -E 'mwlwifi|mwifiex_sdio'; then
 			compat=$(grep -Eh 'PCI_ID|SDIO_ID' "$dir"/device/uevent 2>/dev/null | cut -d= -f2)
@@ -5036,12 +5079,12 @@ wifi_chipset_detect() {
 				ath9k)
 					case "$compat" in
 						*"qca,qca9530-wmac"*) chipset="Qualcomm Atheros AR953x series (2.4 GHz, Wi-Fi 4)" ;;
-						*)                    chipset="Qualcomm Atheros AR93xx/AR5416 series" ;;
+						*)                    chipset="Qualcomm Atheros AR93xx/AR92xx/AR5416 series" ;;
 					esac
 					;;
 
 				ath10k_ahb) chipset="Qualcomm Atheros QCA9886 (Lantiq)" ;;
-				ath10k_pci) chipset="Qualcomm Atheros QCA9984/QCA9886" ;;
+				ath10k_pci) chipset="Qualcomm Atheros QCA9984/QCA988x/QCA986x series" ;;
 				ath11k)
 					case "$compat" in
 						*"ipq5018-wifi"*) chipset="Qualcomm IPQ5018 integrated 2.4 GHz" ;;
@@ -5057,7 +5100,31 @@ wifi_chipset_detect() {
 
 		[ -z "$chipset" ] && chipset="unknown"
 		echo "      \"$name\": {" >> /tmp/wifidetect
-		echo "        \"Chipset\": \"$bands $chipset\"," >> /tmp/wifidetect
+		echo "        \"Chipset\": \"$chipset\"," >> /tmp/wifidetect
+		echo "        \"Bands\": [" >> /tmp/wifidetect
+
+		for band in $bands; do
+			echo "          \"$band\"," >> /tmp/wifidetect
+		done
+
+		sed -i '$ s/.$//' /tmp/wifidetect
+		echo "        ]," >> /tmp/wifidetect
+
+		echo "        \"Standards\": [" >> /tmp/wifidetect
+
+		for standard in $standards; do
+			echo "          \"802.11$standard\"," >> /tmp/wifidetect
+		done
+
+		sed -i '$ s/.$//' /tmp/wifidetect
+		echo "        ]," >> /tmp/wifidetect
+
+		if [ "$mesh" = "yes" ]; then
+			echo "        \"MeshPoint\": \"802.11s\"," >> /tmp/wifidetect
+		else
+			echo "        \"MeshPoint\": \"N/A\"," >> /tmp/wifidetect
+		fi
+
 		echo "        \"Driver\": \"$driver\"" >> /tmp/wifidetect
 		echo "      }," >> /tmp/wifidetect
 	done
@@ -5075,6 +5142,37 @@ fix_dropbear() {
 		sed -i '/^[[:space:]]*STOP=/c\STOP=15' /etc/init.d/dropbear
 		/sbin/service dropbear restart
 	fi
+}
+
+# Wrappers for write_to_syslog
+log_warning() {
+	syslogmessage="$1"
+	debugtype="warn"
+	write_to_syslog
+}
+
+log_error() {
+	syslogmessage="$1"
+	debugtype="err"
+	write_to_syslog
+}
+
+log_notice() {
+	syslogmessage="$1"
+	debugtype="notice"
+	write_to_syslog
+}
+
+log_info() {
+	syslogmessage="$1"
+	debugtype="info"
+	write_to_syslog
+}
+
+log_debug() {
+	syslogmessage="$1"
+	debugtype="debug"
+	write_to_syslog
 }
 
 ##############
@@ -6576,9 +6674,25 @@ elif [ "$1" = "wifi_chipset_detect" ]; then
 
 elif [ "$1" = "daemon" ]; then
 	# Detect what we are running on - Write $tmpdir/wifidetect file with os, device wireless chipset and driver info
-	# vars Sdriver, $chipset and others are set
+	# vars Sdriver, $chipset labelmac and others are set
 	wifi_chipset_detect
 	mv "/tmp/wifidetect" "$tmpdir/wifidetect"
+	installver="legacy"
+
+	if [ -f "/etc/factory_mac" ]; then
+		. /etc/factory_mac
+
+		if [ "$installver" != "$version" ]; then
+			rm "/etc/factory_mac"
+		fi
+	fi
+
+	strlen="$((${#labelmac}))"
+	factory_mac=${labelmac:1:strlen}
+
+	if [ ! -f "/etc/factory_mac" ]; then
+		echo "factory_mac=\"$factory_mac\"; installver=\"$version\"" > /etc/factory_mac
+	fi
 
 	# Fix dropbear - make sure reboot terminates ssh session before closing wireless
 	fix_dropbear
