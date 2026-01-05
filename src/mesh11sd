@@ -4476,7 +4476,70 @@ usi(){
 	}'
 }
 
-usi_full(){
+get_system_stats_json() {
+	# Calculate all values first for clean, readable JSON output
+	uptime_sec=$(cut -d' ' -f1 < /proc/uptime | cut -d. -f1)
+
+	load1=$(cut -d' ' -f1 < /proc/loadavg)
+	load5=$(cut -d' ' -f2 < /proc/loadavg)
+	load15=$(cut -d' ' -f3 < /proc/loadavg)
+
+	if grep -q MemAvailable /proc/meminfo; then
+		free_ram=$(awk '/MemAvailable/ {print $2}' /proc/meminfo)
+	else
+		free_ram=$(awk '/MemFree/ {print $2}' /proc/meminfo)
+	fi
+
+	free_flash=$(df /overlay 2>/dev/null | tail -1 | awk '{print $4}')
+	[ -z "$free_flash" ] && free_flash=$(df / | tail -1 | awk '{print $4}')
+
+	# CPU temperature
+	cpu_temp="not available"
+	for zone in /sys/class/thermal/thermal_zone*; do
+		[ -e "$zone" ] || continue
+		type=$(cat "$zone/type" 2>/dev/null)
+		case "$type" in
+			*cpu*|*CPU*|*core*|*thermal*)
+				temp_raw=$(cat "$zone/temp" 2>/dev/null)
+				if [ -n "$temp_raw" ] && [ "$temp_raw" -eq "$temp_raw" ] 2>/dev/null; then
+					cpu_temp=$(awk "BEGIN {printf \"%.1f\", $temp_raw / 1000}")
+					break
+				fi
+				;;
+		esac
+	done
+
+	# CPU frequency
+	cpu_freq="none scaling"
+	if [ -e /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq ]; then
+		freq_khz=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq 2>/dev/null)
+		if [ -n "$freq_khz" ] && [ "$freq_khz" -eq "$freq_khz" ] 2>/dev/null; then
+			cpu_freq=$(awk "BEGIN {printf \"%d\", $freq_khz / 1000}")
+		fi
+	fi
+
+	if [ -f "/etc/factory_mac" ]; then
+		. /etc/factory_mac
+	else
+		factory_mac="unknown"
+	fi
+
+	# Output JSON
+	echo "    \"node_status\": {"
+	echo "      \"factory_mac\": \"$factory_mac\","
+	echo "      \"mesh_bridge_mac\": \"$devicemac\","
+	echo "      \"uptime_seconds\": $uptime_sec,"
+	echo "      \"load_average_1min\": \"$load1\","
+	echo "      \"load_average_5min\": \"$load5\","
+	echo "      \"load_average_15min\": \"$load15\","
+	echo "      \"free_ram_kb\": $free_ram,"
+	echo "      \"free_flash_kb\": $free_flash,"
+	echo "      \"cpu_temperature_c\": \"$cpu_temp\","
+	echo "      \"cpu_frequency_mhz\": \"$cpu_freq\""
+	echo "    },"
+}
+
+usi_full() {
 	node="node@$devicemac"
 	system="system@$devicemac"
 	status="status@$devicemac"
@@ -4486,7 +4549,7 @@ usi_full(){
 	detect=${detect:0:strlen-12}
 	echo "$detect"
 	echo "    },"
-	echo "    \"status\": \"placeholder\","
+	get_system_stats_json
 	#usi info  | sed 's/^.'// | sed 's/^/     /' | sed -e '${/^$/d;}' -e '$d'   # same for info
 }
 
@@ -4866,6 +4929,11 @@ commit_single_change() {
 	done
 }
 
+# Debug shim for wifi-chipset-detect integration
+write_debug() {
+	echo > /dev/null
+}
+
 wifi_chipset_detect() {
 	# Attempt to get the label mac
 	ifaces="wan eth1 eth0"
@@ -4876,48 +4944,56 @@ wifi_chipset_detect() {
 		if [ -z "$labelmac" ]; then
 			continue
 		else
+			write_debug "labelmac"
 			labelmac="@$labelmac"
 			break
 		fi
 	done
 
 	. /etc/openwrt_release 2>/dev/null
-	echo "{" > /tmp/wifidetect
-	echo "  \"System$labelmac\": {" >> /tmp/wifidetect
-	echo "    \"Distribution\": \"${DISTRIB_ID:-unknown}\"," >> /tmp/wifidetect
-	echo "    \"Release\": \"${DISTRIB_RELEASE:-unknown}\"," >> /tmp/wifidetect
-	echo "    \"Revision\": \"${DISTRIB_REVISION:-unknown}\"," >> /tmp/wifidetect
-	echo "    \"Target\": \"${DISTRIB_TARGET:-unknown}\"," >> /tmp/wifidetect
-	echo "    \"Architecture\": \"${DISTRIB_ARCH:-unknown}\"," >> /tmp/wifidetect
-	echo "    \"Description\": \"${DISTRIB_DESCRIPTION:-unknown}\"," >> /tmp/wifidetect
+	echo "{" > "$outputfile"
+	echo "  \"System$labelmac\": {" >> "$outputfile"
+	echo "    \"Distribution\": \"${DISTRIB_ID:-unknown}\"," >> "$outputfile"
+	echo "    \"Release\": \"${DISTRIB_RELEASE:-unknown}\"," >> "$outputfile"
+	echo "    \"Revision\": \"${DISTRIB_REVISION:-unknown}\"," >> "$outputfile"
+	echo "    \"Target\": \"${DISTRIB_TARGET:-unknown}\"," >> "$outputfile"
+	echo "    \"Architecture\": \"${DISTRIB_ARCH:-unknown}\"," >> "$outputfile"
+	echo "    \"Description\": \"${DISTRIB_DESCRIPTION:-unknown}\"," >> "$outputfile"
 
 	if [ -f /etc/board.json ]; then
 		device=$(grep -m1 '"name":' /etc/board.json | sed 's/.*"name": *"\([^"]*\)".*/\1/' 2>/dev/null)
 		if [ -n "$device" ] && ! echo "$device" | grep -Eqw "(WAN|LAN|ACT|LINK|DSL|WLAN|POWER|USB|WPS)"; then
-			echo "    \"Device\": \"$device\"," >> /tmp/wifidetect
+			echo "    \"Device\": \"$device\"," >> "$outputfile"
 		fi
 	elif [ -f /tmp/sysinfo/model ]; then
-		echo "    \"Device\": \"$(cat /tmp/sysinfo/model)\"," >> /tmp/wifidetect
+		echo "    \"Device\": \"$(cat /tmp/sysinfo/model)\"," >> "$outputfile"
 	elif [ -f /tmp/sysinfo/board_name ]; then
-		echo "    \"Device\": \"$(cat /tmp/sysinfo/board_name)\"," >> /tmp/wifidetect
+		echo "    \"Device\": \"$(cat /tmp/sysinfo/board_name)\"," >> "$outputfile"
 	else
-		echo "    \"Device\": \"unknown\"," >> /tmp/wifidetect
+		echo "    \"Device\": \"unknown\"," >> "$outputfile"
 	fi
 
-	echo "    \"phy\": {" >> /tmp/wifidetect
+	write_debug "device"
+
+	echo "    \"phy\": {" >> "$outputfile"
 
 	for dir in /sys/class/ieee80211/phy* /sys/class/ieee80211/wl*; do
 		[ -d "$dir" ] || continue
 		name="${dir##*/}"
+		phyname="$name"
+		write_debug "phyname"
 		driver=$(awk -F= '/^DRIVER=/ {print $2; exit}' "$dir/device/uevent" 2>/dev/null || echo "n/a")
+		default_driver="$driver"
+		write_debug "default_driver"
 		chipset=""
 
-		# Band and 802.11 standards detection (robust, no false positives)
+		# Band and 802.11 standards detection - robust for Wi-Fi 6E/7 MediaTek?
 		phy_info=$(iw phy "$name" info 2>/dev/null)
 		bands=""
 		standards=""
 
-		# Per-band detection
+		detected_something=0
+
 		for band_num in 1 2 3 4; do
 			if echo "$phy_info" | grep -q "Band ${band_num}:"; then
 				next_band=$((band_num + 1))
@@ -4926,36 +5002,64 @@ wifi_chipset_detect() {
 					band_info=$(echo "$band_info" | sed '$d')
 				fi
 
-				# Bands (unchanged)
+				# Explicit frequencies (primary method)
 				if echo "$band_info" | grep -qE "[* ]+24[0-9]{2}(\.0)? MHz"; then
-					[ -n "$bands" ] && bands="$bands 2.4GHz" || bands="2.4GHz"
-				elif echo "$band_info" | grep -qE "[* ]+5[0-9]{3}(\.0)? MHz"; then
-					[ -n "$bands" ] && bands="$bands 5GHz" || bands="5GHz"
-				elif echo "$band_info" | grep -qE "[* ]+[6-7][0-9]{3}(\.0)? MHz"; then
-					[ -n "$bands" ] && bands="$bands 6GHz" || bands="6GHz"
+					echo "$bands" | grep -qw "2.4GHz" || bands="${bands:+$bands }2.4GHz"
+				fi
+				if echo "$band_info" | grep -qE "[* ]+5[0-9]{3}(\.0)? MHz"; then
+					echo "$bands" | grep -qw "5GHz" || bands="${bands:+$bands }5GHz"
+				fi
+				if echo "$band_info" | grep -qE "[* ]+[6-7][0-9]{3}(\.0)? MHz"; then
+					echo "$bands" | grep -qw "6GHz" || bands="${bands:+$bands }6GHz"
 				fi
 
-				# Standards per band (add only if not already present)
-				if echo "$band_info" | grep -qE "HT20|HT40|HT Capabilities"; then
+				# Standards (strict)
+				if echo "$band_info" | grep -qE "HT20|HT40|^\s*HT Capabilities"; then
 					echo "$standards" | grep -qw "n" || standards="${standards:+$standards }n"
+					detected_something=1
 				fi
-				if echo "$band_info" | grep -qE "VHT Capabilities|VHT RX MCS|VHT TX MCS"; then
+				if echo "$band_info" | grep -qE "^\s*VHT Capabilities| VHT RX MCS| VHT TX MCS|80MHz|160MHz"; then
 					echo "$standards" | grep -qw "ac" || standards="${standards:+$standards }ac"
+					detected_something=1
 				fi
-				if echo "$band_info" | grep -qE "HE Capabilities|HE MAC Capabilities|HE PHY Capabilities|HE Iftypes"; then
+				if echo "$band_info" | grep -qE "HE Capabilities|HE MAC Capabilities|HE PHY Capabilities|^\s*HE Iftypes"; then
 					echo "$standards" | grep -qw "ax" || standards="${standards:+$standards }ax"
+					detected_something=1
 				fi
 				if echo "$band_info" | grep -qE "EHT Capabilities|EHT MAC|EHT PHY"; then
 					echo "$standards" | grep -qw "be" || standards="${standards:+$standards }be"
+					detected_something=1
 				fi
 			fi
 		done
 
-		# Fallback bands
-		if [ -z "$bands" ]; then
-			if echo "$phy_info" | grep -qE "24[0-9]{2}(\.0)? MHz"; then bands="2.4GHz"; fi
-			if echo "$phy_info" | grep -qE "5[0-9]{3}(\.0)? MHz"; then [ -n "$bands" ] && bands="$bands 5GHz" || bands="5GHz"; fi
-			if echo "$phy_info" | grep -qE "[6-7][0-9]{3}(\.0)? MHz"; then [ -n "$bands" ] && bands="$bands 6GHz" || bands="6GHz"; fi
+		per_band_detection_bands="$bands"
+		write_debug "per_band_detection_bands"
+		per_band_detection_standards="$standards"
+		write_debug "per_band_detection_standards"
+
+		# Improved fallback: prioritize explicit frequencies, infer conservatively
+		has_2ghz=0; has_5ghz=0; has_6ghz=0
+		echo "$bands" | grep -qw "2.4GHz" && has_2ghz=1
+		echo "$bands" | grep -qw "5GHz" && has_5ghz=1
+		echo "$bands" | grep -qw "6GHz" && has_6ghz=1
+
+		# Explicit frequencies anywhere (robust even if not in Band sections)
+		if ! [ "$has_6ghz" = 1 ] && echo "$phy_info" | grep -qE "[* ]+[6-7][0-9]{3}(\.0)? MHz"; then
+			bands="${bands:+$bands }6GHz"
+		fi
+
+		# Inference only for true tri-band Wi-Fi 7 (EHT = be standard)
+		if echo "$standards" | grep -qw "be" && [ "$has_2ghz" = 1 ]; then
+			# Wi-Fi 7 almost always tri-band if 2.4GHz present
+			[ "$has_5ghz" = 0 ] && bands="${bands:+$bands }5GHz"
+			[ "$has_6ghz" = 0 ] && bands="${bands:+$bands }6GHz"
+		fi
+
+		# Gentle 5GHz inference for Wi-Fi 6 if wide channels mentioned
+		if [ "$has_5ghz" = 0 ] && echo "$standards" | grep -qw "ax" && \
+		   echo "$phy_info" | grep -qiE "HE.*(80MHz|160MHz|80+80)"; then
+			bands="${bands:+$bands }5GHz"
 		fi
 
 		# Fallback standards ONLY if still empty
@@ -4970,11 +5074,261 @@ wifi_chipset_detect() {
 			if echo "$phy_info" | grep -qE "EHT Capabilities|EHT MAC|EHT PHY"; then
 				standards="${standards:+$standards }be"
 			fi
+
+			fallback_standards="$standards"
+			write_debug "fallback_standards"
+		fi
+
+		# Final standards: deduplicated union of per-band and fallback detection
+		standards=$(echo "$per_band_detection_standards $standards" | tr ' ' '\n' | sort -u | tr '\n' ' ' | sed 's/^ //;s/ $//')
+		[ -z "$standards" ] && standards="legacy"
+
+		# Filter out invalid "ac" on pure 2.4 GHz PHYs (keep for dual-band)
+		if echo "$bands" | grep -q "2.4GHz" && ! echo "$bands" | grep -q "5GHz"; then
+			standards=$(echo "$standards" | sed 's/ac//g' | sed 's/  */ /g' | sed 's/^ //;s/ $//')
 		fi
 
 		# Final defaults
 		[ -z "$bands" ] && bands="unknown"
 		[ -z "$standards" ] && standards="legacy"
+
+		write_debug "bands"
+		write_debug "standards"
+
+		# Derive friendly Wi-Fi generation
+		wifigen="Legacy"
+		if echo "$standards" | grep -qw "be"; then
+			wifigen="Wi-Fi 7"
+		elif echo "$standards" | grep -qw "ax"; then
+			if echo "$bands" | grep -qw "6GHz"; then
+				wifigen="Wi-Fi 6E"
+			else
+				wifigen="Wi-Fi 6"
+			fi
+		elif echo "$standards" | grep -qw "ac"; then
+			wifigen="Wi-Fi 5"
+		elif echo "$standards" | grep -qw "n"; then
+			wifigen="Wi-Fi 4"
+		fi
+
+		write_debug "wifigen"
+
+		# MIMO / Max spatial streams detection
+		mimo="unknown"
+		max_nss=0
+
+		# Helper to update max NSS
+		update_max_nss() {
+			local nss="$1"
+			[ -n "$nss" ] && [ "$nss" -gt "$max_nss" ] && max_nss="$nss"
+		}
+
+		# HT (802.11n) - MCS max index to NSS
+		ht_mcs=$(echo "$phy_info" | grep "HT TX/RX MCS rate indexes supported" | head -1 | sed -n 's/.*: 0-\([0-9]\+\).*/\1/p')
+		if [ -n "$ht_mcs" ]; then
+			if [ "$ht_mcs" -le 7 ]; then update_max_nss 1
+			elif [ "$ht_mcs" -le 15 ]; then update_max_nss 2
+			elif [ "$ht_mcs" -le 23 ]; then update_max_nss 3
+			elif [ "$ht_mcs" -le 31 ]; then update_max_nss 4
+			elif [ "$ht_mcs" -le 39 ]; then update_max_nss 5
+			elif [ "$ht_mcs" -le 47 ]; then update_max_nss 6
+			elif [ "$ht_mcs" -le 55 ]; then update_max_nss 7
+			elif [ "$ht_mcs" -le 63 ]; then update_max_nss 8
+			fi
+		fi
+
+		# VHT / HE / EHT - highest supported streams (only match "MCS" lines, skip "not supported")
+		for section in "VHT RX MCS" "HE RX MCS" "EHT RX MCS"; do
+			if echo "$phy_info" | grep -q "$section"; then
+				nss_list=$(echo "$phy_info" | grep -A 10 "$section" | \
+						   grep -E "[1-8] streams: MCS" | \
+						   sed 's/.*\([1-8]\) streams: MCS.*/\1/' | \
+						   sort -nr | head -1)
+				update_max_nss "$nss_list"
+			fi
+		done
+
+		# Fallback: antenna bits if nothing else
+		if [ "$max_nss" -eq 0 ] && echo "$phy_info" | grep -q "Available Antennas: TX 0x"; then
+			ant_hex=$(echo "$phy_info" | grep "Available Antennas: TX 0x" | sed 's/.*TX 0x\([0-9a-fA-F]\+\).*/\1/' | tr 'A-F' 'a-f')
+			ant_count=$(printf "%d" "0x$ant_hex" | awk '{popcount=0; n=$1; while(n>0){popcount += n%2; n=int(n/2)} print popcount}')
+			update_max_nss "$ant_count"
+		fi
+
+		# Final MIMO string
+		if [ "$max_nss" -ge 1 ]; then
+			mimo="${max_nss}x${max_nss}"
+		fi
+
+		# Max channel width detection + ChannelWidthCap flag
+		max_width="unknown"
+		channel_width_cap=false
+
+		# Normalize driver name
+		driver_norm=$(echo "$driver" | tr -d '[:space:]' | tr 'A-Z' 'a-z')
+
+		# 1. Practical cap for known over-reporting drivers (mt7615e family reports 160 MHz but unstable)
+		if echo "$driver_norm" | grep -qE "mt7615e|mt7613|mt7663|mt76.*"; then
+			if echo "$bands" | grep -q "5GHz"; then
+				max_width="80 MHz"
+				channel_width_cap=true
+			fi
+		fi
+
+		# 2. If no cap was applied above, use normal detection
+		if [ "$max_width" = "unknown" ]; then
+			# Primary: radar detect widths — robust extraction
+			radar_line=$(echo "$phy_info" | grep -i "radar detect widths:" | head -1)
+
+			if [ -n "$radar_line" ]; then
+				# Extract the highest supported width, including Wi-Fi 7 320 MHz
+				largest=$(echo "$radar_line" | grep -oE "320|240|160|80\+80|80|40|20" | sort -nr | head -1)
+				case "$largest" in
+					320)     max_width="320 MHz" ;;
+					240)     max_width="240 MHz" ;;
+					160)     max_width="160 MHz" ;;
+					"80+80") max_width="80+80 MHz" ;;
+					80)      max_width="80 MHz" ;;
+					40)      max_width="40 MHz" ;;
+					20)      max_width="20 MHz" ;;
+				esac
+			fi
+			# Fallback: explicit capability mentions (for when radar line is missing)
+			if [ "$max_width" = "unknown" ]; then
+				if echo "$phy_info" | grep -qiE "320 MHz|EHT.*320"; then
+					max_width="320 MHz"
+				elif echo "$phy_info" | grep -qiE "160 MHz|HE.*160|EHT.*160|VHT.*160"; then
+					max_width="160 MHz"
+				elif echo "$phy_info" | grep -qiE "80\+80|80 MHz|HE.*80|VHT.*80"; then
+					max_width="80 MHz"
+				elif echo "$phy_info" | grep -qiE "HT40|40 MHz"; then
+					max_width="40 MHz"
+				else
+					max_width="20 MHz"
+				fi
+			fi
+		fi
+
+		# 3. Safety cap: limit pure 2.4 GHz PHYs to 40 MHz max
+		if echo "$bands" | grep -q "2.4GHz" && ! echo "$bands" | grep -qE "5GHz|6GHz"; then
+			if [ "$max_width" != "20 MHz" ] && [ "$max_width" != "40 MHz" ]; then
+				max_width="40 MHz"
+			fi
+		fi
+
+		# Last resort default
+		[ "$max_width" = "unknown" ] && max_width="20 MHz"
+
+		# Extended Wi-Fi features from "Supported extended features"
+		txqs=false
+		airtime_fairness=false
+		aql=false
+
+		extended_features=$(echo "$phy_info" | grep -A 20 "Supported extended features:" | grep -E "\[.*\]:.*")
+
+		if echo "$extended_features" | grep -q "\[ TXQS \]"; then
+			txqs=true
+		fi
+
+		if echo "$extended_features" | grep -q "\[ AIRTIME_FAIRNESS \]"; then
+			airtime_fairness=true
+		fi
+
+		if echo "$extended_features" | grep -q "\[ AQL \]"; then
+			aql=true
+		fi
+
+		# AQL runtime support check (ath11k exposes via debugfs even if not in "extended features")
+		aql_runtime_support=false
+
+		# Check if debugfs path for this phy exists and has aql_enable file
+		debugfs_path="/sys/kernel/debug/ieee80211/$name"
+		if [ -d "$debugfs_path" ] && [ -f "$debugfs_path/aql_enable" ]; then
+			aql_runtime_support=true
+		fi
+
+		# Antenna count (TX/RX from mask)
+		antennas="unknown"
+		ant_line=$(echo "$phy_info" | grep "Available Antennas: TX 0x" | head -1)
+		if [ -n "$ant_line" ]; then
+			tx_mask=$(echo "$ant_line" | sed -n 's/.*TX 0x\([0-9a-fA-F]\+\).*/\1/p' | tr 'A-F' 'a-f')
+			rx_mask=$(echo "$ant_line" | sed -n 's/.*RX 0x\([0-9a-fA-F]\+\).*/\1/p' | tr 'A-F' 'a-f')
+
+			bitcount() {
+				local hex="$1"
+				printf "%d" "0x$hex" 2>/dev/null | awk '{c=0; n=$1; while(n>0){c+=n%2; n=int(n/2)} print c}' || echo 0
+			}
+
+			tx_count=$(bitcount "$tx_mask")
+			rx_count=$(bitcount "$rx_mask")
+
+			if [ "$tx_count" -gt 0 ] && [ "$rx_count" -gt 0 ]; then
+				antennas="${tx_count}x${rx_count}"
+			fi
+		fi
+
+		# Fallback: if antenna mask missing (common on rt2800, some mt76), use MIMO value
+		if [ "$antennas" = "unknown" ] && [ "$mimo" != "unknown" ]; then
+			antennas="$mimo"
+		fi
+
+		# Theoretical max throughput per PHY (rough, Mbps) - reference only
+		theoretical_mbps="unknown"
+
+		# Base rate per stream at 40 MHz (realistic, no marketing inflation)
+		base_per_stream=0
+		if echo "$standards" | grep -q "be"; then
+			base_per_stream=360    # Wi-Fi 7 EHT @ 40 MHz per stream (realistic, ~20% over Wi-Fi 6)
+		elif echo "$standards" | grep -q "ax"; then
+			base_per_stream=300    # Wi-Fi 6 HE @ 40 MHz per stream
+		elif echo "$standards" | grep -q "ac"; then
+			base_per_stream=217    # Wi-Fi 5 VHT @ 40 MHz per stream (~433 @ 80 MHz scaled down)
+		elif echo "$standards" | grep -q "n"; then
+			base_per_stream=150    # Wi-Fi 4 HT @ 40 MHz per stream
+		fi
+
+		# Width multiplier scaled by 100 (relative to 40 MHz = 1x)
+		width_mult_scaled=100
+		case "$max_width" in
+			"320 MHz") width_mult_scaled=800 ;;
+			"240 MHz") width_mult_scaled=600 ;;
+			"160 MHz") width_mult_scaled=400 ;;
+			"80 MHz")  width_mult_scaled=200 ;;
+			"40 MHz")  width_mult_scaled=100 ;;
+			"20 MHz")  width_mult_scaled=50 ;;
+			*)         width_mult_scaled=100 ;;
+		esac
+
+		# Streams from MIMO (default 1)
+		streams=1
+		if echo "$mimo" | grep -qE "^[1-8]x[1-8]$"; then
+			streams=$(echo "$mimo" | cut -d'x' -f1)
+			[ "$streams" -eq "$streams" ] 2>/dev/null || streams=1
+		fi
+
+		# Calculate per-PHY theoretical throughput
+		if [ "$base_per_stream" -gt 0 ]; then
+			temp=$(( base_per_stream * streams * width_mult_scaled ))
+			theoretical_mbps=$(( temp / 100 ))
+		fi
+
+		# AggregatedMaxMbps for Wi-Fi 7 MLO (realistic sum of per-band estimates)
+		aggregated_mbps="unknown"
+		if echo "$standards" | grep -q "be"; then
+			# Per-band per-stream rates (consistent scaling from 40 MHz base)
+			rate_24_per_stream=360   # 2.4 GHz @ 40 MHz
+			rate_5_per_stream=1440   # 5 GHz @ 160 MHz (4x)
+			rate_6_per_stream=2880   # 6 GHz @ 320 MHz (8x)
+
+			total_agg=0
+			if echo "$bands" | grep -q "2.4GHz"; then total_agg=$(( total_agg + rate_24_per_stream * streams )); fi
+			if echo "$bands" | grep -q "5GHz"; then total_agg=$(( total_agg + rate_5_per_stream * streams )); fi
+			if echo "$bands" | grep -q "6GHz"; then total_agg=$(( total_agg + rate_6_per_stream * streams )); fi
+
+			if [ "$total_agg" -gt 0 ]; then
+				aggregated_mbps="$total_agg"
+			fi
+		fi
 
 		# 802.11s mesh support detection
 		mesh="no"
@@ -4982,13 +5336,23 @@ wifi_chipset_detect() {
 			mesh="yes"
 		fi
 
+		write_debug "mesh"
+
 		chipset=$(cat "$dir/device/label" "$dir/device/name" \
 		              "$dir/mac80211/label" "$dir/mac80211/name" 2>/dev/null | head -n1 | xargs)
+
+		default_chipset_detect="$chipset"
+		write_debug "default_chipset_detect"
 
 		# Broadcom brcmfmac
 		if [ -z "$chipset" ] && echo "$driver" | grep -q brcmfmac; then
 			modalias=$(tr '\0' '\n' < "$dir/device/modalias" 2>/dev/null)
+			broadcom_modalias="$modalias"
+			write_debug "broadcom_modalias"
 			fw=$(ls "$dir"/device/firmware/*/brcmfmac* 2>/dev/null | head -n1 | xargs basename 2>/dev/null || true)
+			broadcom_fw="$fw"
+			write_debug "broadcom_fw"
+
 			case "$modalias:$fw" in
 				*bcm4329*|*bcm4330*) chipset="Broadcom BCM4329/BCM4330 (Wi-Fi 4)" ;;
 				*bcm43430*)          chipset="Broadcom BCM43430 (Wi-Fi 5)" ;;
@@ -4997,23 +5361,40 @@ wifi_chipset_detect() {
 				*bcm4378*)           chipset="Broadcom BCM4378 (Wi-Fi 6)" ;;
 				*)                   chipset="Broadcom brcmfmac (Wi-Fi)" ;;
 			esac
+
+			broadcom_chipset="$chipset"
+			write_debug "broadcom_chipset"
 		fi
 
 		# MediaTek Filogic / mt79xx family – now includes MT7996 Wi-Fi 7
 		if [ -z "$chipset" ] && [ -f "$dir/device/modalias" ]; then
 			modalias=$(tr '\0' '\n' < "$dir/device/modalias" 2>/dev/null)
+
 			if echo "$modalias" | grep -iq 'mt79'; then
+				filogic_modalias="$modalias"
+				write_debug "filogic_modalias"
+
 				if echo "$modalias" | grep -iq '7996'; then chipset="MediaTek MT7996 (Wi-Fi 7)"
 				elif echo "$modalias" | grep -iq '798'; then chipset="MediaTek Filogic 830/810/880 (MT798x integrated WiFi)"
 				elif echo "$modalias" | grep -iq '7916'; then chipset="MediaTek MT7916 (Wi-Fi 6E)"
 				elif echo "$modalias" | grep -iq '7915'; then chipset="MediaTek MT7915E (Wi-Fi 6)"
 				elif echo "$modalias" | grep -iq '792'; then chipset="MediaTek MT792x"
 				fi
+				filogic_chipset="$chipset"
+				write_debug "filogic_chipset"
+			fi
+
+			if [ -z "$chipset" ] && [ "$driver" = "mt7996e" ]; then
+				chipset="MediaTek MT7996 (Wi-Fi 7)"
+				filogic_chipset="$chipset"
+				write_debug "filogic_chipset"
 			fi
 		fi
 
-		# Older MediaTek PCIe + USB
+		# MediaTek PCIe + USB
 		if [ -z "$chipset" ] && echo "$driver" | grep -q -E 'mt7603e|mt76x2e|mt7915e|mt7615e|mt76x0u'; then
+			mediatek_pcie_usb_driver="$driver"
+			write_debug "mediatek_pcie_usb_driver"
 			case "$driver" in
 				mt7915e) chipset="MediaTek MT7915E (Wi-Fi 6)" ;;
 				mt7615e) chipset="MediaTek MT7615E (Wi-Fi 5)" ;;
@@ -5021,43 +5402,77 @@ wifi_chipset_detect() {
 				mt76x2e) chipset="MediaTek MT76x2E (5 GHz)" ;;
 				mt76x0u) chipset="MediaTek MT7610U (Wi-Fi 5 USB) (mt76x0u)" ;;
 			esac
+
+			mediatek_pcie_usb_chipset="$chipset"
+			write_debug "mediatek_pcie_usb_chipset"
 		fi
 
-		# Legacy MediaTek SoCs with mt76_wmac – all patterns quoted (hyphen-safe)
+		# MediaTek SoCs with mt76_wmac
 		if [ -z "$chipset" ] && echo "$driver" | grep -q mt76_wmac; then
+			mediatek_socs_with_mt76_wmac_driver="$driver"
+			write_debug "mediatek_socs_with_mt76_wmac_driver"
 			compat=$(grep -h '^OF_COMPATIBLE_' "$dir"/hwmon/hwmon*/uevent "$dir"/hwmon*/uevent 2>/dev/null | head -n1 | cut -d= -f2)
+			mediatek_socs_with_mt76_wmac_compat="$compat"
+			write_debug "mediatek_socs_with_mt76_wmac_compat"
+
 			case "$compat" in
 				*"mt7628"*) chipset="MediaTek MT7628AN (integrated 2.4 GHz)" ;;
 				*"mt7621"*) chipset="MediaTek MT7621AN/AT (integrated 2.4 GHz)" ;;
 				*"mt7622"*) chipset="MediaTek MT7622 (integrated 2.4/5 GHz)" ;;
-				*"mt7620"*) chipset="MediaTek MT7620N (integrated 2.4 GHz)" ;;
-				*)          chipset="Legacy MediaTek mt76_wmac SoC" ;;
+				*)          chipset="" ;;
 			esac
+
+			if [ -z "$chipset" ]; then
+				modalias=$(cat "$dir/device/modalias" 2>/dev/null)
+				mediatek_socs_with_mt76_wmac_modalias="$modalias"
+				write_debug "mediatek_socs_with_mt76_wmac_modalias"
+
+				case "$modalias" in
+					*"mt7628"*) chipset="MediaTek MT7628AN (integrated 2.4 GHz)" ;;
+					*"mt7621"*) chipset="MediaTek MT7621AN/AT (integrated 2.4 GHz)" ;;
+					*"mt7622"*) chipset="MediaTek MT7622 (integrated 2.4/5 GHz)" ;;
+					*)          chipset="Legacy MediaTek mt76_wmac SoC" ;;
+				esac
+			fi
+
+			mediatek_socs_with_mt76_wmac_chipset="$chipset"
+			write_debug "mediatek_socs_with_mt76_wmac_chipset"
 		fi
 
-		# MediaTek Filogic 820/830 integrated (mt7622-wmac – E8450 etc.)
+		# MediaTek Filogic 820/830 integrated (mt7622-wmac – eg. E8450 etc.)
 		if [ -z "$chipset" ] && echo "$driver" | grep -q mt7622-wmac; then
 			chipset="MediaTek MT7622 (integrated 2.4 GHz)"
+
+			filogic_integrated_mt7622_wmac_chipset="$chipset"
+			write_debug "filogic_integrated_mt7622_wmac_chipset"
 		fi
 
-		# Ralink rt2800pci / rt2800usb
+		# MediaTek Ralink rt7620/rt2880
+		if [ -z "$chipset" ] && [ "$driver" = "rt2800_wmac" ]; then
+			chipset="MediaTek Ralink Embedded MT7620-RT2880 series(Wi-Fi 4)"
+			ralink_rt7620_rt2880_chipset="$chipset"
+			write_debug ralink_rt7620_rt2880_chipset
+		fi
+
+		# MediaTek Ralink rt2800pci / rt2800usb
 		if [ -z "$chipset" ] && echo "$driver" | grep -q -E 'rt2800pci|rt2800usb'; then
-			chipset="Ralink RT5370/RT3070 (2.4 GHz, Wi-Fi 4)"
+			chipset="MediaTek Ralink RT5370/RT3070 (2.4 GHz, Wi-Fi 4)"
+			ralink_rt2800pci_usb_chipset="$chipset"
+			write_debug "ralink_rt2800pci_usb_chipset"
 		fi
 
 		# Realtek rtl8192cu
 		if [ -z "$chipset" ] && echo "$driver" | grep -q rtl8192cu; then
 			chipset="Realtek RTL8192CU (2.4/5 GHz, Wi-Fi 4)"
-		fi
-
-		# Realtek rtl7620/rt2880
-		if [ -z "$chipset" ] && [ "$driver" = "rt2800_wmac" ]; then
-			chipset="Realtek RTL7620-RTL2880 series(Wi-Fi 4)"
+			realtek_rtl8192cu_chipset="$chipset"
+			write_debug "realtek_rtl8192cu_chipset"
 		fi
 
 		# Marvell mwlwifi mwifiex_sdio
 		if [ -z "$chipset" ] && echo "$driver" | grep -q -E 'mwlwifi|mwifiex_sdio'; then
 			compat=$(grep -Eh 'PCI_ID|SDIO_ID' "$dir"/device/uevent 2>/dev/null | cut -d= -f2)
+			marvell_mwlwifi_mwifiex_sdio_compat="$compat"
+			write_debug "marvell_mwlwifi_mwifiex_sdio_compat"
 			case "$compat" in
 				"11AB:2A55") chipset="Marvell 88W8864 (2.4/5 GHz, Wi-Fi 5)" ;;
 				"11AB:2B40") chipset="Marvell 88W8964 (2.4/5 GHz, Wi-Fi 5)" ;;
@@ -5065,6 +5480,9 @@ wifi_chipset_detect() {
 				"02DF:9135") chipset="Marvell 88W8887 (2.4/5 GHz, Wi-Fi 5)" ;;
 				*) chipset="unknown Marvell Wi-Fi" ;;
 			esac
+
+			marvell_mwlwifi_mwifiex_sdio_chipset="$chipset"
+			write_debug "marvell_mwlwifi_mwifiex_sdio_chipset"
 		fi
 
 		# Qualcomm Atheros – ath9k + ath10k + ath11k
@@ -5075,16 +5493,40 @@ wifi_chipset_detect() {
 				compat=$(grep -h '^OF_COMPATIBLE_' "$dir"/device/uevent 2>/dev/null | head -n1 | cut -d= -f2)
 			fi
 
+			qualcomm_atheros_ath9k_ath10k_ath11k_compat="$compat"
+			write_debug "qualcomm_atheros_ath9k_ath10k_ath11k_compat"
+
+			modalias=$(cat "$dir/device/modalias" 2>/dev/null)
+			qualcomm_atheros_ath9k_ath10k_ath11k_modalias="$modalias"
+			write_debug "qualcomm_atheros_ath9k_ath10k_ath11k_modalias"
+
+
 			case "$driver" in
 				ath9k)
 					case "$compat" in
 						*"qca,qca9530-wmac"*) chipset="Qualcomm Atheros AR953x series (2.4 GHz, Wi-Fi 4)" ;;
-						*)                    chipset="Qualcomm Atheros AR93xx/AR92xx/AR5416 series" ;;
+						*)                    chipset="" ;;
 					esac
-					;;
 
-				ath10k_ahb) chipset="Qualcomm Atheros QCA9886 (Lantiq)" ;;
-				ath10k_pci) chipset="Qualcomm Atheros QCA9984/QCA988x/QCA986x series" ;;
+					if [ -z "$chipset" ]; then
+						case "$modalias" in
+							*"953"*) chipset="Qualcomm Atheros QCA9531/QCA9533 (integrated 2.4 GHz)" ;;
+							*"956"*)  chipset="Qualcomm Atheros QCA9561/QCA9563 (integrated 2.4 GHz))" ;;
+							*"9556"*) chipset="Qualcomm Atheros QCA9556 (integrated 2.4 GHz)" ;;
+							*"9557"*) chipset="Qualcomm Atheros QCA9557 (integrated 2.4 GHz)" ;;
+							*"9558"*) chipset="Qualcomm Atheros QCA9558 (integrated 2.4 GHz)" ;;
+							*)        chipset="" ;;
+						esac
+
+					fi
+
+					if [ -z "$chipset" ]; then
+						chipset="Qualcomm Atheros AR93xx/AR92xx/AR5416 series"
+					fi
+				;;
+
+				ath10k_ahb) chipset="Qualcomm Atheros QCA9886 (AHB)" ;;
+				ath10k_pci) chipset="Qualcomm Atheros QCA9984/QCA988x/QCA986x series (PCI)" ;;
 				ath11k)
 					case "$compat" in
 						*"ipq5018-wifi"*) chipset="Qualcomm IPQ5018 integrated 2.4 GHz" ;;
@@ -5096,43 +5538,61 @@ wifi_chipset_detect() {
 					esac
 					;;
 			esac
+
+			qualcomm_atheros_ath9k_ath10k_ath11k_chipset="$chipset"
+			write_debug "qualcomm_atheros_ath9k_ath10k_ath11k_chipset"
 		fi
 
 		[ -z "$chipset" ] && chipset="unknown"
-		echo "      \"$name\": {" >> /tmp/wifidetect
-		echo "        \"Chipset\": \"$chipset\"," >> /tmp/wifidetect
-		echo "        \"Bands\": [" >> /tmp/wifidetect
+		echo "      \"$name\": {" >> "$outputfile"
+		echo "        \"Chipset\": \"$chipset\"," >> "$outputfile"
+		echo "        \"Bands\": [" >> "$outputfile"
 
 		for band in $bands; do
-			echo "          \"$band\"," >> /tmp/wifidetect
+			echo "          \"$band\"," >> "$outputfile"
 		done
 
-		sed -i '$ s/.$//' /tmp/wifidetect
-		echo "        ]," >> /tmp/wifidetect
+		sed -i '$ s/.$//' "$outputfile"
+		echo "        ]," >> "$outputfile"
 
-		echo "        \"Standards\": [" >> /tmp/wifidetect
+		echo "        \"Standards\": [" >> "$outputfile"
 
 		for standard in $standards; do
-			echo "          \"802.11$standard\"," >> /tmp/wifidetect
+			echo "          \"802.11$standard\"," >> "$outputfile"
 		done
 
-		sed -i '$ s/.$//' /tmp/wifidetect
-		echo "        ]," >> /tmp/wifidetect
+		sed -i '$ s/.$//' "$outputfile"
+		echo "        ]," >> "$outputfile"
 
 		if [ "$mesh" = "yes" ]; then
-			echo "        \"MeshPoint\": \"802.11s\"," >> /tmp/wifidetect
+			echo "        \"MeshPoint\": \"802.11s\"," >> "$outputfile"
 		else
-			echo "        \"MeshPoint\": \"N/A\"," >> /tmp/wifidetect
+			echo "        \"MeshPoint\": \"N/A\"," >> "$outputfile"
 		fi
 
-		echo "        \"Driver\": \"$driver\"" >> /tmp/wifidetect
-		echo "      }," >> /tmp/wifidetect
+		echo "        \"Wi-FiGeneration\": \"$wifigen\"," >> "$outputfile"
+		echo "        \"MIMO\": \"$mimo\"," >> "$outputfile"
+		echo "        \"MaxChannelWidth\": \"$max_width\"," >> "$outputfile"
+		echo "        \"ChannelWidthCap\": $channel_width_cap," >> "$outputfile"
+		echo "        \"Antennas\": \"$antennas\"," >> "$outputfile"
+		echo "        \"TheoreticalMaxMbps\": \"$theoretical_mbps\"," >> "$outputfile"
+
+		if echo "$standards" | grep -q "be"; then
+			echo "        \"Aggregated_MLO_MaxMbps\": \"$aggregated_mbps\"," >> "$outputfile"
+		fi
+
+		echo "        \"TXQS\": $txqs," >> "$outputfile"
+		echo "        \"AIRTIME_FAIRNESS\": $airtime_fairness," >> "$outputfile"
+		echo "        \"AQL_Extended\": $aql," >> "$outputfile"
+		echo "        \"AQL_Runtime\": $aql_runtime_support," >> "$outputfile"
+		echo "        \"Driver\": \"$driver\"" >> "$outputfile"
+		echo "      }," >> "$outputfile"
 	done
 
-	sed -i '$ s/.$//' /tmp/wifidetect
-	echo "    }" >> /tmp/wifidetect
-	echo "  }" >> /tmp/wifidetect
-	echo "}" >> /tmp/wifidetect
+	sed -i '$ s/.$//' "$outputfile"
+	echo "    }" >> "$outputfile"
+	echo "  }" >> "$outputfile"
+	echo "}" >> "$outputfile"
 }
 
 fix_dropbear() {
@@ -6675,8 +7135,8 @@ elif [ "$1" = "wifi_chipset_detect" ]; then
 elif [ "$1" = "daemon" ]; then
 	# Detect what we are running on - Write $tmpdir/wifidetect file with os, device wireless chipset and driver info
 	# vars Sdriver, $chipset labelmac and others are set
+	outputfile="/$tmpdir/wifidetect"
 	wifi_chipset_detect
-	mv "/tmp/wifidetect" "$tmpdir/wifidetect"
 	installver="legacy"
 
 	if [ -f "/etc/factory_mac" ]; then
