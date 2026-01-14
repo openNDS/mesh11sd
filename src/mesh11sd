@@ -1827,7 +1827,12 @@ portal_watchdog() {
 		*) auto_detect="0";;
 	esac
 
-	if [ -z "$is_portal" ] && [ "$auto_detect" -eq 1 ]; then
+
+	if [ -f "$tmpdir/is_portal" ]; then
+		. $tmpdir/is_portal
+	fi
+
+	if [ "$detected_state" != "portal" ] && [ "$auto_detect" -eq 1 ]; then
 		# do portal detect with watchdog:
 		failcount=$(($failcount + 1))
 		check_channel_now=1
@@ -3880,7 +3885,7 @@ set_ula_prefix() {
 					. $tmpdir/is_portal
 				fi
 
-				if [ -z "$is_portal" ]; then
+				if [ "$detected_state" = "peer" ]; then
 					return 0
 				fi
 			fi
