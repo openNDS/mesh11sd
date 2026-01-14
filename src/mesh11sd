@@ -1,5 +1,5 @@
 #!/bin/sh
-# Copyright (C) BlueWave Projects and Services 2015-2025
+# Copyright (C) BlueWave Projects and Services 2015-2026
 #
 #	This software is released under the GNU General Public License version 3 or any later version.
 #	This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation,
@@ -307,7 +307,7 @@ get_current_setup() {
 		portal_detect_threshold=5
 	fi
 
-	if [ "$portal_detect" -eq 0 ] || [ "$portal_detect" -eq 4 ]; then
+	if [ "$portal_detect" -eq 0 ]; then
 		portal_detect_threshold=0
 	fi
 
@@ -1673,20 +1673,24 @@ scan_channel() {
 
 get_portal_state() {
 	local muteorg=$mute
-	debugtype="debug"
-	syslogmessage="In get_portal_state. firstloop=$firstloop..."
-	write_to_syslog
+	log_debug "In get_portal_state. firstloop=$firstloop..."
 
 	if [ "$firstloop" -eq 1 ]; then
 		return 0
 	fi
 
-	if [ "$portal_detect" -eq 1 ] || [ "$portal_detect" -eq 3 ] || [ "$portal_detect" -eq 5 ]; then
+	if [ "$portal_detect" -eq 1 ] || [ "$portal_detect" -eq 3 ] || [ "$portal_detect" -eq 4 ] || [ "$portal_detect" -eq 5 ]; then
 		default_gw=""
 
 		if [ "$firstloop" -eq 0 ]; then
 			#Check if portal - try to get the upstream default ipv4 gateway
-			up_zone=$(echo "get network.wan.device" | uci batch | awk '{printf "%s", $1}')
+
+			if [ "$portal_detect" -eq 4 ]; then
+				up_zone=$(echo "get network.lan.device" | uci batch | awk '{printf "%s", $1}')
+			else
+				up_zone=$(echo "get network.wan.device" | uci batch | awk '{printf "%s", $1}')
+			fi
+
 			mute=1
 			wait_for_interface "$up_zone"
 			mute=0
@@ -1713,6 +1717,11 @@ get_portal_state() {
 				# Try to find a portal on the backhaul
 				is_portal=""
 				local retries=4
+
+				if [ "$portal_detect" -eq 4 ]; then
+					retries=1
+				fi
+
 				br_zone=$(echo "get network.$auto_mesh_network.device" | uci batch | awk '{printf "%s", $1}')
 
 				for retry in $(seq $retries); do
@@ -1754,7 +1763,7 @@ get_portal_state() {
 		detected_state="peer"
 		uci set dhcp.@dnsmasq[0].authoritative='0'
 
-	elif [ "$portal_detect" -eq 0 ] || [ "$portal_detect" -eq 4 ]; then
+	elif [ "$portal_detect" -eq 0 ]; then
 		# 0 - force portal mode
 		is_portal="forced"
 		detected_state="portal"
@@ -1787,6 +1796,8 @@ get_portal_state() {
 
 	if [ "$portal_detect" -eq 5 ]; then
 		detected_state="peer"
+	elif [ "$portal_detect" -eq 4 ]; then
+		detected_state="portal"
 	fi
 
 	if [ "$portal_detect" -eq 3 ]; then
@@ -1998,9 +2009,13 @@ check_dns_server() {
 }
 
 check_portal() {
-	debugtype="debug"
-	syslogmessage="Checking portal status"
-	write_to_syslog
+
+	if [ "$portal_detect" -eq 4 ]; then
+		log_debug "Checking MBP (Mesh Bridge Portal) status"
+	else
+		log_debug "Checking portal status"
+	fi
+
 	is_portal=""
 
 	if [ "$enabled" -eq 1 ]; then
@@ -2008,10 +2023,19 @@ check_portal() {
 		. $tmpdir/devicemac
 
 		if [ "$portal_detect" -eq 3 ]; then
-			debugtype="debug"
-			syslogmessage="Checking CPE status"
-			write_to_syslog
+			log_debug "Checking CPE status"
 
+			wait_for_mesh
+			vxlan_status=$(ip link show vxlan$tun_id &> /dev/null; echo $?)
+
+			if [ "$vxlan_status" -eq 1 ]; then
+				check_vtunnel
+			fi
+
+			return 0
+		fi
+
+		if [ "$portal_detect" -eq 4 ]; then
 			wait_for_mesh
 			vxlan_status=$(ip link show vxlan$tun_id &> /dev/null; echo $?)
 
@@ -2032,9 +2056,7 @@ check_portal() {
 			if [ "$detected_state" = "peer" ] && [ "$last_state" = "portal" ]; then
 				# We have become a peer
 				last_state="peer"
-				debugtype="debug"
-				syslogmessage="This meshnode is NOT a portal"
-				write_to_syslog
+				log_debug "This meshnode is NOT a portal"
 
 				if [ -f "/var/run/udhcpc-$device.pid" ]; then
 					kill $(cat /var/run/udhcpc-$device.pid)
@@ -2083,7 +2105,7 @@ check_portal() {
 
 				if [ "$mesh_gate_only" -eq 0 ]; then
 
-					if [ "$portal_detect" -eq 0 ] || [ "$portal_detect" -eq 4 ]; then
+					if [ "$portal_detect" -eq 0 ]; then
 						non_portal_mesh_hwmp_rootmode="4"
 					else
 						non_portal_mesh_hwmp_rootmode="2"
@@ -2105,13 +2127,9 @@ check_portal() {
 					default_gw=$(ip route | grep "default via")
 
 					if [ -z "$default_gw" ]; then
-						debugtype="debug"
-						syslogmessage="Mesh startup watchdog - iteration [ $retry ] ...."
-						write_to_syslog
+						log_debug "Mesh startup watchdog - iteration [ $retry ] ...."
 						wait_for_mesh
-						debugtype="debug"
-						syslogmessage="Mesh interface is [ $ifstatus ] ...."
-						write_to_syslog
+						log_debug "Mesh interface is [ $ifstatus ] ...."
 
 						if [ "$ifstatus" = "up" ]; then
 							break
@@ -2162,22 +2180,12 @@ check_portal() {
 
 				vxlan_status=$(ip link show vxlan$tun_id &> /dev/null; echo $?)
 
-				if [ "$portal_detect" -eq 4 ]; then
 
-					if [ "$vxlan_status" -eq 0 ]; then
-						echo "set network.vtunlan.proto='dhcp'" | uci batch
-					fi
-
-					echo "set network.$auto_mesh_network.proto='static'" | uci batch
-				else
-
-					if [ "$vxlan_status" -eq 0 ]; then
-						echo "set network.vtunlan.proto='static'" | uci batch
-					fi
-
-					echo "set network.$auto_mesh_network.proto='static'" | uci batch
+				if [ "$vxlan_status" -eq 0 ]; then
+					echo "set network.vtunlan.proto='static'" | uci batch
 				fi
 
+				echo "set network.$auto_mesh_network.proto='static'" | uci batch
 
 				set_ula_prefix "set"
 				/sbin/service network reload
@@ -2186,64 +2194,33 @@ check_portal() {
 				uci set dhcp.@dnsmasq[0].logfacility='-'
 				uci set dhcp.@dnsmasq[0].quietdhcp='1'
 				echo "del_list dhcp.@dnsmasq[0].server='$config_ipaddr'" | uci batch
+				echo "set dhcp.$auto_mesh_network.ignore='0'" | uci batch
+				echo "set dhcp.$auto_mesh_network.ra_default='2'" | uci batch
+				echo "set dhcp.$auto_mesh_network.dhcpv6='server'" | uci batch
+				echo "set dhcp.$auto_mesh_network.dhcpv4='server'" | uci batch
+				echo "set dhcp.$auto_mesh_network.ra='server'" | uci batch
+				echo "del_list dhcp.$auto_mesh_network.ra_flags='none'" | uci batch 2> /dev/null
+				echo "del_list dhcp.$auto_mesh_network.ra_flags='managed-config'" | uci batch 2> /dev/null
+				echo "del_list dhcp.$auto_mesh_network.ra_flags='other-config'" | uci batch 2> /dev/null
+				echo "add_list dhcp.$auto_mesh_network.ra_flags='managed-config'" | uci batch 2> /dev/null
+				echo "add_list dhcp.$auto_mesh_network.ra_flags='other-config'" | uci batch 2> /dev/null
+				echo "add_list dhcp.$auto_mesh_network.ra_dns='$portal_ula'" | uci batch 2> /dev/null
+				uci set dhcp.@dnsmasq[0].rebind_protection='1'
 
-				if [ "$portal_detect" -eq 4 ]; then
-					echo "set dhcp.$auto_mesh_network.ignore='0'" | uci batch
-					echo "set dhcp.$auto_mesh_network.ra_default='2'" | uci batch
-					echo "set dhcp.$auto_mesh_network.dhcpv6='server'" | uci batch
-					echo "set dhcp.$auto_mesh_network.dhcpv4='server'" | uci batch
-					echo "set dhcp.$auto_mesh_network.ra='server'" | uci batch
-					echo "del_list dhcp.$auto_mesh_network.ra_flags='none'" | uci batch 2> /dev/null
-					echo "del_list dhcp.$auto_mesh_network.ra_flags='managed-config'" | uci batch 2> /dev/null
-					echo "del_list dhcp.$auto_mesh_network.ra_flags='other-config'" | uci batch 2> /dev/null
-					echo "add_list dhcp.$auto_mesh_network.ra_flags='managed-config'" | uci batch 2> /dev/null
-					echo "add_list dhcp.$auto_mesh_network.ra_flags='other-config'" | uci batch 2> /dev/null
-					echo "add_list dhcp.$auto_mesh_network.ra_dns='$portal_ula'" | uci batch 2> /dev/null
-					uci set dhcp.@dnsmasq[0].rebind_protection='1'
-
-
-
-					uci set dhcp.vtunlan.dhcpv4='disabled'
-					uci set dhcp.vtunlan.dhcpv6='disabled'
-					uci set dhcp.vtunlan.ra='disabled'
-					uci set dhcp.vtunlan.ignore='1'
+				if [ "$vxlan_status" -eq 0 ]; then
+					uci set dhcp.vtunlan.dhcpv4='server'
+					uci set dhcp.vtunlan.dhcpv6='server'
+					uci set dhcp.vtunlan.ra='server'
+					uci set dhcp.vtunlan.ignore='0'
+					echo "del_list dhcp.vtunlan.ra_flags='none'" | uci batch 2> /dev/null
 					echo "del_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
 					echo "del_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
-					echo "add_list dhcp.vtunlan.ra_flags='none'" | uci batch 2> /dev/null
-					echo "del_list dhcp.vtunlan.ra_dns='$portal_ula'" | uci batch 2> /dev/null
-					uci set dhcp.@dnsmasq[0].rebind_protection='0'
-
-				else
-					echo "set dhcp.$auto_mesh_network.ignore='0'" | uci batch
-					echo "set dhcp.$auto_mesh_network.ra_default='2'" | uci batch
-					echo "set dhcp.$auto_mesh_network.dhcpv6='server'" | uci batch
-					echo "set dhcp.$auto_mesh_network.dhcpv4='server'" | uci batch
-					echo "set dhcp.$auto_mesh_network.ra='server'" | uci batch
-					echo "del_list dhcp.$auto_mesh_network.ra_flags='none'" | uci batch 2> /dev/null
-					echo "del_list dhcp.$auto_mesh_network.ra_flags='managed-config'" | uci batch 2> /dev/null
-					echo "del_list dhcp.$auto_mesh_network.ra_flags='other-config'" | uci batch 2> /dev/null
-					echo "add_list dhcp.$auto_mesh_network.ra_flags='managed-config'" | uci batch 2> /dev/null
-					echo "add_list dhcp.$auto_mesh_network.ra_flags='other-config'" | uci batch 2> /dev/null
-					echo "add_list dhcp.$auto_mesh_network.ra_dns='$portal_ula'" | uci batch 2> /dev/null
+					echo "add_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
+					echo "add_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
+					echo "add_list dhcp.vtunlan.ra_dns='$portal_ula'" | uci batch 2> /dev/null
 					uci set dhcp.@dnsmasq[0].rebind_protection='1'
 
-
-					if [ "$vxlan_status" -eq 0 ]; then
-						uci set dhcp.vtunlan.dhcpv4='server'
-						uci set dhcp.vtunlan.dhcpv6='server'
-						uci set dhcp.vtunlan.ra='server'
-						uci set dhcp.vtunlan.ignore='0'
-						echo "del_list dhcp.vtunlan.ra_flags='none'" | uci batch 2> /dev/null
-						echo "del_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
-						echo "del_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
-						echo "add_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
-						echo "add_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
-						echo "add_list dhcp.vtunlan.ra_dns='$portal_ula'" | uci batch 2> /dev/null
-						uci set dhcp.@dnsmasq[0].rebind_protection='1'
-
-					fi
 				fi
-
 
 				if [ "$mesh_gate_only" -eq 0 ]; then
 					mesh_hwmp_rootmode="4"
@@ -3105,7 +3082,7 @@ mobility_settings() {
 
 	if [ -z "$1" ] || [ "$1" = "config" ]; then
 
-		if [ "$detected_state" = "portal" ] || [ "$portal_detect" -eq 0 ] || [ "$portal_detect" -eq 4 ]; then
+		if [ "$detected_state" = "portal" ] || [ "$portal_detect" -eq 0 ]; then
 			# this is a portal node, so override hwmp_rootmode and mesh_fwding
 			rootmode=4
 			mesh_fwding=1
@@ -3403,7 +3380,7 @@ check_mesh_gate_only() { # AKA leechmode
 	fi
 
 	# No leechmode for a portal
-	if [ "$portal_detect" -eq 0 ] || [ "$portal_detect" -eq 4 ] || [ "$detected_state" = "portal" ]; then
+	if [ "$portal_detect" -eq 0 ] || [ "$detected_state" = "portal" ]; then
 		return 0
 	fi
 
@@ -3565,31 +3542,17 @@ create_vxlan_if() {
 	done
 
 	# Set default dhcp settings
-	if [ "$portal_detect" -eq 4 ]; then
-		uci set dhcp.vtunlan.dhcpv4='disabled'
-		uci set dhcp.vtunlan.dhcpv6='disabled'
-		uci set dhcp.vtunlan.ra='disabled'
-		uci set dhcp.vtunlan.ignore='1'
-		echo "del_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
-		echo "del_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
-		echo "add_list dhcp.vtunlan.ra_flags='none'" | uci batch
-		echo "del_list dhcp.vtunlan.ra_dns='$portal_ula'" | uci batch 2> /dev/null
-		uci set dhcp.@dnsmasq[0].rebind_protection='0'
-	else
-		uci set dhcp.vtunlan.dhcpv4='server'
-		uci set dhcp.vtunlan.dhcpv6='server'
-		uci set dhcp.vtunlan.ra='server'
-		uci set dhcp.vtunlan.ignore='0'
-		echo "del_list dhcp.vtunlan.ra_flags='none'" | uci batch
-		echo "del_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
-		echo "del_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
-		echo "add_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
-		echo "add_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
-		echo "add_list dhcp.vtunlan.ra_dns='$portal_ula'" | uci batch 2> /dev/null
-		uci set dhcp.@dnsmasq[0].rebind_protection='1'
-
-
-	fi
+	uci set dhcp.vtunlan.dhcpv4='server'
+	uci set dhcp.vtunlan.dhcpv6='server'
+	uci set dhcp.vtunlan.ra='server'
+	uci set dhcp.vtunlan.ignore='0'
+	echo "del_list dhcp.vtunlan.ra_flags='none'" | uci batch
+	echo "del_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
+	echo "del_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
+	echo "add_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
+	echo "add_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
+	echo "add_list dhcp.vtunlan.ra_dns='$portal_ula'" | uci batch 2> /dev/null
+	uci set dhcp.@dnsmasq[0].rebind_protection='1'
 
 	. $tmpdir/devicemac
 }
@@ -3708,19 +3671,6 @@ check_vtunnel() {
 						echo "add_list dhcp.vtunlan.ra_dns='$portal_ula'" | uci batch 2> /dev/null
 						uci set dhcp.@dnsmasq[0].rebind_protection='1'
 					fi
-
-					if [ "$portal_detect" -eq 4 ]; then
-						# this is a forced portal with vxlan in bridge mode
-						uci set dhcp.vtunlan.dhcpv4='disabled'
-						uci set dhcp.vtunlan.dhcpv6='disabled'
-						uci set dhcp.vtunlan.ra='disabled'
-						uci set dhcp.vtunlan.ignore='1'
-						echo "del_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
-						echo "del_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
-						echo "add_list dhcp.vtunlan.ra_flags='none'" | uci batch
-						echo "del_list dhcp.vtunlan.ra_dns='$portal_ula'" | uci batch 2> /dev/null
-						uci set dhcp.@dnsmasq[0].rebind_protection='0'
-					fi
 				fi
 			fi
 
@@ -3730,8 +3680,6 @@ check_vtunnel() {
 				proto="static"
 			elif [ "$portal_detect" -eq 1 ] && [ "$detected_state" = "portal" ]; then
 				proto="static"
-			elif [ "$portal_detect" -eq 4 ]; then
-				proto="dhcp"
 			else
 				proto="dhcp"
 			fi
@@ -3827,7 +3775,7 @@ check_vtunnel() {
 
 		if [ "$vxlan_status" -eq 0 ] && [ "$detected_state" != "portal" ]; then
 
-			if [ "$portal_detect" -eq 1 ] || [ "$portal_detect" -eq 3 ] || [ "$portal_detect" -eq 5 ]; then
+			if [ "$portal_detect" -eq 1 ] || [ "$portal_detect" -eq 3 ] || [ "$portal_detect" -eq 4 ] || [ "$portal_detect" -eq 5 ]; then
 
 				dhcpserver=$(uci get dhcp.vtunlan.dhcpv4)
 
@@ -4685,7 +4633,7 @@ is_default() {
 
 set_led() {
 
-	if [ "$mesh_backhaul_led" = "none" ] || [ "$auto_config" -eq 0 ]; then
+	if [ "$mesh_backhaul_led" = "none" ]; then
 		return 0
 	fi
 
@@ -7167,11 +7115,13 @@ elif [ "$1" = "daemon" ]; then
 	enabled=1 #bit 0
 
 	# Initial conditions
+	link_to_portal=1
 	statusmode=0
 	changed=0
 	firstloop=1 # Set if we have just started
 	daemon_startup=1 # For future watchdog tests
 	autoconfig=0
+	autostartup=0
 	macfixup=0 # Used if we need to fix the mesh interface mac address
 	mute=0 # Mute some debug messages in function calls
 	previous_path_change_count=1
@@ -7209,7 +7159,13 @@ elif [ "$1" = "daemon" ]; then
 	# unconditionally try to stop openNDS
 	manage_opennds stop
 
-	if [ "$auto_config" -gt 0 ]; then
+	if [ -e "$tmpdir/auto_config_test" ] && [ "$auto_config" -eq 0 ]; then
+		autostartup=1
+	elif [ "$auto_config" -gt 0 ]; then
+		autostartup=1
+	fi
+
+	if [ "$autostartup" -eq 1 ]; then
 
 		if [ "$commit_all" -eq 0 ]; then 
 			# redirect luci web ui
@@ -7656,18 +7612,17 @@ elif [ "$1" = "daemon" ]; then
 								kill $(cat /var/run/udhcpc-$device.pid)
 							fi
 
-							echo "set dhcp.$auto_mesh_network.dhcpv4='server'" | uci batch
-							echo "set dhcp.$auto_mesh_network.dhcpv6='server'" | uci batch
-							echo "set dhcp.$auto_mesh_network.ignore='0'" | uci batch
-							restore_ipv4
-
-							uci set dhcp.@dnsmasq[0].authoritative='1'
-							echo "set dhcp.$auto_mesh_network.ra_default='2'" | uci batch
-							echo "set dhcp.$auto_mesh_network.ra='server'" | uci batch
-							uci set dhcp.@dnsmasq[0].logfacility='-'
-							uci set dhcp.@dnsmasq[0].quietdhcp='1'
-
 							if [ "$portal_detect" -eq 0 ]; then
+								echo "set dhcp.$auto_mesh_network.dhcpv4='server'" | uci batch
+								echo "set dhcp.$auto_mesh_network.dhcpv6='server'" | uci batch
+								echo "set dhcp.$auto_mesh_network.ignore='0'" | uci batch
+								restore_ipv4
+
+								uci set dhcp.@dnsmasq[0].authoritative='1'
+								echo "set dhcp.$auto_mesh_network.ra_default='2'" | uci batch
+								echo "set dhcp.$auto_mesh_network.ra='server'" | uci batch
+								uci set dhcp.@dnsmasq[0].logfacility='-'
+								uci set dhcp.@dnsmasq[0].quietdhcp='1'
 
 								if [ "$vtunnel" = "configured" ]; then
 									uci set dhcp.vtunlan.dhcpv4='server'
@@ -7677,6 +7632,16 @@ elif [ "$1" = "daemon" ]; then
 								fi
 
 							else
+								echo "set dhcp.$auto_mesh_network.dhcpv4='disabled'" | uci batch
+								echo "set dhcp.$auto_mesh_network.dhcpv6='disabled'" | uci batch
+								echo "set dhcp.$auto_mesh_network.ignore='1'" | uci batch
+								restore_ipv4
+
+								uci set dhcp.@dnsmasq[0].authoritative='1'
+								echo "set dhcp.$auto_mesh_network.ra_default='2'" | uci batch
+								echo "set dhcp.$auto_mesh_network.ra='disabled'" | uci batch
+								uci set dhcp.@dnsmasq[0].logfacility='-'
+								uci set dhcp.@dnsmasq[0].quietdhcp='1'
 
 								if [ "$vtunnel" = "configured" ]; then
 									uci set dhcp.vtunlan.dhcpv4='disabled'
@@ -7801,9 +7766,15 @@ elif [ "$1" = "daemon" ]; then
 			commit_all=1
 		fi
 
-		debugtype="info"
-		syslogmessage="Checkinterval [$checkinterval]"
-		write_to_syslog
+		if [ "$portal_detect" -eq 4 ] && [ "$link_to_portal" -eq 1 ]; then
+			get_portal_ula
+
+			if [ "$link_to_portal" -eq 1 ]; then
+				/sbin/service network reload
+			fi
+		fi
+
+		log_info "Checkinterval [$checkinterval]"
 
 		sleep $checkinterval
 	done
