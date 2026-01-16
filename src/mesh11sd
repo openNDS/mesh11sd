@@ -1614,7 +1614,7 @@ check_channel() {
 manage_fallback_ula_route() {
 	# ------------------------------------------------------------
 	# Fallback: Add on-link IPv6 route to portal ULA prefix
-	# ONLY on peer nodes in auto-detect modes (1,3,5) when ping to portal_ula fails
+	# ONLY on peer nodes in auto-detect modes (1,3,5)
 	# Once added, keep it permanently (sticky) during runtime
 	# Cleanup only on major peer/bridge changes (rare)
 	# ------------------------------------------------------------
@@ -1629,8 +1629,7 @@ manage_fallback_ula_route() {
 	if [ "$detected_state" = "peer" ] && \
 	   [ "$portal_detect" -ne 0 ] && [ "$portal_detect" -ne 4 ] && \
 	   [ -n "$device" ] && \
-	   [ -n "$ula_prefix" ] && \
-	   [ "$link_to_portal" -ne 0 ]; then
+	   [ -n "$ula_prefix" ]; then
 
 		# Check if our specific static route already exists
 		if ip -6 route show "$ula_prefix" 2>/dev/null | grep -q "dev[[:space:]]\+$device.*proto static.*metric 512.*onlink"; then
@@ -1638,7 +1637,7 @@ manage_fallback_ula_route() {
 			return 0
 		fi
 
-		log_info "Portal ULA ping failed → adding sticky fallback on-link route $ula_prefix dev $device (peer auto-detect mode)"
+		log_info "Adding sticky fallback on-link route $ula_prefix dev $device (peer auto-detect mode)"
 
 		ip -6 route add "$ula_prefix" dev "$device" scope link onlink metric 512 proto static 2>/dev/null
 
