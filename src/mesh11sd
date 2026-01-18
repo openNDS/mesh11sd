@@ -531,16 +531,17 @@ get_current_setup() {
 	mesh_gate_base_ssid=$(echo -n "$mesh_gate_base_ssid" | tr -d " " | head -c "$maxlen")
 
 	if [ -z "$mesh_gate_base_ssid" ]; then
-		syslogmessage="option mesh_gate_base_ssid [ Not Set ] Using default"
-		debugtype="info"
-		mute="$mutestate"
-		write_to_syslog
+		config_ssid=$(cat /etc/config/wireless | grep -q -w "'OpenWrt'"; echo $?)
 
+		if [ "$config_ssid" -eq 0 ]; then
+			mesh_gate_base_ssid="MeshGate"
+			mute="$mutestate"
+			log_info "option mesh_gate_base_ssid [ Not Set ] Using default"
+		fi
 	else
 		syslogmessage="option mesh_gate_base_ssid [ $mesh_gate_base_ssid ] "
-		debugtype="info"
 		mute="$mutestate"
-		write_to_syslog
+		log_info "option mesh_gate_base_ssid [ $mesh_gate_base_ssid ] "
 	fi
 
 	#####
@@ -759,7 +760,7 @@ get_current_setup() {
 		vtun_base_ssid=$(uci get mesh11sd.setup.vtun_base_ssid 2> /dev/null)
 
 		if [ -z "$vtun_base_ssid" ]; then
-			vtun_base_ssid="Guest"
+			vtun_base_ssid="VTunnel"
 		fi
 
 		if [ "$ssid_suffix_enable" -eq 1 ]; then
@@ -1613,61 +1614,114 @@ check_channel() {
 
 manage_fallback_ula_route() {
 	# ------------------------------------------------------------
-	# Fallback: Add on-link IPv6 route to portal ULA prefix
-	# ONLY on peer nodes in auto-detect modes (1,3,5)
-	# Once added, keep it permanently (sticky) during runtime
-	# Cleanup only on major peer/bridge changes (rare)
+	# Always assign deterministic ULA address to bridge on ALL nodes
+	# + add portal-specific ::1 on MBP portal
+	# + add sticky on-link route on peers in auto-detect modes
 	# ------------------------------------------------------------
 	if [ -f "$tmpdir/devicemac" ]; then
 		. "$tmpdir/devicemac"
 	else
-		log_warning "No $tmpdir/devicemac found → cannot determine bridge for fallback route"
+		log_warning "No $tmpdir/devicemac found → cannot determine bridge for ULA/route"
 		device=""
+		return 1
 	fi
 
-	# Attempt to add the route if conditions are met and ping failed
-	if [ "$detected_state" = "peer" ] && \
-	   [ "$portal_detect" -ne 0 ] && [ "$portal_detect" -ne 4 ] && \
-	   [ -n "$device" ] && \
-	   [ -n "$ula_prefix" ]; then
-
-		# Check if our specific static route already exists
-		if ip -6 route show "$ula_prefix" 2>/dev/null | grep -q "dev[[:space:]]\+$device.*proto static.*metric 512.*onlink"; then
-			# Already present → no action needed
-			return 0
-		fi
-
-		log_info "Adding sticky fallback on-link route $ula_prefix dev $device (peer auto-detect mode)"
-
-		ip -6 route add "$ula_prefix" dev "$device" scope link onlink metric 512 proto static 2>/dev/null
-
-		if [ $? -eq 0 ]; then
-			log_notice "Sticky fallback on-link route added successfully on $device"
-		else
-			log_error "Failed to add sticky fallback on-link route to $ula_prefix on $device"
-			local ip_err
-			ip_err=$(ip -6 route add "$ula_prefix" dev "$device" scope link onlink metric 512 proto static 2>&1)
-			log_debug "ip error: $ip_err"
-			log_debug "Current route state: $(ip -6 route show "$ula_prefix" 2>/dev/null)"
-		fi
-
+	# Compute shared ULA prefix deterministically
+	set_ula_prefix "get"
+	if [ -z "$ula_prefix" ]; then
+		log_warning "Could not determine ULA prefix for address/route"
+		return 1
 	fi
 
-	# Very limited cleanup: only when node is no longer a peer or bridge is gone
-	if [ "$detected_state" != "peer" ] || [ -z "$device" ] || [ ! -f "$tmpdir/devicemac" ]; then
+	# Strip /48 to get clean 4-segment base (e.g. fd46:cfe5:34c5:ddd6)
+	ula_base=$(echo "$ula_prefix" | awk -F"/" '{print $1}')
+	log_debug "ula_base [ $ula_base ]"
 
-		if [ -n "$ula_prefix" ] && [ -n "$device" ] && \
-		   ip -6 route show "$ula_prefix" 2>/dev/null | grep -q "dev[[:space:]]\+$device.*proto static"; then
+	# --------------------------------------------------------------------
+	# Part 1: Deterministic ULA address on bridge (ALL nodes)
+	# --------------------------------------------------------------------
+	if [ -n "$device" ] && [ -n "$devicemac" ]; then
 
-			log_info "Node no longer peer or bridge changed → removing fallback route $ula_prefix on $device"
+		# Generate EUI-64 from bridge MAC
+		mac_no_colons="${devicemac//:/}"
+		first_byte_hex=${mac_no_colons:0:2}
+		first_byte_dec=$((0x$first_byte_hex ^ 0x02))
+		first_byte=$(printf "%02x" "$first_byte_dec")
+		eui64="${first_byte}${mac_no_colons:2:2}${mac_no_colons:4:2}fffe${mac_no_colons:6:2}${mac_no_colons:8:2}${mac_no_colons:10:2}"
 
-			ip -6 route del "$ula_prefix" dev "$device" 2>/dev/null
+		# Format EUI-64 with colons
+		eui64_formatted="${eui64:0:4}:${eui64:4:4}:${eui64:8:4}:${eui64:12:4}"
+
+		# Full address: 4-segment prefix : EUI-64 /64
+		ula_addr="$ula_base:$eui64_formatted/64"
+
+		# Check if already present
+		if ! ip -6 addr show dev "$device" | grep -q "$ula_base:$eui64_formatted"; then
+			log_info "Adding deterministic ULA address $ula_addr to bridge $device"
+
+			ip -6 addr add "$ula_addr" dev "$device" 2>/dev/null
 
 			if [ $? -eq 0 ]; then
-				log_notice "Fallback route removed"
+				log_notice "ULA address $ula_addr added to $device"
 			else
-				log_warning "Failed to remove fallback route to $ula_prefix"
+				log_error "Failed to add ULA address $ula_addr to $device"
+				log_debug "ip error: $(ip -6 addr add "$ula_addr" dev "$device" 2>&1)"
 			fi
+		fi
+	fi
+
+	# --------------------------------------------------------------------
+	# Part 2: Add portal-specific ::1 ULA to bridge (only on MBP portal)
+	# --------------------------------------------------------------------
+	if [ "$detected_state" = "portal" ] && [ "$portal_detect" -eq 4 ] && [ -n "$device" ]; then
+
+		# Portal ULA = prefix : :1 /64
+		portal_ula_addr="$ula_base::1/64"
+
+		# Check if already present
+		if ! ip -6 addr show dev "$device" | grep -q "$ula_base::1"; then
+			log_info "MBP portal mode → adding portal ULA $portal_ula_addr to bridge $device"
+
+			ip -6 addr add "$portal_ula_addr" dev "$device" 2>/dev/null
+
+			if [ $? -eq 0 ]; then
+				log_notice "Portal ULA $portal_ula_addr added to $device"
+			else
+				log_error "Failed to add portal ULA $portal_ula_addr to $device"
+				log_debug "ip error: $(ip -6 addr add "$portal_ula_addr" dev "$device" 2>&1)"
+			fi
+		fi
+	fi
+
+	# --------------------------------------------------------------------
+	# Part 3: Sticky on-link route (only on peers in auto-detect modes)
+	# --------------------------------------------------------------------
+	if [ "$detected_state" = "peer" ] && \
+	   [ "$portal_detect" -ne 0 ] && [ "$portal_detect" -ne 4 ] && \
+	   [ -n "$device" ]; then
+
+		if ! ip -6 route show "$ula_prefix" 2>/dev/null | grep -q "dev[[:space:]]\+$device.*proto static.*metric 512.*onlink"; then
+			log_info "Adding sticky fallback on-link route $ula_prefix dev $device (peer auto-detect mode)"
+
+			ip -6 route add "$ula_prefix" dev "$device" scope link onlink metric 512 proto static 2>/dev/null
+
+			if [ $? -eq 0 ]; then
+				log_notice "Sticky fallback on-link route added on $device"
+			else
+				log_error "Failed to add fallback route on $device"
+				log_debug "ip error: $(ip -6 route add "$ula_prefix" dev "$device" scope link onlink metric 512 proto static 2>&1)"
+			fi
+		fi
+	fi
+
+	# --------------------------------------------------------------------
+	# Cleanup: only for route when no longer a peer or bridge state lost
+	# --------------------------------------------------------------------
+	if [ "$detected_state" != "peer" ] || [ -z "$device" ] || [ ! -f "$tmpdir/devicemac" ]; then
+		if [ -n "$ula_prefix" ] && [ -n "$device" ] && \
+		   ip -6 route show "$ula_prefix" 2>/dev/null | grep -q "dev[[:space:]]\+$device.*proto static"; then
+			log_info "Removing fallback route $ula_prefix on $device (no longer required)"
+			ip -6 route del "$ula_prefix" dev "$device" 2>/dev/null
 		fi
 	fi
 
@@ -3939,14 +3993,15 @@ set_ula_prefix() {
 		first=${auto_mesh_id:9:2}
 		second=${auto_mesh_id:11:4}
 		third=${auto_mesh_id:15:4}
-		ula_prefix="fd$first:$second:$third::/48"
+		fourth=${auto_mesh_id:20:4}           # ← fourth segment from hash
+		ula_prefix="fd$first:$second:$third:$fourth/48"   # ← no trailing ::
 	else
 		return 1
 	fi
 
 	if [ -z "$current_prefix" ] || [ "$current_prefix" != "$ula_prefix" ]; then
 
-		if [ "$1" = "set" ] || [ "$1" = "revert" ]; then
+		if [ "$1" != "get" ]; then
 
 			if [ "$portal_detect" -eq 1 ]; then
 
@@ -3959,14 +4014,11 @@ set_ula_prefix() {
 				fi
 			fi
 
-			if [ "$portal_detect" -eq 0 ] || [ "$portal_detect" -eq 4 ] || [ "$detected_state" = "portal" ]; then
-				echo "set network.globals.ula_prefix='$ula_prefix'" | uci batch
-				return 0
-			fi
-
 			if [ "$portal_detect" -eq 3 ] || [ "$portal_detect" -eq 5 ]; then
 				return 0
 			fi
+
+			echo "set network.globals.ula_prefix='$ula_prefix'" | uci batch
 		fi
 	fi
 }
@@ -3976,11 +4028,20 @@ get_portal_ula() {
 	# If failed, tries vxlan tunnel
 	# returns $portal_ula if found and $pingstatus (>0 if failed)
 	set_ula_prefix "get"
-	portal_ula="$(echo "$ula_prefix" | awk -F "/" '{printf "%s", $1}')""1"
+
+	# Get base prefix without /48 (now 4 segments, no trailing ::)
+	ula_base=$(echo "$ula_prefix" | awk -F"/" '{print $1}')
+
+	# Portal ULA = prefix + ::1 (standard gateway address)
+	portal_ula="$ula_base::1"
+
 	pingstatus=$(ping -q -W 10 -c 1 "$portal_ula" &>/dev/null ; echo $?)
 
 	if [ "$pingstatus" -eq 1 ]; then
-		portal_ula_vtun=$(echo "$portal_ula" | awk -F "::" '{printf "%s:1::%s", $1, $2}')
+		# VXLAN tunnel variant: insert :1: after the prefix (before ::)
+		# Example: fd46:cfe5:34c5:abcd::1 → fd46:cfe5:34c5:abcd:1::1
+		portal_ula_vtun="$ula_base:1::1"
+
 		pingstatus=$(ping -q -W 1 -c 1 "$portal_ula_vtun" &>/dev/null ; echo $?)
 
 		if [ "$pingstatus" -eq 0 ]; then
@@ -5232,6 +5293,12 @@ wifi_chipset_detect() {
 					max_width="20 MHz"
 				fi
 			fi
+
+			# Wi-Fi 7 EHT 320 MHz detection (radar line may be conservative)
+			if echo "$standards" | grep -q "be" && echo "$phy_info" | grep -qi "320MHz"; then
+				max_width="320 MHz"
+			fi
+
 		fi
 
 		# 3. Safety cap: limit pure 2.4 GHz PHYs to 40 MHz max
@@ -5279,7 +5346,7 @@ wifi_chipset_detect() {
 			tx_mask=$(echo "$ant_line" | sed -n 's/.*TX 0x\([0-9a-fA-F]\+\).*/\1/p' | tr 'A-F' 'a-f')
 			rx_mask=$(echo "$ant_line" | sed -n 's/.*RX 0x\([0-9a-fA-F]\+\).*/\1/p' | tr 'A-F' 'a-f')
 
-			bitcount() {
+			bitcount() { 
 				local hex="$1"
 				printf "%d" "0x$hex" 2>/dev/null | awk '{c=0; n=$1; while(n>0){c+=n%2; n=int(n/2)} print c}' || echo 0
 			}
@@ -5510,8 +5577,8 @@ wifi_chipset_detect() {
 			write_debug "marvell_mwlwifi_mwifiex_sdio_chipset"
 		fi
 
-		# Qualcomm Atheros – ath9k + ath10k + ath11k
-		if [ -z "$chipset" ] && echo "$driver" | grep -q -E 'ath9k|ath10k|ath11k'; then
+		# Qualcomm Atheros – ath9k + ath10k + ath11k + ath12k (Wi-Fi 7)
+		if [ -z "$chipset" ] && echo "$driver" | grep -q -E 'ath9k|ath10k|ath11k|ath12k'; then
 			compat=$(grep -h '^OF_COMPATIBLE_' "$dir"/hwmon/hwmon*/uevent "$dir"/hwmon*/uevent 2>/dev/null | head -n1 | cut -d= -f2)
 
 			if [ -z "$compat" ]; then
@@ -5525,7 +5592,6 @@ wifi_chipset_detect() {
 			qualcomm_atheros_ath9k_ath10k_ath11k_modalias="$modalias"
 			write_debug "qualcomm_atheros_ath9k_ath10k_ath11k_modalias"
 
-
 			case "$driver" in
 				ath9k)
 					case "$compat" in
@@ -5536,13 +5602,12 @@ wifi_chipset_detect() {
 					if [ -z "$chipset" ]; then
 						case "$modalias" in
 							*"953"*) chipset="Qualcomm Atheros QCA9531/QCA9533 (integrated 2.4 GHz)" ;;
-							*"956"*)  chipset="Qualcomm Atheros QCA9561/QCA9563 (integrated 2.4 GHz))" ;;
+							*"956"*) chipset="Qualcomm Atheros QCA9561/QCA9563 (integrated 2.4 GHz)" ;;
 							*"9556"*) chipset="Qualcomm Atheros QCA9556 (integrated 2.4 GHz)" ;;
 							*"9557"*) chipset="Qualcomm Atheros QCA9557 (integrated 2.4 GHz)" ;;
 							*"9558"*) chipset="Qualcomm Atheros QCA9558 (integrated 2.4 GHz)" ;;
 							*)        chipset="" ;;
 						esac
-
 					fi
 
 					if [ -z "$chipset" ]; then
@@ -5562,10 +5627,13 @@ wifi_chipset_detect() {
 						*)                chipset="Qualcomm QCN9074/QCN5024" ;;
 					esac
 					;;
+				ath12k_pci|ath12k)
+					chipset="Qualcomm FastConnect 7800 (WCN785x Wi-Fi 7)"
+					;;
 			esac
 
-			qualcomm_atheros_ath9k_ath10k_ath11k_chipset="$chipset"
-			write_debug "qualcomm_atheros_ath9k_ath10k_ath11k_chipset"
+			qualcomm_atheros_ath9k_ath10k_ath11k_ath12k_chipset="$chipset"
+			write_debug "qualcomm_atheros_ath9k_ath10k_ath11k_ath12k_chipset [ $chipset ]"
 		fi
 
 		[ -z "$chipset" ] && chipset="unknown"
@@ -6363,19 +6431,44 @@ elif [ "$1" = "connect" ]; then
 			ip6addr=$(echo "$linklocal" | awk -F "%" '{printf "%s", $1}')
 
 			if [ -z "$nodeaddr" ]; then
-				ula_pref=$(uci get network.globals.ula_prefix 2>/dev/null | awk -F ":" '{printf "%s:%s:%s", $1, $2, $3}')
-				node_ula=$(ip -6 neigh | grep "$ula_pref" | grep "$ndpmac" | grep "$nodeid" | awk -F " " '{printf "%s", $1}')
+				# Generate EUI-64 from target peer's MAC (ndpmac)
+				mac_no_colons="${ndpmac//:/}"
+				first_byte_hex=${mac_no_colons:0:2}
+				first_byte_dec=$((0x$first_byte_hex ^ 0x02))
+				first_byte=$(printf "%02x" "$first_byte_dec")
+				eui64="${first_byte}${mac_no_colons:2:2}${mac_no_colons:4:2}fffe${mac_no_colons:6:2}${mac_no_colons:8:2}${mac_no_colons:10:2}"
+				eui64_formatted="${eui64:0:4}:${eui64:4:4}:${eui64:8:4}:${eui64:12:4}"
 
-				if [ ! -z "$node_ula" ]; then
+				# Get deterministic mesh prefix (now 4 segments, no trailing ::)
+				set_ula_prefix "get"
+				ula_base=$(echo "$ula_prefix" | awk -F"/" '{print $1}')   # e.g. fd46:cfe5:34c5:abcd
+
+				# If we are the portal in MBP mode, prefer upstream delegated ULA prefix (for client reachability)
+				if [ "$detected_state" = "portal" ] && [ "$portal_detect" -eq 4 ]; then
+					# Find upstream ULA prefix: fd00::/8 on-link route on bridge, excluding local mesh prefix
+					upstream_prefix=$(ip -6 route show dev "$device" | \
+						grep -E 'fd[0-9a-f:]+::/[0-9]+' | \
+						grep 'proto kernel' | \
+						grep -v "$ula_base" | \
+						awk '{print $1}' | \
+						head -1)
+
+					if [ -n "$upstream_prefix" ]; then
+						# Strip /64 and remove any trailing :: (if present in route output)
+						ula_base=$(echo "$upstream_prefix" | awk -F"/" '{print $1}' | sed 's/::$//')
+						log_debug "MBP portal: Using upstream ULA prefix $ula_base for client-visible URLs"
+					else
+						log_debug "MBP portal: No upstream ULA detected — falling back to local mesh prefix"
+					fi
+				fi
+
+				# Construct final clean 8-segment ULA for this peer
+				node_ula="$ula_base:$eui64_formatted"
+
+				if [ -n "$node_ula" ]; then
 					echo "$ndpmacf [ ipaddress: $ip6addr] [ web_ui: https://[$node_ula] ]"
 				else
-					node_ula=$(ip -6 neigh | grep "$ula_pref" | grep "$ndpmac" | awk -F " " '{printf "%s", $1}')
-
-					if [ ! -z "$node_ula" ]; then
-						echo "$ndpmacf [ ipaddress: $ip6addr] [ web_ui: https://[$node_ula] ]"
-					else
-						echo "$ndpmacf [ ipaddress: $ip6addr]"
-					fi
+					echo "$ndpmacf [ ipaddress: $ip6addr]"
 				fi
 
 			elif [ ! -z "$nodeaddr" ]; then
@@ -7884,6 +7977,10 @@ elif [ "$1" = "daemon" ]; then
 			if [ "$link_to_portal" -eq 1 ]; then
 				/sbin/service network reload
 			fi
+		fi
+
+		if [ "$portal_detect" -eq 4 ]; then
+			manage_fallback_ula_route
 		fi
 
 		log_info "Checkinterval [$checkinterval]"
