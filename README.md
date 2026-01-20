@@ -313,7 +313,7 @@ uci commit mesh11sd
 rootpassword="myrootpassword"
 /bin/passwd root << EOF
 $rootpassword
-$root password
+$rootpassword
 EOF
 ```
 
@@ -1913,7 +1913,7 @@ Mesh11sd is an OpenWrt service daemon and runs continuously in the background. I
 
 **Example status output:**
 
-```
+```json
 root@meshnode-256e:~# mesh11sd status
 {
   "setup":{
@@ -2086,69 +2086,139 @@ root@meshnode-256e:~#
 
 ```
 
-**Example of using "show_ap_data all" on a portal node:**
+**Viewing Access Point Usage Data (apmond)**
+
+Mesh11sd uses the built-in `apmond` (AP monitoring) functionality to collect real-time client connection statistics from all access points (APs) across the mesh network — including on peers and the portal itself. Data is sent periodically to the **portal node** (portal_detect modes 0, 1 with WAN uplink detected, or 4 for MBP) using chunked HTTP POST over IPv6 to the portal's calculated ULA address.
+
+The portal aggregates this data in an internal database. You can view it using the `mesh11sd show_ap_data` command.
+
+**Basic Usage**
+
+*List all nodes that have sent AP data (by mac address / ap_mac_id):*  
+`mesh11sd show_ap_data`
+
+*View detailed client data from ALL nodes:*  
+`mesh11sd show_ap_data all`
+
+*View detailed client data from a single specific node:*  
+`mesh11sd show_ap_data <ap_mac_id>`
+
+**Example output of the list command:**
 
 ```
-root@meshnode-8ecb:~# mesh11sd show_ap_data all
-{
-  "Guest-2g-128d@owe2-0@94:83:c4:30:12:8d":{
-    "ba:54:32:31:32:bb":{
-      "rx_bytes":"41924",
-      "tx_bytes":"140877",
-      "tx_retries":"205",
-      "signal_avg":"-72_[-74,_-76]_dBm",
-      "tx_bitrate":"39.0_MBit/s_MCS_4",
-      "rx_bitrate":"13.0_MBit/s_MCS_1",
-      "connected_time":"14_seconds",
-      "timestamp":"1736663326462_ms",
-      "date_time":"Sun_Jan_12_06:28:46_UTC_2025"
-    }
-  },
-  "Guest-2g-8ecb@owe2-0@94:83:c4:a2:8e:cb":{
-    "ce:fe:af:7f:3b:e1":{
-      "rx_bytes":"522776",
-      "tx_bytes":"2831390",
-      "tx_retries":"449",
-      "signal_avg":"-22_[-28,_-23,_-33,_-29]_dBm",
-      "tx_bitrate":"6.0_MBit/s",
-      "rx_bitrate":"65.0_MBit/s_MCS_7",
-      "avg_ack_signal":"-21_dBm",
-      "connected_time":"5836_seconds",
-      "timestamp":"1736671236495_ms",
-      "date_time":"Sun_Jan_12_08:40:36_GMT_2025"
-    }
+====================================================================================================================
+ Show access point usage data
+    Usage: mesh11sd show_ap_data [ap_mac_id]
+       or: mesh11sd show_ap_data all
+
+ If the node you are looking for is not in the list - it probably has not had any connections yet - try again later.
+====================================================================================================================
+ The following access points have sent usage data:
+====================================================================================================================
+
+Access point ID (ap_mac_id)	9483c45c256d
+====================================================================================================================
+
+Access point ID (ap_mac_id)	9483c4a28ecb
+====================================================================================================================
+```
+
+**Detailed Output Format (`show_ap_data all` or per-node)**
+
+The output is a JSON object where:
+
+- Top-level keys are node identifiers in the format "System@<mac>", where <mac> is the factory/label MAC address of the mesh node (also shown inside under node_status.factory_mac and node_status.mesh_bridge_mac).
+
+- Nodes appear in chronological order based on when they first sent AP data to the portal (not necessarily portal first — the portal sends its own AP data just like any peer).
+
+- Each node block contains:
+    - System information — OpenWrt version, device model, hardware target, CPU/RAM stats, etc.
+    - phy details — Radio hardware (chipset, bands, standards, max speeds, driver).
+    - node_status — Uptime, load, memory, temperature, etc.
+    - clients@<mac> — The main client data section, keyed by the node's MAC.
+
+- Under clients@<mac>, each key is an access point identifier in the format:  
+  `<base_ssid>-<band_suffix>-<last4_mac_digits>@<phy>-apX`
+    - `<base_ssid>` — Default is "OpenWrt" (configurable)
+    - `<band_suffix>` — e.g. "5g" (5 GHz), "2g" (2.4 GHz)
+    - `<last4_mac_digits>` — Last four hex digits of the node's label MAC (e.g. "256d")
+    - `<phy>` — Radio identifier (e.g. "phy0")
+    - Example: "OpenWrt-5g-256d@phy0-ap0"
+
+- Under each AP key, client entries are keyed by the client's MAC address, with stats such as:
+    - rx_bytes / tx_bytes — Traffic volume
+    - signal_avg — RSSI in dBm
+    - tx_bitrate / rx_bitrate — Current connection speed and modulation
+    - connected_time — Duration in seconds
+    - timestamp / date_time — When the data was last updated
+
+Example snippet (shortened):
+
+```json
+"clients@94:83:c4:5c:25:6d": {
+  "OpenWrt-5g-256d@phy0-ap0": {
+    "7a:42:01:88:d1:84": {
+      "rx_bytes": "29754",
+      "tx_bytes": "30575",
+      "signal_avg": "-32_dBm",
+      "tx_bitrate": "433.3_MBit/s_VHT-MCS_9_80MHz_short_GI_VHT-NSS_1",
+      "connected_time": "271_seconds",
+      ...
+    },
+    "b4:8c:9d:ea:26:21": { ... }
   }
 }
-root@meshnode-8ecb:~#
 ```
+
+**Notes:**
+
+  - The portal node itself sends its own AP data (if it has client-facing APs), so it may appear     anywhere in the list — not always first.
+  - Data is only present for nodes/APs with active or recent client connections.
+  - The database is updated in real time as peers send new chunks — run the command repeatedly to see live changes.
+  - In MBP (portal_detect=4) mode, peers use a sticky on-link IPv6 route to reach the portal's ULA for reliable data transmission (since the portal does not advertise the prefix via RA).
+
+**Tips & Notes for `show_ap_data`**
+
+- **Real-time Updates** — The portal database is live-updated as peers send new data chunks. Run `mesh11sd show_ap_data all` repeatedly to monitor changes (e.g., new clients connecting, signal strength varying, or clients disconnecting).
+
+- **Chronological Node Order** — Nodes are listed in the order they first sent data to the portal, not by importance or MAC. The portal itself may appear anywhere if it has client-facing APs broadcasting SSIDs.
+
+- **No Data?** — If a node/AP is missing from the list, it means no client connections have occurred yet (or data hasn't been sent/received). Wait a few minutes after connecting a client and re-run the command.
+
+- **MBP Mode Specifics** — In portal_detect=4 (Mesh Bridge Portal / pure bridge mode), the portal does not advertise the ULA prefix via RA. Peers rely on a sticky on-link IPv6 route (added automatically by mesh11sd) to reach the portal ULA reliably for apmond data transmission.
+
+- **Customization** — The base SSID string ("OpenWrt" by default) and band suffixes ("5g", "2g") are configurable in mesh11sd settings. You can disable SSID suffixing if preferred.
+
+- **Debugging** — For more detail on data transmission/reception, enable higher debug levels in mesh11sd config and monitor with `mesh11sd read_log -f`. Look for apmond-related messages (e.g., chunkstatus, return codes, send_status).
+
+This command provides a comprehensive, live view of client distribution, connection quality, and traffic patterns across your entire 802.11s mesh network — invaluable for monitoring, troubleshooting, and performance tuning.
+
 
 **Example of using copy and connect:**
 
 ***Get a list of meshnodes:***
 
 ```
-root@meshnode-c525:~# mesh11sd connect
+root@meshnode-8ecb:/tmp/mesh11sd# mesh11sd connect
 ===========================================================================
  Connect a remote terminal session on a remote meshnode
     Usage: mesh11sd connect [remote_meshnode_macaddress]
 
- Waiting for node list to build * * * * *
+ Building node list * * * * * * 
 
  If the node you are looking for is not in the list - re-run this command.
-===========================================================================
+====================================================================================================================
  The following meshnodes are available for remote connection:
-	e4-95-6e-44-60-2e	[ ip address: fe80::e695:6eff:fe44:602e ]
-	94-83-c4-20-77-4e	[ ip address: fe80::9683:c4ff:fe20:774e ]
-	94-83-c4-29-f5-a4	[ ip address: fe80::9683:c4ff:fe29:f5a4 ]
-	94-83-c4-08-14-83	[ ip address: fe80::9683:c4ff:fe08:1483 ]
-	94-83-c4-17-16-ad	[ ip address: fe80::9683:c4ff:fe17:16ad ]
-	94-83-c4-2e-ef-d0	[ ip address: fe80::9683:c4ff:fe2e:efd0 ]
-	e4-95-6e-4a-43-e5	[ ip address: fe80::e695:6eff:fe4a:43e5 ]
-	e4-95-6e-45-1a-14	[ ip address: fe80::e695:6eff:fe45:1a14 ]
-	94-83-c4-36-85-ea	[ ip address: fe80::9683:c4ff:fe36:85ea ]
-===========================================================================
-root@meshnode-c525:~#
+e4-95-6e-4a-43-e5 [ ipaddress: fe80::e695:6eff:fe4a:43e5] [ web_ui: https://[fd39:2821:bf83:8:e695:6eff:fe4a:43e5] ]
+e4-95-6e-42-23-4f [ ipaddress: fe80::e695:6eff:fe42:234f] [ web_ui: https://[fd39:2821:bf83:8:e695:6eff:fe42:234f] ]
+94-83-c4-5c-25-6d [ ipaddress: fe80::9683:c4ff:fe5c:256d] [ web_ui: https://[fd39:2821:bf83:8:9683:c4ff:fe5c:256d] ]
+94-83-c4-5c-2a-52 [ ipaddress: fe80::9683:c4ff:fe5c:2a52] [ web_ui: https://[fd39:2821:bf83:8:9683:c4ff:fe5c:2a52] ]
+96-83-c4-5e-2a-52 [ ipaddress: fe80::9483:c4ff:fe5e:2a52] [ web_ui: https://[fd39:2821:bf83:8:9483:c4ff:fe5e:2a52] ]
+94-83-c4-13-58-bd [ ipaddress: fe80::9683:c4ff:fe13:58bd] [ web_ui: https://[fd39:2821:bf83:8:9683:c4ff:fe13:58bd] ]
+94-83-c4-2c-c5-25 [ ipaddress: fe80::9683:c4ff:fe2c:c525] [ web_ui: https://[fd39:2821:bf83:8:9683:c4ff:fe2c:c525] ]
+====================================================================================================================
 
+root@meshnode-8ecb:/tmp/mesh11sd#
 
 ```
 

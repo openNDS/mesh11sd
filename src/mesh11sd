@@ -1,5 +1,5 @@
 #!/bin/sh
-# Copyright (C) BlueWave Projects and Services 2015-2025
+# Copyright (C) BlueWave Projects and Services 2015-2026
 #
 #	This software is released under the GNU General Public License version 3 or any later version.
 #	This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation,
@@ -18,6 +18,8 @@ version="6.2.0~be7a"
 fixup1=0
 failcount=0
 network_restart=0
+
+# initial tmpdir, use $log_mountpoint/mesh11sd once startup begins
 tmpdir="/tmp/mesh11sd"
 mkdir -p "$tmpdir"
 
@@ -175,7 +177,7 @@ check_mesh_mtu() {
 
 }
 
-get_current_setup () {
+get_current_setup() {
 	debuglevel=$(uci get mesh11sd.setup.debuglevel 2> /dev/null | awk '{printf "%i", $1}')
 
 	if [ -z "$debuglevel" ]; then
@@ -194,6 +196,40 @@ get_current_setup () {
 	fi
 
 	syslogmessage="option enabled [ $enabled ]"
+	debugtype="info"
+	mute="$mutestate"
+	write_to_syslog
+
+
+	#####
+	log_mountpoint=$(uci get mesh11sd.setup.log_mountpoint 2> /dev/null)
+
+	if [ -z "$log_mountpoint" ]; then
+		log_mountpoint="/tmp"
+	fi
+
+	mountcheck=$(df | grep -w  "$log_mountpoint")
+
+	if [ -z "$mountcheck" ]; then
+		log_mountpoint="/tmp"
+	fi
+
+	syslogmessage="option log_mountpoint [ $log_mountpoint ]"
+	debugtype="info"
+	mute="$mutestate"
+	write_to_syslog
+
+	tmpdir="$log_mountpoint/mesh11sd"
+	mkdir -p "$tmpdir"
+
+	#####
+	max_log_entries=$(uci get mesh11sd.setup.max_log_entries 2> /dev/null)
+
+	if [ -z "$max_log_entries" ]; then
+		max_log_entries="500"
+	fi
+
+	syslogmessage="option max_log_entries [ $max_log_entries ]"
 	debugtype="info"
 	mute="$mutestate"
 	write_to_syslog
@@ -271,7 +307,7 @@ get_current_setup () {
 		portal_detect_threshold=5
 	fi
 
-	if [ "$portal_detect" -eq 0 ] || [ "$portal_detect" -eq 4 ]; then
+	if [ "$portal_detect" -eq 0 ]; then
 		portal_detect_threshold=0
 	fi
 
@@ -317,10 +353,6 @@ get_current_setup () {
 	fi
 
 	auto_mesh_id=$(printf "$auto_mesh_id" | sha256sum | awk '{printf "%s", $1}' | tail -c55 | head -c30)
-
-	if [ "$portal_detect" -eq 0 ] || [ "$portal_detect" -eq 4 ]; then
-		set_ula_prefix "set"
-	fi
 
 	syslogmessage="auto_mesh_id hash [ $auto_mesh_id ]"
 	debugtype="info"
@@ -499,16 +531,17 @@ get_current_setup () {
 	mesh_gate_base_ssid=$(echo -n "$mesh_gate_base_ssid" | tr -d " " | head -c "$maxlen")
 
 	if [ -z "$mesh_gate_base_ssid" ]; then
-		syslogmessage="option mesh_gate_base_ssid [ Not Set ] Using default"
-		debugtype="info"
-		mute="$mutestate"
-		write_to_syslog
+		config_ssid=$(cat /etc/config/wireless | grep -q -w "'OpenWrt'"; echo $?)
 
+		if [ "$config_ssid" -eq 0 ]; then
+			mesh_gate_base_ssid="MeshGate"
+			mute="$mutestate"
+			log_info "option mesh_gate_base_ssid [ Not Set ] Using default"
+		fi
 	else
 		syslogmessage="option mesh_gate_base_ssid [ $mesh_gate_base_ssid ] "
-		debugtype="info"
 		mute="$mutestate"
-		write_to_syslog
+		log_info "option mesh_gate_base_ssid [ $mesh_gate_base_ssid ] "
 	fi
 
 	#####
@@ -727,7 +760,7 @@ get_current_setup () {
 		vtun_base_ssid=$(uci get mesh11sd.setup.vtun_base_ssid 2> /dev/null)
 
 		if [ -z "$vtun_base_ssid" ]; then
-			vtun_base_ssid="Guest"
+			vtun_base_ssid="VTunnel"
 		fi
 
 		if [ "$ssid_suffix_enable" -eq 1 ]; then
@@ -1008,36 +1041,6 @@ get_current_setup () {
 	fi
 
 	syslogmessage="option manage_opennds_startup [ $manage_opennds_startup ]"
-	debugtype="info"
-	mute="$mutestate"
-	write_to_syslog
-
-	#####
-	log_mountpoint=$(uci get mesh11sd.setup.log_mountpoint 2> /dev/null)
-
-	if [ -z "$log_mountpoint" ]; then
-		log_mountpoint="/tmp"
-	fi
-
-	mountcheck=$(df | grep -w  "$log_mountpoint")
-
-	if [ -z "$mountcheck" ]; then
-		log_mountpoint="/tmp"
-	fi
-
-	syslogmessage="option log_mountpoint [ $log_mountpoint ]"
-	debugtype="info"
-	mute="$mutestate"
-	write_to_syslog
-
-	#####
-	max_log_entries=$(uci get mesh11sd.setup.max_log_entries 2> /dev/null)
-
-	if [ -z "$max_log_entries" ]; then
-		max_log_entries="500"
-	fi
-
-	syslogmessage="option max_log_entries [ $max_log_entries ]"
 	debugtype="info"
 	mute="$mutestate"
 	write_to_syslog
@@ -1584,54 +1587,18 @@ check_channel() {
 			mode=$(echo "$ucibatch" | uci batch)
 
 			if [ "$mode" = "mesh" ]; then
-				ucibatch="get wireless.$iface.network"
-				network=$(echo "$ucibatch" | uci batch)
-				ucibatch="get network.$network.device"
-				device=$(echo "$ucibatch" | uci batch)
+				network=$(echo "get wireless.$iface.network" | uci batch)
+				device=$(echo "get network.$network.device" | uci batch)
+				get_portal_ula
 
-				if [ -f "$tmpdir/dhcp6probe" ]; then
-					mv "$tmpdir/dhcp6probe" "$tmpdir/dhcp6probe.prev"
-				fi
-
-				debugtype="debug"
-				syslogmessage="Checking portal ipv6 connectivity on device [ $device ]..."
-				write_to_syslog
-
-
-				odhcp6c -p /var/run/odhcp6c-renew-$device.pid -e -v -k "$device" 2>$tmpdir/dhcp6probe &
-
-				local retries=20
-
-				for retry in $(seq $retries); do
-
-					if [ -f "$tmpdir/dhcp6probe" ]; then
-						sleep 4
-						break
-					else
-						sleep 1
-						continue
-					fi
-				done
-
-				link_to_portal=$(cat $tmpdir/dhcp6probe 2>/dev/null | grep -q -w "Got a valid ADVERTISE" ; echo -n "$?")
-
-				# NOTE: odhcp6c -p option does not work and pid is not recorded, so we have to look up the pid using ps utility
-				instances=$(ps | grep "odhcp6c" | grep "/var/run/odhcp6c-renew-$device.pid" | awk '{printf "%s ", $1}')
-
-				for instance in $instances; do
-					kill "$instance"
-				done
-
-				debugtype="debug"
+				manage_fallback_ula_route
 
 				if [ "$link_to_portal" -eq 0 ]; then
-					syslogmessage="Check Channel - portal detected"
-					write_to_syslog
+					log_debug "Check Channel - portal detected"
 					cctimestamp=""
 					return 0
 				else
-					syslogmessage="Check Channel - portal not detected - Scanning..."
-					write_to_syslog
+					log_debug "Check Channel - portal not detected - Scanning..."
 					scan_channel
 					cctimestamp=""
 					return 0
@@ -1643,6 +1610,122 @@ check_channel() {
 
 		cctimestamp=""
 	fi
+}
+
+manage_fallback_ula_route() {
+	# ------------------------------------------------------------
+	# Always assign deterministic ULA address to bridge on ALL nodes
+	# + add portal-specific ::1 on MBP portal
+	# + add sticky on-link route on peers in auto-detect modes
+	# ------------------------------------------------------------
+	if [ -f "$tmpdir/devicemac" ]; then
+		. "$tmpdir/devicemac"
+	else
+		log_warning "No $tmpdir/devicemac found → cannot determine bridge for ULA/route"
+		device=""
+		return 1
+	fi
+
+	# Compute shared ULA prefix deterministically
+	set_ula_prefix "get"
+	if [ -z "$ula_prefix" ]; then
+		log_warning "Could not determine ULA prefix for address/route"
+		return 1
+	fi
+
+	# Strip /48 to get clean 4-segment base (e.g. fd46:cfe5:34c5:ddd6)
+	ula_base="${ula_prefix%%::*}"   # everything before the last ::
+	log_debug "ula_base [ $ula_base ]"
+
+	# --------------------------------------------------------------------
+	# Part 1: Deterministic ULA address on bridge (ALL nodes)
+	# --------------------------------------------------------------------
+	if [ -n "$device" ] && [ -n "$devicemac" ]; then
+
+		# Generate EUI-64 from bridge MAC
+		mac_no_colons="${devicemac//:/}"
+		first_byte_hex=${mac_no_colons:0:2}
+		first_byte_dec=$((0x$first_byte_hex ^ 0x02))
+		first_byte=$(printf "%02x" "$first_byte_dec")
+		eui64="${first_byte}${mac_no_colons:2:2}${mac_no_colons:4:2}fffe${mac_no_colons:6:2}${mac_no_colons:8:2}${mac_no_colons:10:2}"
+
+		# Format EUI-64 with colons
+		eui64_formatted="${eui64:0:4}:${eui64:4:4}:${eui64:8:4}:${eui64:12:4}"
+
+		# Full address: 4-segment prefix : EUI-64 /64
+		ula_addr="$ula_base:$eui64_formatted/64"
+
+		# Check if already present
+		if ! ip -6 addr show dev "$device" | grep -q "$ula_base:$eui64_formatted"; then
+			log_info "Adding deterministic ULA address $ula_addr to bridge $device"
+
+			ip -6 addr add "$ula_addr" dev "$device" 2>/dev/null
+
+			if [ $? -eq 0 ]; then
+				log_notice "ULA address $ula_addr added to $device"
+			else
+				log_error "Failed to add ULA address $ula_addr to $device"
+				log_debug "ip error: $(ip -6 addr add "$ula_addr" dev "$device" 2>&1)"
+			fi
+		fi
+	fi
+
+	# --------------------------------------------------------------------
+	# Part 2: Add portal-specific ::1 ULA to bridge (only on MBP portal)
+	# --------------------------------------------------------------------
+	if [ "$detected_state" = "portal" ] && [ "$portal_detect" -eq 4 ] && [ -n "$device" ]; then
+
+		# Portal ULA = prefix : :1 /64
+		portal_ula_addr="$ula_base::1/64"
+
+		# Check if already present
+		if ! ip -6 addr show dev "$device" | grep -q "$ula_base::1"; then
+			log_info "MBP portal mode → adding portal ULA $portal_ula_addr to bridge $device"
+
+			ip -6 addr add "$portal_ula_addr" dev "$device" 2>/dev/null
+
+			if [ $? -eq 0 ]; then
+				log_notice "Portal ULA $portal_ula_addr added to $device"
+			else
+				log_error "Failed to add portal ULA $portal_ula_addr to $device"
+				log_debug "ip error: $(ip -6 addr add "$portal_ula_addr" dev "$device" 2>&1)"
+			fi
+		fi
+	fi
+
+	# --------------------------------------------------------------------
+	# Part 3: Sticky on-link route (only on peers in auto-detect modes)
+	# --------------------------------------------------------------------
+	if [ "$detected_state" = "peer" ] && \
+	   [ "$portal_detect" -ne 0 ] && [ "$portal_detect" -ne 4 ] && \
+	   [ -n "$device" ]; then
+
+		if ! ip -6 route show "$ula_prefix" 2>/dev/null | grep -q "dev[[:space:]]\+$device.*proto static.*metric 512.*onlink"; then
+			log_info "Adding sticky fallback on-link route $ula_prefix dev $device (peer auto-detect mode)"
+
+			ip -6 route add "$ula_prefix" dev "$device" scope link onlink metric 512 proto static 2>/dev/null
+
+			if [ $? -eq 0 ]; then
+				log_notice "Sticky fallback on-link route added on $device"
+			else
+				log_error "Failed to add fallback route on $device"
+				log_debug "ip error: $(ip -6 route add "$ula_prefix" dev "$device" scope link onlink metric 512 proto static 2>&1)"
+			fi
+		fi
+	fi
+
+	# --------------------------------------------------------------------
+	# Cleanup: only for route when no longer a peer or bridge state lost
+	# --------------------------------------------------------------------
+	if [ "$detected_state" != "peer" ] || [ -z "$device" ] || [ ! -f "$tmpdir/devicemac" ]; then
+		if [ -n "$ula_prefix" ] && [ -n "$device" ] && \
+		   ip -6 route show "$ula_prefix" 2>/dev/null | grep -q "dev[[:space:]]\+$device.*proto static"; then
+			log_info "Removing fallback route $ula_prefix on $device (no longer required)"
+			ip -6 route del "$ula_prefix" dev "$device" 2>/dev/null
+		fi
+	fi
+
+	return 0
 }
 
 scan_channel() {
@@ -1701,20 +1784,24 @@ scan_channel() {
 
 get_portal_state() {
 	local muteorg=$mute
-	debugtype="debug"
-	syslogmessage="In get_portal_state. firstloop=$firstloop..."
-	write_to_syslog
+	log_debug "In get_portal_state. firstloop=$firstloop..."
 
 	if [ "$firstloop" -eq 1 ]; then
 		return 0
 	fi
 
-	if [ "$portal_detect" -eq 1 ] || [ "$portal_detect" -eq 3 ]; then
+	if [ "$portal_detect" -eq 1 ] || [ "$portal_detect" -eq 3 ] || [ "$portal_detect" -eq 4 ] || [ "$portal_detect" -eq 5 ]; then
 		default_gw=""
 
 		if [ "$firstloop" -eq 0 ]; then
 			#Check if portal - try to get the upstream default ipv4 gateway
-			up_zone=$(echo "get network.wan.device" | uci batch | awk '{printf "%s", $1}')
+
+			if [ "$portal_detect" -eq 4 ]; then
+				up_zone=$(echo "get network.lan.device" | uci batch | awk '{printf "%s", $1}')
+			else
+				up_zone=$(echo "get network.wan.device" | uci batch | awk '{printf "%s", $1}')
+			fi
+
 			mute=1
 			wait_for_interface "$up_zone"
 			mute=0
@@ -1741,6 +1828,11 @@ get_portal_state() {
 				# Try to find a portal on the backhaul
 				is_portal=""
 				local retries=4
+
+				if [ "$portal_detect" -eq 4 ]; then
+					retries=1
+				fi
+
 				br_zone=$(echo "get network.$auto_mesh_network.device" | uci batch | awk '{printf "%s", $1}')
 
 				for retry in $(seq $retries); do
@@ -1782,12 +1874,7 @@ get_portal_state() {
 		detected_state="peer"
 		uci set dhcp.@dnsmasq[0].authoritative='0'
 
-	elif [ "$portal_detect" -eq 5 ]; then
-		# 5 - force peer mode
-		detected_state="peer"
-		is_portal="backhaul"
-
-	elif [ "$portal_detect" -eq 0 ] || [ "$portal_detect" -eq 4 ]; then
+	elif [ "$portal_detect" -eq 0 ]; then
 		# 0 - force portal mode
 		is_portal="forced"
 		detected_state="portal"
@@ -1820,6 +1907,8 @@ get_portal_state() {
 
 	if [ "$portal_detect" -eq 5 ]; then
 		detected_state="peer"
+	elif [ "$portal_detect" -eq 4 ]; then
+		detected_state="portal"
 	fi
 
 	if [ "$portal_detect" -eq 3 ]; then
@@ -1835,8 +1924,11 @@ get_portal_state() {
 }
 
 portal_watchdog() {
-	# Set auto_detect state
+	debugtype="debug"
+	syslogmessage="Portal Watchdog - checking status ...."
+	write_to_syslog
 
+	# Set auto_detect state
 	case $portal_detect in
 		"0") auto_detect="0";;
 		"1") auto_detect="1";;
@@ -1846,7 +1938,12 @@ portal_watchdog() {
 		*) auto_detect="0";;
 	esac
 
-	if [ -z "$is_portal" ] && [ "$auto_detect" -eq 1 ]; then
+
+	if [ -f "$tmpdir/is_portal" ]; then
+		. $tmpdir/is_portal
+	fi
+
+	if [ "$detected_state" != "portal" ] && [ "$auto_detect" -eq 1 ]; then
 		# do portal detect with watchdog:
 		failcount=$(($failcount + 1))
 		check_channel_now=1
@@ -2028,17 +2125,44 @@ check_dns_server() {
 }
 
 check_portal() {
-	debugtype="debug"
-	syslogmessage="Checking portal status"
-	write_to_syslog
+	log_debug "Checking portal status"
 	is_portal=""
 
 	if [ "$enabled" -eq 1 ]; then
 		get_portal_state
 		. $tmpdir/devicemac
 
+		if [ "$portal_detect" -eq 3 ]; then
+			log_debug "Checking CPE status"
+			wait_for_mesh
+			vxlan_status=$(ip link show vxlan$tun_id &> /dev/null; echo $?)
+			log_debug "vxlan_status [ $vxlan_status ]"
+
+			if [ "$vxlan_status" -eq 1 ]; then
+				log_debug "MBP - checking vtunnel"
+				check_vtunnel
+			fi
+
+			return 0
+		fi
+
+		if [ "$portal_detect" -eq 4 ]; then
+			log_debug "Checking MBP (Mesh Bridge Portal) status"
+			wait_for_mesh
+			vxlan_status=$(ip link show vxlan$tun_id &> /dev/null; echo $?)
+			log_debug "vxlan_status [ $vxlan_status ]"
+
+			if [ "$vxlan_status" -eq 1 ]; then
+				log_debug "MBP - checking vtunnel"
+				check_vtunnel
+			fi
+
+			return 0
+		fi
+
 		if [ "$detected_state" != "portal" ]; then
 			# This IS NOT a layer 3 mesh portal
+			log_debug "This IS NOT a layer 3 mesh portal"
 
 			if [ "$detected_state" = "peer" ] && [ "$last_state" = "initial" ]; then
 				last_state="portal"
@@ -2047,9 +2171,7 @@ check_portal() {
 			if [ "$detected_state" = "peer" ] && [ "$last_state" = "portal" ]; then
 				# We have become a peer
 				last_state="peer"
-				debugtype="debug"
-				syslogmessage="This meshnode is NOT a portal"
-				write_to_syslog
+				log_debug "This meshnode is NOT a portal"
 
 				if [ -f "/var/run/udhcpc-$device.pid" ]; then
 					kill $(cat /var/run/udhcpc-$device.pid)
@@ -2072,6 +2194,12 @@ check_portal() {
 				echo "set dhcp.$auto_mesh_network.dhcpv6='disabled'" | uci batch
 				echo "set dhcp.$auto_mesh_network.dhcpv4='disabled'" | uci batch
 				echo "set dhcp.$auto_mesh_network.ra='disabled'" | uci batch
+				echo "del_list dhcp.$auto_mesh_network.ra_flags='managed-config'" | uci batch 2> /dev/null
+				echo "del_list dhcp.$auto_mesh_network.ra_flags='other-config'" | uci batch 2> /dev/null
+				echo "add_list dhcp.$auto_mesh_network.ra_flags='none'" | uci batch
+				echo "del_list dhcp.$auto_mesh_network.ra_dns='$portal_ula'" | uci batch 2> /dev/null
+				uci set dhcp.@dnsmasq[0].rebind_protection='0'
+
 				uci set dhcp.@dnsmasq[0].logfacility='-'
 				uci set dhcp.@dnsmasq[0].quietdhcp='1'
 
@@ -2082,12 +2210,17 @@ check_portal() {
 					uci set dhcp.vtunlan.dhcpv6='disabled'
 					uci set dhcp.vtunlan.ra='disabled'
 					uci set dhcp.vtunlan.ignore='1'
+					echo "del_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
+					echo "del_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
+					echo "add_list dhcp.vtunlan.ra_flags='none'" | uci batch
+					echo "del_list dhcp.vtunlan.ra_dns='$portal_ula'" | uci batch 2> /dev/null
+					uci set dhcp.@dnsmasq[0].rebind_protection='0'
 				fi
 
 
 				if [ "$mesh_gate_only" -eq 0 ]; then
 
-					if [ "$portal_detect" -eq 0 ] || [ "$portal_detect" -eq 4 ]; then
+					if [ "$portal_detect" -eq 0 ]; then
 						non_portal_mesh_hwmp_rootmode="4"
 					else
 						non_portal_mesh_hwmp_rootmode="2"
@@ -2109,13 +2242,9 @@ check_portal() {
 					default_gw=$(ip route | grep "default via")
 
 					if [ -z "$default_gw" ]; then
-						debugtype="debug"
-						syslogmessage="Mesh startup watchdog - iteration [ $retry ] ...."
-						write_to_syslog
+						log_debug "Mesh startup watchdog - iteration [ $retry ] ...."
 						wait_for_mesh
-						debugtype="debug"
-						syslogmessage="Mesh interface is [ $ifstatus ] ...."
-						write_to_syslog
+						log_debug "Mesh interface is [ $ifstatus ] ...."
 
 						if [ "$ifstatus" = "up" ]; then
 							break
@@ -2142,6 +2271,7 @@ check_portal() {
 
 		else
 			# This IS a layer 3 mesh portal
+			log_debug "This IS a layer 3 mesh portal"
 			uci set mesh11sd.mesh_params.mesh_connected_to_as='1'
 
 			if [ -f "/var/run/udhcpc-$device.pid" ]; then
@@ -2166,22 +2296,12 @@ check_portal() {
 
 				vxlan_status=$(ip link show vxlan$tun_id &> /dev/null; echo $?)
 
-				if [ "$portal_detect" -eq 4 ]; then
 
-					if [ "$vxlan_status" -eq 0 ]; then
-						echo "set network.vtunlan.proto='dhcp'" | uci batch
-					fi
-
-					echo "set network.$auto_mesh_network.proto='static'" | uci batch
-				else
-
-					if [ "$vxlan_status" -eq 0 ]; then
-						echo "set network.vtunlan.proto='static'" | uci batch
-					fi
-
-					echo "set network.$auto_mesh_network.proto='static'" | uci batch
+				if [ "$vxlan_status" -eq 0 ]; then
+					echo "set network.vtunlan.proto='static'" | uci batch
 				fi
 
+				echo "set network.$auto_mesh_network.proto='static'" | uci batch
 
 				set_ula_prefix "set"
 				/sbin/service network reload
@@ -2190,35 +2310,33 @@ check_portal() {
 				uci set dhcp.@dnsmasq[0].logfacility='-'
 				uci set dhcp.@dnsmasq[0].quietdhcp='1'
 				echo "del_list dhcp.@dnsmasq[0].server='$config_ipaddr'" | uci batch
+				echo "set dhcp.$auto_mesh_network.ignore='0'" | uci batch
+				echo "set dhcp.$auto_mesh_network.ra_default='2'" | uci batch
+				echo "set dhcp.$auto_mesh_network.dhcpv6='server'" | uci batch
+				echo "set dhcp.$auto_mesh_network.dhcpv4='server'" | uci batch
+				echo "set dhcp.$auto_mesh_network.ra='server'" | uci batch
+				echo "del_list dhcp.$auto_mesh_network.ra_flags='none'" | uci batch 2> /dev/null
+				echo "del_list dhcp.$auto_mesh_network.ra_flags='managed-config'" | uci batch 2> /dev/null
+				echo "del_list dhcp.$auto_mesh_network.ra_flags='other-config'" | uci batch 2> /dev/null
+				echo "add_list dhcp.$auto_mesh_network.ra_flags='managed-config'" | uci batch 2> /dev/null
+				echo "add_list dhcp.$auto_mesh_network.ra_flags='other-config'" | uci batch 2> /dev/null
+				echo "add_list dhcp.$auto_mesh_network.ra_dns='$portal_ula'" | uci batch 2> /dev/null
+				uci set dhcp.@dnsmasq[0].rebind_protection='1'
 
-				if [ "$portal_detect" -eq 4 ]; then
-					echo "set dhcp.$auto_mesh_network.ignore='0'" | uci batch
-					echo "set dhcp.$auto_mesh_network.ra_default='2'" | uci batch
-					echo "set dhcp.$auto_mesh_network.dhcpv6='server'" | uci batch
-					echo "set dhcp.$auto_mesh_network.dhcpv4='server'" | uci batch
-					echo "set dhcp.$auto_mesh_network.ra='server'" | uci batch
+				if [ "$vxlan_status" -eq 0 ]; then
+					uci set dhcp.vtunlan.dhcpv4='server'
+					uci set dhcp.vtunlan.dhcpv6='server'
+					uci set dhcp.vtunlan.ra='server'
+					uci set dhcp.vtunlan.ignore='0'
+					echo "del_list dhcp.vtunlan.ra_flags='none'" | uci batch 2> /dev/null
+					echo "del_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
+					echo "del_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
+					echo "add_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
+					echo "add_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
+					echo "add_list dhcp.vtunlan.ra_dns='$portal_ula'" | uci batch 2> /dev/null
+					uci set dhcp.@dnsmasq[0].rebind_protection='1'
 
-
-					uci set dhcp.vtunlan.dhcpv4='disabled'
-					uci set dhcp.vtunlan.dhcpv6='disabled'
-					uci set dhcp.vtunlan.ra='disabled'
-					uci set dhcp.vtunlan.ignore='1'
-
-				else
-					echo "set dhcp.$auto_mesh_network.ignore='0'" | uci batch
-					echo "set dhcp.$auto_mesh_network.ra_default='2'" | uci batch
-					echo "set dhcp.$auto_mesh_network.dhcpv6='server'" | uci batch
-					echo "set dhcp.$auto_mesh_network.dhcpv4='server'" | uci batch
-					echo "set dhcp.$auto_mesh_network.ra='server'" | uci batch
-
-					if [ "$vxlan_status" -eq 0 ]; then
-						uci set dhcp.vtunlan.dhcpv4='server'
-						uci set dhcp.vtunlan.dhcpv6='server'
-						uci set dhcp.vtunlan.ra='server'
-						uci set dhcp.vtunlan.ignore='0'
-					fi
 				fi
-
 
 				if [ "$mesh_gate_only" -eq 0 ]; then
 					mesh_hwmp_rootmode="4"
@@ -2540,13 +2658,6 @@ refresh_bridgemac() {
 
 	wait_for_interface "$device"
 	devicemac=$(ip link | grep -A 1 "$device:" | grep -w "link/ether" | awk '{printf "%s", $2}')
-
-	if [ ! -f "/etc/factory_mac" ]; then
-		echo "factory_mac=\"$devicemac\"" > /etc/factory_mac
-	fi
-
-	. /etc/factory_mac
-
 	echo "device=\"$device\" ; devicemac=\"$devicemac\"" > $tmpdir/devicemac
 }
 
@@ -2907,6 +3018,8 @@ urlencode() {
 		s/>/%3E/g
 		s/</%3C/g
 		s/'/%27/g
+		s/(/%28/g
+		s/)/%29/g
 		s/\`/%60/g
 	"
 	local buffer="$1"
@@ -2927,6 +3040,8 @@ urldecode() {
 		s/%3E/>/g
 		s/%3C/</g
 		s/%27/'/g
+		s/%28/(/g
+		s/%29/)/g
 		s/%60/\`/g
 		s/%25/%/g
 	"
@@ -3053,16 +3168,13 @@ mobility_settings() {
 		write_to_syslog
 	fi
 
-	if [ -f "$tmpdir/detect" ]; then
-		. "$tmpdir/detect"
-		eval "driver=\"\$driver_phy$phyindex\""
+	mesh_driver=$(grep -A 3 "$phy" "$tmpdir/wifidetect" | grep "Driver" | awk -F "\"" '{printf "%s", $4}')
 
-		if [ "$driver" = "ath11k" ]; then
-			beacon_int=100
-			debugtype="info"
-			syslogmessage="Qualcomm ath11k detected, beacon interval override to [ $beacon_int ms ] (workaround for ath11k bug). Mesh mobility may be suboptimal."
-			write_to_syslog
-		fi
+	if [ "$mesh_driver" = "ath11k" ]; then
+		beacon_int=100
+		debugtype="info"
+		syslogmessage="Qualcomm ath11k detected, beacon interval override to [ $beacon_int ms ] (workaround for ath11k bug). Mesh mobility may be suboptimal."
+		write_to_syslog
 	fi
 
 	echo "mesh_node_mobility_level=\"$mesh_node_mobility_level\"; rootmode=\"$rootmode\"; beacon_int=\"$beacon_int\"; dtim_period=\"$dtim_period\"; \
@@ -3086,7 +3198,7 @@ mobility_settings() {
 
 	if [ -z "$1" ] || [ "$1" = "config" ]; then
 
-		if [ "$detected_state" = "portal" ] || [ "$portal_detect" -eq 0 ] || [ "$portal_detect" -eq 4 ]; then
+		if [ "$detected_state" = "portal" ] || [ "$portal_detect" -eq 0 ]; then
 			# this is a portal node, so override hwmp_rootmode and mesh_fwding
 			rootmode=4
 			mesh_fwding=1
@@ -3384,7 +3496,7 @@ check_mesh_gate_only() { # AKA leechmode
 	fi
 
 	# No leechmode for a portal
-	if [ "$portal_detect" -eq 0 ] || [ "$portal_detect" -eq 4 ] || [ "$detected_state" = "portal" ]; then
+	if [ "$portal_detect" -eq 0 ] || [ "$detected_state" = "portal" ]; then
 		return 0
 	fi
 
@@ -3502,6 +3614,11 @@ check_package_list() {
 }
 
 create_vxlan_if() {
+
+	if [ "$portal_detect" -eq 3 ]; then
+		device="br-wan"
+	fi
+
 	debugtype="debug"
 	syslogmessage="create_vxlan_if [ vxlan$tun_id ], address [ $vxmac_indexed ], link_local [ $link_local_addr ], group [ ff02::$tun_id ], device [ $device ]"
 	write_to_syslog
@@ -3526,6 +3643,7 @@ create_vxlan_if() {
 
 	for retry in $(seq $retries); do
 		wait_for_interface "vxlan$tun_id"
+		vxlanstate="%ifstatus"
 
 		if [ "$ifstatus" = "down" ]; then
 			ip link set "vxlan$tun_id" up
@@ -3540,17 +3658,31 @@ create_vxlan_if() {
 	done
 
 	# Set default dhcp settings
-	if [ "$portal_detect" -eq 4 ]; then
-		uci set dhcp.vtunlan.dhcpv4='disabled'
-		uci set dhcp.vtunlan.dhcpv6='disabled'
-		uci set dhcp.vtunlan.ra='disabled'
-		uci set dhcp.vtunlan.ignore='1'
-	else
+	if [ "$portal_detect" -ne 4 ]; then
 		uci set dhcp.vtunlan.dhcpv4='server'
 		uci set dhcp.vtunlan.dhcpv6='server'
 		uci set dhcp.vtunlan.ra='server'
 		uci set dhcp.vtunlan.ignore='0'
+		echo "del_list dhcp.vtunlan.ra_flags='none'" | uci batch 2> /dev/null
+		echo "del_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
+		echo "del_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
+		echo "add_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
+		echo "add_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
+		echo "add_list dhcp.vtunlan.ra_dns='$portal_ula'" | uci batch 2> /dev/null
+		uci set dhcp.@dnsmasq[0].rebind_protection='1'
+	else
+		uci set dhcp.vtunlan.dhcpv4='disabled'
+		uci set dhcp.vtunlan.dhcpv6='disabled'
+		uci set dhcp.vtunlan.ra='disabled'
+		uci set dhcp.vtunlan.ignore='1'
+
+		echo "del_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
+		echo "del_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
+		echo "del_list dhcp.vtunlan.ra_flags='none'" | uci batch 2> /dev/null
+		echo "add_list dhcp.vtunlan.ra_flags='none'" | uci batch 2> /dev/null
 	fi
+
+	. $tmpdir/devicemac
 }
 
 check_vtunnel() {
@@ -3602,8 +3734,10 @@ check_vtunnel() {
 					uci set dhcp.vtunlan.ra_slaac='1'
 
 					if [ "$commit_all" -eq 0 ]; then
-						uci add_list dhcp.vtunlan.ra_flags='managed-config'
-						uci add_list dhcp.vtunlan.ra_flags='other-config'
+						echo "del_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
+						echo "del_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
+						echo "add_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
+						echo "add_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
 					fi
 
 					uci set dhcp.vtunlan.ignore='1'
@@ -3657,14 +3791,13 @@ check_vtunnel() {
 						uci set dhcp.vtunlan.dhcpv6='server'
 						uci set dhcp.vtunlan.ra='server'
 						uci set dhcp.vtunlan.ignore='0'
-					fi
-
-					if [ "$portal_detect" -eq 4 ]; then
-						# this is a forced portal with vxlan in bridge mode
-						uci set dhcp.vtunlan.dhcpv4='disabled'
-						uci set dhcp.vtunlan.dhcpv6='disabled'
-						uci set dhcp.vtunlan.ra='disabled'
-						uci set dhcp.vtunlan.ignore='1'
+						echo "del_list dhcp.vtunlan.ra_flags='none'" | uci batch
+						echo "del_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
+						echo "del_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
+						echo "add_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
+						echo "add_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
+						echo "add_list dhcp.vtunlan.ra_dns='$portal_ula'" | uci batch 2> /dev/null
+						uci set dhcp.@dnsmasq[0].rebind_protection='1'
 					fi
 				fi
 			fi
@@ -3675,8 +3808,6 @@ check_vtunnel() {
 				proto="static"
 			elif [ "$portal_detect" -eq 1 ] && [ "$detected_state" = "portal" ]; then
 				proto="static"
-			elif [ "$portal_detect" -eq 4 ]; then
-				proto="dhcp"
 			else
 				proto="dhcp"
 			fi
@@ -3772,7 +3903,7 @@ check_vtunnel() {
 
 		if [ "$vxlan_status" -eq 0 ] && [ "$detected_state" != "portal" ]; then
 
-			if [ "$portal_detect" -eq 1 ] || [ "$portal_detect" -eq 3 ] || [ "$portal_detect" -eq 5 ]; then
+			if [ "$portal_detect" -eq 1 ] || [ "$portal_detect" -eq 3 ] || [ "$portal_detect" -eq 4 ] || [ "$portal_detect" -eq 5 ]; then
 
 				dhcpserver=$(uci get dhcp.vtunlan.dhcpv4)
 
@@ -3781,7 +3912,13 @@ check_vtunnel() {
 					uci set dhcp.vtunlan.dhcpv6='disabled'
 					uci set dhcp.vtunlan.ra='disabled'
 					uci set dhcp.vtunlan.ignore='1'
+					echo "del_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
+					echo "del_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
+					echo "add_list dhcp.vtunlan.ra_flags='none'" | uci batch
+					echo "del_list dhcp.vtunlan.ra_dns='$portal_ula'" | uci batch 2> /dev/null
+					uci set dhcp.@dnsmasq[0].rebind_protection='0'
 					/sbin/service dnsmasq restart
+					/sbin/service odhcpd restart
 				fi
 			fi
 		fi
@@ -3856,7 +3993,8 @@ set_ula_prefix() {
 		first=${auto_mesh_id:9:2}
 		second=${auto_mesh_id:11:4}
 		third=${auto_mesh_id:15:4}
-		ula_prefix="fd$first:$second:$third::/48"
+		fourth=${auto_mesh_id:20:4}           # ← fourth segment from hash
+		ula_prefix="fd$first:$second:$third:$fourth::/48"   # ← trailing ::
 	else
 		return 1
 	fi
@@ -3871,7 +4009,7 @@ set_ula_prefix() {
 					. $tmpdir/is_portal
 				fi
 
-				if [ -z "$is_portal" ]; then
+				if [ "$detected_state" = "peer" ]; then
 					return 0
 				fi
 			fi
@@ -3886,18 +4024,32 @@ set_ula_prefix() {
 }
 
 get_portal_ula() {
+	# Calculates portal ula from common mesh id etc and ping it 
+	# If failed, tries vxlan tunnel
+	# returns $portal_ula if found and $pingstatus (>0 if failed)
 	set_ula_prefix "get"
-	portal_ula="$(echo "$ula_prefix" | awk -F "/" '{printf "%s", $1}')""1"
-	pingstatus=$(ping -q -W 1 -c 1 "$portal_ula" &>/dev/null ; echo $?)
+
+	# Get base prefix without /48 (now 4 segments, no trailing ::)
+	ula_base=$(echo "$ula_prefix" | awk -F"::/" '{print $1}')
+
+	# Portal ULA = prefix + ::1 (standard gateway address)
+	portal_ula="$ula_base::1"
+
+	pingstatus=$(ping -q -W 10 -c 1 "$portal_ula" &>/dev/null ; echo $?)
 
 	if [ "$pingstatus" -eq 1 ]; then
-		portal_ula_vtun=$(echo "$portal_ula" | awk -F "::" '{printf "%s:1::%s", $1, $2}')
+		# VXLAN tunnel variant: insert :1: after the prefix (before ::)
+		# Example: fd46:cfe5:34c5:abcd::1 → fd46:cfe5:34c5:abcd:1::1
+		portal_ula_vtun="$ula_base:1::1"
+
 		pingstatus=$(ping -q -W 1 -c 1 "$portal_ula_vtun" &>/dev/null ; echo $?)
 
 		if [ "$pingstatus" -eq 0 ]; then
 			portal_ula="$portal_ula_vtun"
 		fi
 	fi
+
+	link_to_portal=$pingstatus
 }
 
 str_to_hex() {
@@ -4180,10 +4332,12 @@ luci_cgi() {
 	fi
 
 	echo "#!/bin/sh" > "$cgi"
-	echo "printf \"%s\n\n\" \"Content-type: text/html\"" >> "$cgi"
+	echo "printf \"%s\n%s\n\n\" \"Content-type: text/html\"" >> "$cgi"
 	echo -e "status=\$(mesh11sd -v)" >> "$cgi"
 	echo -e "hostname=\$(uci get system.@system[0].hostname)" >> "$cgi"
 	echo -e "portal_ula=\$(mesh11sd get_portal_ula)" >> "$cgi"
+	echo -e "active_nodecount=\$(mesh11sd active_nodecount)" >> "$cgi"
+	echo -e "current_time=\$(date)" >> "$cgi"
 	echo -e "host=\"\$HTTP_HOST\"" >> "$cgi"
 	echo -e "echo -e \"<!DOCTYPE html>\"" >> "$cgi"
 	echo -e "echo -e \"<html>\"" >> "$cgi"
@@ -4194,20 +4348,41 @@ luci_cgi() {
 	echo -e "echo -e \"<meta charset=\\\"utf-8\\\">\"" >> "$cgi"
 	echo -e "echo -e \"<meta name=\\\"viewport\\\" content=\\\"width=device-width, initial-scale=1.0\\\">\"" >> "$cgi"
 	echo -e "echo -e \"<title>\$hostname</title>\"" >> "$cgi"
+	echo -e "echo -e \"<style>\"" >> "$cgi"
+	echo -e "echo -e \"  body { font-family: Arial, sans-serif; background: #f8f9fa; color: #212529; margin: 20px; }\"" >> "$cgi"
+	echo -e "echo -e \"  .warning { background: #fff3cd; color: #856404; border: 1px solid #ffeeba; padding: 15px; border-radius: 6px; margin: 20px 0; }\"" >> "$cgi"
+	echo -e "echo -e \"  .warning strong { color: #c82333; }\"" >> "$cgi"
+	echo -e "echo -e \"  hr { border: 0; height: 1px; background: #dee2e6; margin: 20px 0; }\"" >> "$cgi"
+	echo -e "echo -e \"  @media (prefers-color-scheme: dark) { body { background: #212529; color: #dee2e6; } .warning { background: #664d03; color: #fff3cd; border-color: #856404; } }\"" >> "$cgi"
+	echo -e "echo -e \"</style>\"" >> "$cgi"
 	echo -e "echo -e \"</head>\"" >> "$cgi"
 	echo -e "echo -e \"<body>\"" >> "$cgi"
-	echo -e "echo \"<br><hr><b>\"" >> "$cgi"
-	echo -e "echo \"Hostname: [\$hostname] <br><br> \"" >> "$cgi"
-	echo -e "echo \"Host ula: \$host <br><br> \"" >> "$cgi"
-	echo -e "echo \"Portal ula: [\$portal_ula] <br>\"" >> "$cgi"
-	echo -e "echo \"<hr> <br> \$status <br> <hr>\"" >> "$cgi"
-	echo -e "echo \"</b>\"" >> "$cgi"
+	echo -e "echo \"<h2 style=\\\"margin-top: 0;\\\">Mesh11sd Node Status</h2><hr>\"" >> "$cgi"
+	echo -e "echo \"<b>Hostname:</b> [\$hostname] <br><br> \"" >> "$cgi"
+	echo -e "echo \"<b>Host ULA:</b> [\$host] <br><br> \"" >> "$cgi"
+	echo -e "echo \"<b>Portal ULA:</b> [\$portal_ula] <br><br>\"" >> "$cgi"
+	echo -e "echo \"<b>Active Node Count:</b> [\$active_nodecount] <br><br>\"" >> "$cgi"
+	echo -e "echo \"<b>System Time:</b> [\$current_time] <br><br>\"" >> "$cgi"
+	echo -e "echo \"<hr>\"" >> "$cgi"
+
+	# WARNING BLOCK - placed at the end, before version
+	echo -e "echo \"<div class=\\\"warning\\\">\"" >> "$cgi"
+	echo -e "echo \"<strong>WARNING: LuCI is currently DISABLED</strong><br>\"" >> "$cgi"
+	echo -e "echo \"LuCI does not understand Mesh11sd's autonomous dynamic Auto Configuration.<br><br>\"" >> "$cgi"
+	echo -e "echo \"At your own risk, Mesh11sd's configuration changes can be persisted to flash/disk storage,<br>thus re-enabling LuCI.<br><br>\"" >> "$cgi"
+	echo -e "echo \"Generally this is safe to do if the location and functionality of your mesh nodes<br>is unlikely to change from the current state.<br><br>\"" >> "$cgi"
+	echo -e "echo \"<strong>Be warned</strong> that LuCI may well omit or incorrectly display most aspects of the network configuration.<br>This process can be reverted at any time.<br><br>\"" >> "$cgi"
+	echo -e "echo \"See the documentation at:<br>\"" >> "$cgi"
+	echo -e "echo \"<a href=\\\"https://github.com/openNDS/mesh11sd/tree/v6.2.0beta#13-command-line-interface\\\">https://github.com/openNDS/mesh11sd/tree/v6.2.0beta#13-command-line-interface</a>\"" >> "$cgi"
+	echo -e "echo \"</div>\"" >> "$cgi"
+
+	# Version
+	echo -e "echo \"<br><small>\$status</small><br><hr>\"" >> "$cgi"
 	echo -e "echo \"</body>\"" >> "$cgi"
 	echo -e "echo \"</html>\"" >> "$cgi"
 
 	chmod 755 "$cgi"
 }
-
 luci_add_custom() {
 
 	if [ "$auto_config" -ne 0 ]; then
@@ -4282,7 +4457,7 @@ send_ap_data() {
 		return "$retcode"
 	fi
 
-	maxchunksize=4096
+	maxchunksize=2048
 	strindex=0
 	chunkstr=""
 	hostname=$(uci get system.@system[0].hostname 2> /dev/null | awk '{printf "%s", $1}')
@@ -4324,7 +4499,13 @@ send_ap_data() {
 			debugtype="debug"
 			syslogmessage="apmond - send_ap_data - chunkstatus [ $chunkstatus ], chunksize [ $chunksize ], return code [ $retcode ]"
 			write_to_syslog
-			echo "send_status=$send_status!"
+
+			if [ "$apmon_verbose_debug_enable" -eq 1 ]; then
+				debugtype="debug"
+				syslogmessage="apmond - send_status [ $send_status ]"
+				write_to_syslog
+			fi
+
 			break
 
 		elif [ "$strindex" -eq 0 ]; then
@@ -4340,7 +4521,14 @@ send_ap_data() {
 		debugtype="debug"
 		syslogmessage="apmond - send_ap_data - chunkstatus [ $chunkstatus ], chunksize [ $chunksize ], return code [ $retcode ], send_status [ $send_status ], sent [ $strindex ] "
 		write_to_syslog
-		echo "send_status=$send_status!"
+
+		if [ "$apmon_verbose_debug_enable" -eq 1 ]; then
+			debugtype="debug"
+			syslogmessage="apmond - send_command [ wget -6 -O - -U \"apmond;$hostname;$ap_macaddr;$chunkstatus;$strindex\" --no-check-certificate https://[$portal_ula]/cgi-bin/apmon.cgi?\"$chunk\" ]"
+			write_to_syslog
+			syslogmessage="apmond - send_status [ $send_status ]"
+			write_to_syslog
+		fi
 
 		if [ "$send_status" = "nack" ]; then
 			break
@@ -4361,29 +4549,160 @@ send_ap_data() {
 	return "$retcode"
 }
 
+usi(){
+	ubus call system "$1" |
+	sed 's/\t/  /g' |
+	awk '{
+		out = ""
+		in_string = 0
+		for (i = 1; i <= length($0); i++) {
+			c = substr($0, i, 1)
+
+			if (c == "\"") {
+				in_string = !in_string
+				out = out c
+				continue
+			}
+
+			if (in_string) {
+				out = out c
+				continue
+			}
+
+			if (c ~ /[0-9tf]/) {
+				match(substr($0, i), /^[0-9]+|[tf][a-z]+/)
+				val = substr($0, i, RLENGTH)
+				if (val ~ /^(true|false|null|[0-9]+)$/) {
+					out = out "\"" val "\""
+					i += RLENGTH - 1
+					continue
+				}
+			}
+
+			out = out c
+		}
+		print out
+	}'
+}
+
+get_system_stats_json() {
+	# Calculate all values first for clean, readable JSON output
+	uptime_sec=$(cut -d' ' -f1 < /proc/uptime | cut -d. -f1)
+
+	load1=$(cut -d' ' -f1 < /proc/loadavg)
+	load5=$(cut -d' ' -f2 < /proc/loadavg)
+	load15=$(cut -d' ' -f3 < /proc/loadavg)
+
+	if grep -q MemAvailable /proc/meminfo; then
+		free_ram=$(awk '/MemAvailable/ {print $2}' /proc/meminfo)
+	else
+		free_ram=$(awk '/MemFree/ {print $2}' /proc/meminfo)
+	fi
+
+	free_flash=$(df /overlay 2>/dev/null | tail -1 | awk '{print $4}')
+	[ -z "$free_flash" ] && free_flash=$(df / | tail -1 | awk '{print $4}')
+
+	# CPU temperature
+	cpu_temp="not available"
+	for zone in /sys/class/thermal/thermal_zone*; do
+		[ -e "$zone" ] || continue
+		type=$(cat "$zone/type" 2>/dev/null)
+		case "$type" in
+			*cpu*|*CPU*|*core*|*thermal*)
+				temp_raw=$(cat "$zone/temp" 2>/dev/null)
+				if [ -n "$temp_raw" ] && [ "$temp_raw" -eq "$temp_raw" ] 2>/dev/null; then
+					cpu_temp=$(awk "BEGIN {printf \"%.1f\", $temp_raw / 1000}")
+					break
+				fi
+				;;
+		esac
+	done
+
+	# CPU frequency
+	cpu_freq="none scaling"
+	if [ -e /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq ]; then
+		freq_khz=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq 2>/dev/null)
+		if [ -n "$freq_khz" ] && [ "$freq_khz" -eq "$freq_khz" ] 2>/dev/null; then
+			cpu_freq=$(awk "BEGIN {printf \"%d\", $freq_khz / 1000}")
+		fi
+	fi
+
+	if [ -f "/etc/factory_mac" ]; then
+		. /etc/factory_mac
+	else
+		factory_mac="unknown"
+	fi
+
+	# Output JSON
+	echo "    \"node_status\": {"
+	echo "      \"factory_mac\": \"$factory_mac\","
+	echo "      \"mesh_bridge_mac\": \"$devicemac\","
+	echo "      \"uptime_seconds\": $uptime_sec,"
+	echo "      \"load_average_1min\": \"$load1\","
+	echo "      \"load_average_5min\": \"$load5\","
+	echo "      \"load_average_15min\": \"$load15\","
+	echo "      \"free_ram_kb\": $free_ram,"
+	echo "      \"free_flash_kb\": $free_flash,"
+	echo "      \"cpu_temperature_c\": \"$cpu_temp\","
+	echo "      \"cpu_frequency_mhz\": \"$cpu_freq\""
+	echo "    },"
+}
+
+usi_full() {
+	node="node@$devicemac"
+	system="system@$devicemac"
+	status="status@$devicemac"
+
+	detect=$(cat "$tmpdir/wifidetect")
+	strlen="$((${#detect}))"
+	detect=${detect:0:strlen-12}
+	echo "$detect"
+	echo "    },"
+	get_system_stats_json
+	#usi info  | sed 's/^.'// | sed 's/^/     /' | sed -e '${/^$/d;}' -e '$d'   # same for info
+}
+
 get_ap_data() {
 	aplist=$(uci show wireless | grep "mode='ap'" | awk -F "." '{printf "%s ", $2}')
-	json_init=1
 	first_ap=1
 	sta_flag=0
+	clients="clients@$devicemac"
 
+	local timeout=4
+
+	# create a lock file
+	for i in $(seq $timeout); do
+		if [ ! -e $tmpdir/apmond/clients.loc ]; then
+			touch $tmpdir/apmond/clients.loc
+			break
+		else
+			sleep 1
+		fi
+	done
+
+	# abort if unable to lock
+	if [ "$i" -eq $timeout ]; then
+		return 0
+	fi
+
+	# Output the clients at node_mac line for this node
+	printf '    "%s": {\n' $clients > $tmpdir/apmond/clients
+
+	# Scan around the aps on this node
 	for ap in $aplist; do
 		first_sta=1
 		ap_ifname=$(uci get wireless."$ap".ifname)
 		ap_ssid=$(uci get wireless."$ap".ssid)
 		iw dev "$ap_ifname" station dump 2>/dev/null > $tmpdir/stations
 
+		# if no stations, skip to next ap
 		if [ ! -s "$tmpdir/stations" ]; then
 			continue
 		else
-			sta_flag=1
+			sta_flag=1 # flag that we have some stations
 		fi
 
-		if [ "$json_init" -eq 1 ]; then
-			echo -n "{"
-			json_init=0
-		fi
-
+		# Scan around stations on this ap
 		cat /tmp/mesh11sd/stations | while read line; do
 
 			if [ -z "$line" ]; then
@@ -4394,51 +4713,57 @@ get_ap_data() {
 
 			if [ ! -z "$is_station_id" ]; then
 
-				if [ "$first_ap" -eq 0 ]; then
-					echo -n ","
-				fi
+				#if [ "$first_ap" -eq 0 ]; then
+				#	echo -n "," >> $tmpdir/apmond/clients
+				#fi
 
 				if [ "$first_sta" -eq 1 ]; then
-					echo -e "\n  \"$ap_ssid@$ap_ifname@$devicemac\":{"
-				else
-					echo ","
+					echo -e "      \"$ap_ssid@$ap_ifname\": {" >> $tmpdir/apmond/clients # this is the first sta on the list for this ap
+				#else
+				#	echo "," >> $tmpdir/apmond/clients
 				fi
 
-				echo "$line" | awk '{printf "    \"%s\":{", $2}'; echo
+				echo "$line" | awk '{printf "        \"%s\": {", $2}' >> $tmpdir/apmond/clients; echo >> $tmpdir/apmond/clients
 			else
-				ap_param_str=$(echo "$line" | tr -d \\t | tr -s " " "_" | awk -F ":" '{printf "\"%s\":\"%s\"", $1, $2}'; echo)
+				ap_param_str=$(echo "$line" | tr -d \\t | tr -s " " "_" | awk -F ":" '{printf "\"%s\": \"%s\"", $1, $2}'; echo)
 				ap_param=$(echo "$ap_param_str" | awk -F "\"" '{printf "%s", $2}')
 
 				case $ap_param in
-					"rx_bytes") echo	"      $ap_param_str,";;
-					"tx_bytes") echo	"      $ap_param_str,";;
-					"tx_retries") echo	"      $ap_param_str,";;
-					"signal_avg") echo	"      $ap_param_str,";;
-					"tx_bitrate") echo	"      $ap_param_str,";;
-					"rx_bitrate") echo	"      $ap_param_str,";;
-					"avg_ack_signal") echo	"      $ap_param_str,";;
-					"connected_time") echo	"      $ap_param_str,";;
+					"rx_bytes") echo	"          $ap_param_str," >> $tmpdir/apmond/clients;;
+					"tx_bytes") echo	"          $ap_param_str," >> $tmpdir/apmond/clients;;
+					"tx_retries") echo	"          $ap_param_str," >> $tmpdir/apmond/clients;;
+					"signal_avg") echo	"          $ap_param_str," >> $tmpdir/apmond/clients;;
+					"tx_bitrate") echo	"          $ap_param_str," >> $tmpdir/apmond/clients;;
+					"rx_bitrate") echo	"          $ap_param_str," >> $tmpdir/apmond/clients;;
+					"avg_ack_signal") echo	"          $ap_param_str," >> $tmpdir/apmond/clients;;
+					"connected_time") echo	"          $ap_param_str," >> $tmpdir/apmond/clients;;
 					"current_time") \
 						ap_param_str=$(echo -n "$ap_param_str" | sed s/current_time/timestamp/g);\
-						echo "      $ap_param_str,";\
+						echo "          $ap_param_str," >> $tmpdir/apmond/clients;\
 						ms_to_dt "$ap_param_str"
-						echo "      \"date_time\":\"$date_time\"";\
-						echo -n "    }"\
+						echo "          \"date_time\":\"$date_time\"" >> $tmpdir/apmond/clients;\
+						echo "        }," >> $tmpdir/apmond/clients\
 					;;
 				esac
 			fi
 
-			first_sta=0
+			first_sta=0 # finished with the first sta
 		done
 
-		first_ap=0
-		echo -n -e "\n  }"
+		first_ap=0 # finished with the first ap
+		#echo -n -e "\n" >> $tmpdir/apmond/clients
 
 	done
 
 	if [ "$sta_flag" -eq 1 ]; then
-		echo -e "\n}"
+		sed -i '$ s/.$//' "$tmpdir/apmond/clients"
+		echo -e "      }\n    }\n  }\n}" >> $tmpdir/apmond/clients
+		usi_full
+		cat $tmpdir/apmond/clients
 	fi
+
+	# remove the lock file
+	rm $tmpdir/apmond/clients.loc
 }
 
 is_default() {
@@ -4469,7 +4794,7 @@ is_default() {
 
 set_led() {
 
-	if [ "$mesh_backhaul_led" = "none" ] || [ "$auto_config" -eq 0 ]; then
+	if [ "$mesh_backhaul_led" = "none" ]; then
 		return 0
 	fi
 
@@ -4484,19 +4809,15 @@ set_led() {
 	if [ "$led_action" = "init" ]; then
 
 		for led in $leds; do
-			ledaction=$(cat "/sys/class/leds/$led/trigger" | awk -F "[" '{printf "%s", $2}' | awk -F "]" '{printf "%s", $1}')
-
-			if [ "$ledaction" = "none" ] || [ "$ledaction" = "heartbeat" ]; then
-				echo "default-on" > "/sys/class/leds/$led/trigger"
-
-				sleep 1
-				echo "none" > "/sys/class/leds/$led/trigger"
-			else
-				echo "none" > "/sys/class/leds/$led/trigger"
-			fi
+			echo "default-on" > "/sys/class/leds/$led/trigger"
 		done
 
-		sleep 3
+		sleep 1
+
+		for led in $leds; do
+			echo "none" > "/sys/class/leds/$led/trigger"
+		done
+
 		return 0
 	fi
 
@@ -4509,17 +4830,27 @@ set_led() {
 		led_action="heartbeat"
 	fi
 
+	# Check if backhaul led is specified in config
 	if [ "$mesh_backhaul_led" != "auto" ] && [ -e "/sys/class/leds/$mesh_backhaul_led/" ]; then
 		echo "$led_action" > "/sys/class/leds/$mesh_backhaul_led/trigger"
 		return 0
 	fi
 
+	# Backhaul led is set (default) to auto - try to find a suitable led
 	for led in $leds; do
 		last_param=$(echo "$led" | awk -F":" '{printf "%s", $NF}')
 
-		if [ "$last_param" = "power" ] || [ "$last_param" = "pwr" ] || [ "$last_param" = "system" ] || [ "$last_param" = "status" ] || [ "$last_param" = "run" ]; then
+		# Most common leds
+		if [ "$last_param" = "mesh" ] || [ "$last_param" = "power" ] || [ "$last_param" = "pwr" ] || [ "$last_param" = "system" ] || [ "$last_param" = "status" ] || 	[ "$last_param" = "run" ]; then
 			echo "$led_action" > "/sys/class/leds/$led/trigger"
 			break
+
+		# Fallback to wlan
+		elif [ "$last_param" = "wlan" ]; then
+			echo "$led_action" > "/sys/class/leds/$led/trigger"
+			break
+
+		# Some known edge cases
 		elif [ "$led" = "green-2" ] || [ "$led" = "pwr" ] || [ "$led" = "system" ] || [ "$led" = "status" ] || [ "$led" = "run" ]; then
 			echo "$led_action" > "/sys/class/leds/$led/trigger"
 			break
@@ -4707,129 +5038,677 @@ commit_single_change() {
 	done
 }
 
+# Debug shim for wifi-chipset-detect integration
+write_debug() {
+	echo > /dev/null
+}
+
 wifi_chipset_detect() {
-	# Works on OpenWrt 23.05 → master (21 Nov 2025), radios up or down
-	# Handles phy* and wl* + all known Qualcomm/MediaTek/Ralink quirks
+	# Attempt to get the label mac
+	ifaces="wan eth1 eth0"
 
-	# 1. OpenWrt version
+	for iface in $ifaces; do
+		labelmac=$(cat /sys/class/net/$iface/address 2>/dev/null)
+
+		if [ -z "$labelmac" ]; then
+			continue
+		else
+			write_debug "labelmac"
+			labelmac="@$labelmac"
+			break
+		fi
+	done
+
 	. /etc/openwrt_release 2>/dev/null
-	echo "OpenWrt=\"${DISTRIB_RELEASE:-unknown} ${DISTRIB_DESCRIPTION:-$(uname -r)}\"" >> $tmpdir/detect
+	echo "{" > "$outputfile"
+	echo "  \"System$labelmac\": {" >> "$outputfile"
+	echo "    \"Distribution\": \"${DISTRIB_ID:-unknown}\"," >> "$outputfile"
+	echo "    \"Release\": \"${DISTRIB_RELEASE:-unknown}\"," >> "$outputfile"
+	echo "    \"Revision\": \"${DISTRIB_REVISION:-unknown}\"," >> "$outputfile"
+	echo "    \"Target\": \"${DISTRIB_TARGET:-unknown}\"," >> "$outputfile"
+	echo "    \"Architecture\": \"${DISTRIB_ARCH:-unknown}\"," >> "$outputfile"
+	echo "    \"Description\": \"${DISTRIB_DESCRIPTION:-unknown}\"," >> "$outputfile"
 
-	# 2. Router model – clean, no LED garbage
 	if [ -f /etc/board.json ]; then
 		device=$(grep -m1 '"name":' /etc/board.json | sed 's/.*"name": *"\([^"]*\)".*/\1/' 2>/dev/null)
-
-		if [ -n "$device" ] && ! echo "$device" | grep -Eq "(WAN|LAN|ACT|LINK|DSL|WLAN|POWER|USB|WPS)"; then
-			echo "Device=\"$device\"" >> $tmpdir/detect
+		if [ -n "$device" ] && ! echo "$device" | grep -Eqw "(WAN|LAN|ACT|LINK|DSL|WLAN|POWER|USB|WPS)"; then
+			echo "    \"Device\": \"$device\"," >> "$outputfile"
 		fi
-
 	elif [ -f /tmp/sysinfo/model ]; then
-		echo "Device=\"$(cat /tmp/sysinfo/model)\"" >> $tmpdir/detect
+		echo "    \"Device\": \"$(cat /tmp/sysinfo/model)\"," >> "$outputfile"
 	elif [ -f /tmp/sysinfo/board_name ]; then
-		echo "Device=\"$(cat /tmp/sysinfo/board_name)\"" >> $tmpdir/detect
+		echo "    \"Device\": \"$(cat /tmp/sysinfo/board_name)\"," >> "$outputfile"
 	else
-		echo "Device=\"unknown\"" >> $tmpdir/detect
+		echo "    \"Device\": \"unknown\"," >> "$outputfile"
 	fi
 
-	# 3. Wi-Fi radios – support both phy* and wl*
+	write_debug "device"
+
+	echo "    \"phy\": {" >> "$outputfile"
+
 	for dir in /sys/class/ieee80211/phy* /sys/class/ieee80211/wl*; do
 		[ -d "$dir" ] || continue
 		name="${dir##*/}"
+		phyname="$name"
+		write_debug "phyname"
 		driver=$(awk -F= '/^DRIVER=/ {print $2; exit}' "$dir/device/uevent" 2>/dev/null || echo "n/a")
-
+		default_driver="$driver"
+		write_debug "default_driver"
 		chipset=""
 
-		# 1. Direct labels
+		# Band and 802.11 standards detection - robust for Wi-Fi 6E/7 MediaTek?
+		phy_info=$(iw phy "$name" info 2>/dev/null)
+		bands=""
+		standards=""
+
+		detected_something=0
+
+		for band_num in 1 2 3 4; do
+			if echo "$phy_info" | grep -q "Band ${band_num}:"; then
+				next_band=$((band_num + 1))
+				band_info=$(echo "$phy_info" | sed -n "/Band ${band_num}:/,/Band ${next_band}:/p")
+				if echo "$band_info" | grep -q "Band ${next_band}:"; then
+					band_info=$(echo "$band_info" | sed '$d')
+				fi
+
+				# Explicit frequencies (primary method)
+				if echo "$band_info" | grep -qE "[* ]+24[0-9]{2}(\.0)? MHz"; then
+					echo "$bands" | grep -qw "2.4GHz" || bands="${bands:+$bands }2.4GHz"
+				fi
+				if echo "$band_info" | grep -qE "[* ]+5[0-9]{3}(\.0)? MHz"; then
+					echo "$bands" | grep -qw "5GHz" || bands="${bands:+$bands }5GHz"
+				fi
+				if echo "$band_info" | grep -qE "[* ]+[6-7][0-9]{3}(\.0)? MHz"; then
+					echo "$bands" | grep -qw "6GHz" || bands="${bands:+$bands }6GHz"
+				fi
+
+				# Standards (strict)
+				if echo "$band_info" | grep -qE "HT20|HT40|^\s*HT Capabilities"; then
+					echo "$standards" | grep -qw "n" || standards="${standards:+$standards }n"
+					detected_something=1
+				fi
+				if echo "$band_info" | grep -qE "^\s*VHT Capabilities| VHT RX MCS| VHT TX MCS|80MHz|160MHz"; then
+					echo "$standards" | grep -qw "ac" || standards="${standards:+$standards }ac"
+					detected_something=1
+				fi
+				if echo "$band_info" | grep -qE "HE Capabilities|HE MAC Capabilities|HE PHY Capabilities|^\s*HE Iftypes"; then
+					echo "$standards" | grep -qw "ax" || standards="${standards:+$standards }ax"
+					detected_something=1
+				fi
+				if echo "$band_info" | grep -qE "EHT Capabilities|EHT MAC|EHT PHY"; then
+					echo "$standards" | grep -qw "be" || standards="${standards:+$standards }be"
+					detected_something=1
+				fi
+			fi
+		done
+
+		per_band_detection_bands="$bands"
+		write_debug "per_band_detection_bands"
+		per_band_detection_standards="$standards"
+		write_debug "per_band_detection_standards"
+
+		# Improved fallback: prioritize explicit frequencies, infer conservatively
+		has_2ghz=0; has_5ghz=0; has_6ghz=0
+		echo "$bands" | grep -qw "2.4GHz" && has_2ghz=1
+		echo "$bands" | grep -qw "5GHz" && has_5ghz=1
+		echo "$bands" | grep -qw "6GHz" && has_6ghz=1
+
+		# Explicit frequencies anywhere (robust even if not in Band sections)
+		if ! [ "$has_6ghz" = 1 ] && echo "$phy_info" | grep -qE "[* ]+[6-7][0-9]{3}(\.0)? MHz"; then
+			bands="${bands:+$bands }6GHz"
+		fi
+
+		# Inference only for true tri-band Wi-Fi 7 (EHT = be standard)
+		if echo "$standards" | grep -qw "be" && [ "$has_2ghz" = 1 ]; then
+			# Wi-Fi 7 almost always tri-band if 2.4GHz present
+			[ "$has_5ghz" = 0 ] && bands="${bands:+$bands }5GHz"
+			[ "$has_6ghz" = 0 ] && bands="${bands:+$bands }6GHz"
+		fi
+
+		# Gentle 5GHz inference for Wi-Fi 6 if wide channels mentioned
+		if [ "$has_5ghz" = 0 ] && echo "$standards" | grep -qw "ax" && \
+		   echo "$phy_info" | grep -qiE "HE.*(80MHz|160MHz|80+80)"; then
+			bands="${bands:+$bands }5GHz"
+		fi
+
+		# Fallback standards ONLY if still empty
+		if [ -z "$standards" ]; then
+			if echo "$phy_info" | grep -qE "HT20|HT40|HT Capabilities"; then standards="n"; fi
+			if echo "$phy_info" | grep -qE "VHT Capabilities|VHT RX MCS|VHT TX MCS"; then
+				standards="${standards:+$standards }ac"
+			fi
+			if echo "$phy_info" | grep -qE "HE Capabilities|HE MAC Capabilities|HE PHY Capabilities|HE Iftypes"; then
+				standards="${standards:+$standards }ax"
+			fi
+			if echo "$phy_info" | grep -qE "EHT Capabilities|EHT MAC|EHT PHY"; then
+				standards="${standards:+$standards }be"
+			fi
+
+			fallback_standards="$standards"
+			write_debug "fallback_standards"
+		fi
+
+		# Final standards: deduplicated union of per-band and fallback detection
+		standards=$(echo "$per_band_detection_standards $standards" | tr ' ' '\n' | sort -u | tr '\n' ' ' | sed 's/^ //;s/ $//')
+		[ -z "$standards" ] && standards="legacy"
+
+		# Filter out invalid "ac" on pure 2.4 GHz PHYs (keep for dual-band)
+		if echo "$bands" | grep -q "2.4GHz" && ! echo "$bands" | grep -q "5GHz"; then
+			standards=$(echo "$standards" | sed 's/ac//g' | sed 's/  */ /g' | sed 's/^ //;s/ $//')
+		fi
+
+		# Final defaults
+		[ -z "$bands" ] && bands="unknown"
+		[ -z "$standards" ] && standards="legacy"
+
+		write_debug "bands"
+		write_debug "standards"
+
+		# Derive friendly Wi-Fi generation
+		wifigen="Legacy"
+		if echo "$standards" | grep -qw "be"; then
+			wifigen="Wi-Fi 7"
+		elif echo "$standards" | grep -qw "ax"; then
+			if echo "$bands" | grep -qw "6GHz"; then
+				wifigen="Wi-Fi 6E"
+			else
+				wifigen="Wi-Fi 6"
+			fi
+		elif echo "$standards" | grep -qw "ac"; then
+			wifigen="Wi-Fi 5"
+		elif echo "$standards" | grep -qw "n"; then
+			wifigen="Wi-Fi 4"
+		fi
+
+		write_debug "wifigen"
+
+		# MIMO / Max spatial streams detection
+		mimo="unknown"
+		max_nss=0
+
+		# Helper to update max NSS
+		update_max_nss() {
+			local nss="$1"
+			[ -n "$nss" ] && [ "$nss" -gt "$max_nss" ] && max_nss="$nss"
+		}
+
+		# HT (802.11n) - MCS max index to NSS
+		ht_mcs=$(echo "$phy_info" | grep "HT TX/RX MCS rate indexes supported" | head -1 | sed -n 's/.*: 0-\([0-9]\+\).*/\1/p')
+		if [ -n "$ht_mcs" ]; then
+			if [ "$ht_mcs" -le 7 ]; then update_max_nss 1
+			elif [ "$ht_mcs" -le 15 ]; then update_max_nss 2
+			elif [ "$ht_mcs" -le 23 ]; then update_max_nss 3
+			elif [ "$ht_mcs" -le 31 ]; then update_max_nss 4
+			elif [ "$ht_mcs" -le 39 ]; then update_max_nss 5
+			elif [ "$ht_mcs" -le 47 ]; then update_max_nss 6
+			elif [ "$ht_mcs" -le 55 ]; then update_max_nss 7
+			elif [ "$ht_mcs" -le 63 ]; then update_max_nss 8
+			fi
+		fi
+
+		# VHT / HE / EHT - highest supported streams (only match "MCS" lines, skip "not supported")
+		for section in "VHT RX MCS" "HE RX MCS" "EHT RX MCS"; do
+			if echo "$phy_info" | grep -q "$section"; then
+				nss_list=$(echo "$phy_info" | grep -A 10 "$section" | \
+						   grep -E "[1-8] streams: MCS" | \
+						   sed 's/.*\([1-8]\) streams: MCS.*/\1/' | \
+						   sort -nr | head -1)
+				update_max_nss "$nss_list"
+			fi
+		done
+
+		# Fallback: antenna bits if nothing else
+		if [ "$max_nss" -eq 0 ] && echo "$phy_info" | grep -q "Available Antennas: TX 0x"; then
+			ant_hex=$(echo "$phy_info" | grep "Available Antennas: TX 0x" | sed 's/.*TX 0x\([0-9a-fA-F]\+\).*/\1/' | tr 'A-F' 'a-f')
+			ant_count=$(printf "%d" "0x$ant_hex" | awk '{popcount=0; n=$1; while(n>0){popcount += n%2; n=int(n/2)} print popcount}')
+			update_max_nss "$ant_count"
+		fi
+
+		# Final MIMO string
+		if [ "$max_nss" -ge 1 ]; then
+			mimo="${max_nss}x${max_nss}"
+		fi
+
+		# Max channel width detection + ChannelWidthCap flag
+		max_width="unknown"
+		channel_width_cap=false
+
+		# Normalize driver name
+		driver_norm=$(echo "$driver" | tr -d '[:space:]' | tr 'A-Z' 'a-z')
+
+		# 1. Practical cap for known over-reporting drivers (mt7615e family reports 160 MHz but unstable)
+		if echo "$driver_norm" | grep -qE "mt7615e|mt7613|mt7663|mt76.*"; then
+			if echo "$bands" | grep -q "5GHz"; then
+				max_width="80 MHz"
+				channel_width_cap=true
+			fi
+		fi
+
+		# 2. If no cap was applied above, use normal detection
+		if [ "$max_width" = "unknown" ]; then
+			# Primary: radar detect widths — robust extraction
+			radar_line=$(echo "$phy_info" | grep -i "radar detect widths:" | head -1)
+
+			if [ -n "$radar_line" ]; then
+				# Extract the highest supported width, including Wi-Fi 7 320 MHz
+				largest=$(echo "$radar_line" | grep -oE "320|240|160|80\+80|80|40|20" | sort -nr | head -1)
+				case "$largest" in
+					320)     max_width="320 MHz" ;;
+					240)     max_width="240 MHz" ;;
+					160)     max_width="160 MHz" ;;
+					"80+80") max_width="80+80 MHz" ;;
+					80)      max_width="80 MHz" ;;
+					40)      max_width="40 MHz" ;;
+					20)      max_width="20 MHz" ;;
+				esac
+			fi
+			# Fallback: explicit capability mentions (for when radar line is missing)
+			if [ "$max_width" = "unknown" ]; then
+				if echo "$phy_info" | grep -qiE "320 MHz|EHT.*320"; then
+					max_width="320 MHz"
+				elif echo "$phy_info" | grep -qiE "160 MHz|HE.*160|EHT.*160|VHT.*160"; then
+					max_width="160 MHz"
+				elif echo "$phy_info" | grep -qiE "80\+80|80 MHz|HE.*80|VHT.*80"; then
+					max_width="80 MHz"
+				elif echo "$phy_info" | grep -qiE "HT40|40 MHz"; then
+					max_width="40 MHz"
+				else
+					max_width="20 MHz"
+				fi
+			fi
+
+			# Wi-Fi 7 EHT 320 MHz detection (radar line may be conservative)
+			if echo "$standards" | grep -q "be" && echo "$phy_info" | grep -qi "320MHz"; then
+				max_width="320 MHz"
+			fi
+
+		fi
+
+		# 3. Safety cap: limit pure 2.4 GHz PHYs to 40 MHz max
+		if echo "$bands" | grep -q "2.4GHz" && ! echo "$bands" | grep -qE "5GHz|6GHz"; then
+			if [ "$max_width" != "20 MHz" ] && [ "$max_width" != "40 MHz" ]; then
+				max_width="40 MHz"
+			fi
+		fi
+
+		# Last resort default
+		[ "$max_width" = "unknown" ] && max_width="20 MHz"
+
+		# Extended Wi-Fi features from "Supported extended features"
+		txqs=false
+		airtime_fairness=false
+		aql=false
+
+		extended_features=$(echo "$phy_info" | grep -A 20 "Supported extended features:" | grep -E "\[.*\]:.*")
+
+		if echo "$extended_features" | grep -q "\[ TXQS \]"; then
+			txqs=true
+		fi
+
+		if echo "$extended_features" | grep -q "\[ AIRTIME_FAIRNESS \]"; then
+			airtime_fairness=true
+		fi
+
+		if echo "$extended_features" | grep -q "\[ AQL \]"; then
+			aql=true
+		fi
+
+		# AQL runtime support check (ath11k exposes via debugfs even if not in "extended features")
+		aql_runtime_support=false
+
+		# Check if debugfs path for this phy exists and has aql_enable file
+		debugfs_path="/sys/kernel/debug/ieee80211/$name"
+		if [ -d "$debugfs_path" ] && [ -f "$debugfs_path/aql_enable" ]; then
+			aql_runtime_support=true
+		fi
+
+		# Antenna count (TX/RX from mask)
+		antennas="unknown"
+		ant_line=$(echo "$phy_info" | grep "Available Antennas: TX 0x" | head -1)
+		if [ -n "$ant_line" ]; then
+			tx_mask=$(echo "$ant_line" | sed -n 's/.*TX 0x\([0-9a-fA-F]\+\).*/\1/p' | tr 'A-F' 'a-f')
+			rx_mask=$(echo "$ant_line" | sed -n 's/.*RX 0x\([0-9a-fA-F]\+\).*/\1/p' | tr 'A-F' 'a-f')
+
+			bitcount() { 
+				local hex="$1"
+				printf "%d" "0x$hex" 2>/dev/null | awk '{c=0; n=$1; while(n>0){c+=n%2; n=int(n/2)} print c}' || echo 0
+			}
+
+			tx_count=$(bitcount "$tx_mask")
+			rx_count=$(bitcount "$rx_mask")
+
+			if [ "$tx_count" -gt 0 ] && [ "$rx_count" -gt 0 ]; then
+				antennas="${tx_count}x${rx_count}"
+			fi
+		fi
+
+		# Fallback: if antenna mask missing (common on rt2800, some mt76), use MIMO value
+		if [ "$antennas" = "unknown" ] && [ "$mimo" != "unknown" ]; then
+			antennas="$mimo"
+		fi
+
+		# Theoretical max throughput per PHY (rough, Mbps) - reference only
+		theoretical_mbps="unknown"
+
+		# Base rate per stream at 40 MHz (realistic, no marketing inflation)
+		base_per_stream=0
+		if echo "$standards" | grep -q "be"; then
+			base_per_stream=360    # Wi-Fi 7 EHT @ 40 MHz per stream (realistic, ~20% over Wi-Fi 6)
+		elif echo "$standards" | grep -q "ax"; then
+			base_per_stream=300    # Wi-Fi 6 HE @ 40 MHz per stream
+		elif echo "$standards" | grep -q "ac"; then
+			base_per_stream=217    # Wi-Fi 5 VHT @ 40 MHz per stream (~433 @ 80 MHz scaled down)
+		elif echo "$standards" | grep -q "n"; then
+			base_per_stream=150    # Wi-Fi 4 HT @ 40 MHz per stream
+		fi
+
+		# Width multiplier scaled by 100 (relative to 40 MHz = 1x)
+		width_mult_scaled=100
+		case "$max_width" in
+			"320 MHz") width_mult_scaled=800 ;;
+			"240 MHz") width_mult_scaled=600 ;;
+			"160 MHz") width_mult_scaled=400 ;;
+			"80 MHz")  width_mult_scaled=200 ;;
+			"40 MHz")  width_mult_scaled=100 ;;
+			"20 MHz")  width_mult_scaled=50 ;;
+			*)         width_mult_scaled=100 ;;
+		esac
+
+		# Streams from MIMO (default 1)
+		streams=1
+		if echo "$mimo" | grep -qE "^[1-8]x[1-8]$"; then
+			streams=$(echo "$mimo" | cut -d'x' -f1)
+			[ "$streams" -eq "$streams" ] 2>/dev/null || streams=1
+		fi
+
+		# Calculate per-PHY theoretical throughput
+		if [ "$base_per_stream" -gt 0 ]; then
+			temp=$(( base_per_stream * streams * width_mult_scaled ))
+			theoretical_mbps=$(( temp / 100 ))
+		fi
+
+		# AggregatedMaxMbps for Wi-Fi 7 MLO (realistic sum of per-band estimates)
+		aggregated_mbps="unknown"
+		if echo "$standards" | grep -q "be"; then
+			# Per-band per-stream rates (consistent scaling from 40 MHz base)
+			rate_24_per_stream=360   # 2.4 GHz @ 40 MHz
+			rate_5_per_stream=1440   # 5 GHz @ 160 MHz (4x)
+			rate_6_per_stream=2880   # 6 GHz @ 320 MHz (8x)
+
+			total_agg=0
+			if echo "$bands" | grep -q "2.4GHz"; then total_agg=$(( total_agg + rate_24_per_stream * streams )); fi
+			if echo "$bands" | grep -q "5GHz"; then total_agg=$(( total_agg + rate_5_per_stream * streams )); fi
+			if echo "$bands" | grep -q "6GHz"; then total_agg=$(( total_agg + rate_6_per_stream * streams )); fi
+
+			if [ "$total_agg" -gt 0 ]; then
+				aggregated_mbps="$total_agg"
+			fi
+		fi
+
+		# 802.11s mesh support detection
+		mesh="no"
+		if echo "$phy_info" | grep -q "mesh point"; then
+			mesh="yes"
+		fi
+
+		write_debug "mesh"
+
 		chipset=$(cat "$dir/device/label" "$dir/device/name" \
 		              "$dir/mac80211/label" "$dir/mac80211/name" 2>/dev/null | head -n1 | xargs)
 
-		# 2. MediaTek Filogic / mt79xx family
+		default_chipset_detect="$chipset"
+		write_debug "default_chipset_detect"
+
+		# Broadcom brcmfmac
+		if [ -z "$chipset" ] && echo "$driver" | grep -q brcmfmac; then
+			modalias=$(tr '\0' '\n' < "$dir/device/modalias" 2>/dev/null)
+			broadcom_modalias="$modalias"
+			write_debug "broadcom_modalias"
+			fw=$(ls "$dir"/device/firmware/*/brcmfmac* 2>/dev/null | head -n1 | xargs basename 2>/dev/null || true)
+			broadcom_fw="$fw"
+			write_debug "broadcom_fw"
+
+			case "$modalias:$fw" in
+				*bcm4329*|*bcm4330*) chipset="Broadcom BCM4329/BCM4330 (Wi-Fi 4)" ;;
+				*bcm43430*)          chipset="Broadcom BCM43430 (Wi-Fi 5)" ;;
+				*bcm43455*)          chipset="Broadcom BCM43455 (Wi-Fi 5)" ;;
+				*bcm4356*)           chipset="Broadcom BCM4356 (Wi-Fi 5)" ;;
+				*bcm4378*)           chipset="Broadcom BCM4378 (Wi-Fi 6)" ;;
+				*)                   chipset="Broadcom brcmfmac (Wi-Fi)" ;;
+			esac
+
+			broadcom_chipset="$chipset"
+			write_debug "broadcom_chipset"
+		fi
+
+		# MediaTek Filogic / mt79xx family – now includes MT7996 Wi-Fi 7
 		if [ -z "$chipset" ] && [ -f "$dir/device/modalias" ]; then
 			modalias=$(tr '\0' '\n' < "$dir/device/modalias" 2>/dev/null)
 
 			if echo "$modalias" | grep -iq 'mt79'; then
+				filogic_modalias="$modalias"
+				write_debug "filogic_modalias"
 
-				if echo "$modalias" | grep -iq '798'; then
-					chipset="MediaTek Filogic 830/810/880 (MT798x integrated WiFi)"
-				elif echo "$modalias" | grep -iq '7915'; then
-					chipset="MediaTek MT7915E (Wi-Fi 6)"
-				elif echo "$modalias" | grep -iq '7976'; then
-					chipset="MediaTek MT7976CN (Wi-Fi 6)"
-				elif echo "$modalias" | grep -iq '792'; then
-					chipset="MediaTek MT792x"
+				if echo "$modalias" | grep -iq '7996'; then chipset="MediaTek MT7996 (Wi-Fi 7)"
+				elif echo "$modalias" | grep -iq '798'; then chipset="MediaTek Filogic 830/810/880 (MT798x integrated WiFi)"
+				elif echo "$modalias" | grep -iq '7916'; then chipset="MediaTek MT7916 (Wi-Fi 6E)"
+				elif echo "$modalias" | grep -iq '7915'; then chipset="MediaTek MT7915E (Wi-Fi 6)"
+				elif echo "$modalias" | grep -iq '792'; then chipset="MediaTek MT792x"
 				fi
+				filogic_chipset="$chipset"
+				write_debug "filogic_chipset"
+			fi
+
+			if [ -z "$chipset" ] && [ "$driver" = "mt7996e" ]; then
+				chipset="MediaTek MT7996 (Wi-Fi 7)"
+				filogic_chipset="$chipset"
+				write_debug "filogic_chipset"
 			fi
 		fi
 
-		# 3. Older MediaTek PCIe drivers
-		if [ -z "$chipset" ] && echo "$driver" | grep -q -E 'mt7603e|mt76x2e|mt7662|mt7915e'; then
+		# MediaTek PCIe + USB
+		if [ -z "$chipset" ] && echo "$driver" | grep -q -E 'mt7603e|mt76x2e|mt7915e|mt7615e|mt76x0u'; then
+			mediatek_pcie_usb_driver="$driver"
+			write_debug "mediatek_pcie_usb_driver"
 			case "$driver" in
 				mt7915e) chipset="MediaTek MT7915E (Wi-Fi 6)" ;;
 				mt7615e) chipset="MediaTek MT7615E (Wi-Fi 5)" ;;
 				mt7603e) chipset="MediaTek MT7603E (2.4 GHz)" ;;
 				mt76x2e) chipset="MediaTek MT76x2E (5 GHz)" ;;
-				mt7662*) chipset="MediaTek MT7662 (2.4/5 GHz)" ;;
+				mt76x0u) chipset="MediaTek MT7610U (Wi-Fi 5 USB) (mt76x0u)" ;;
 			esac
+
+			mediatek_pcie_usb_chipset="$chipset"
+			write_debug "mediatek_pcie_usb_chipset"
 		fi
 
-		# 4. Legacy MediaTek SoCs with mt76_wmac
+		# MediaTek SoCs with mt76_wmac
 		if [ -z "$chipset" ] && echo "$driver" | grep -q mt76_wmac; then
+			mediatek_socs_with_mt76_wmac_driver="$driver"
+			write_debug "mediatek_socs_with_mt76_wmac_driver"
 			compat=$(grep -h '^OF_COMPATIBLE_' "$dir"/hwmon/hwmon*/uevent "$dir"/hwmon*/uevent 2>/dev/null | head -n1 | cut -d= -f2)
+			mediatek_socs_with_mt76_wmac_compat="$compat"
+			write_debug "mediatek_socs_with_mt76_wmac_compat"
+
 			case "$compat" in
-				*mt7628*|*mt7628an*) chipset="MediaTek MT7628AN (integrated 2.4 GHz)" ;;
-				*mt7621*|*mt7621an*) chipset="MediaTek MT7621AN/AT (integrated 2.4 GHz)" ;;
-				*mt7622*)            chipset="MediaTek MT7622 (integrated 2.4/5 GHz)" ;;
-				*mt7620*)            chipset="MediaTek MT7620N (integrated 2.4 GHz)" ;;
-				*)                   chipset="Legacy MediaTek mt76_wmac SoC" ;;
+				*"mt7628"*) chipset="MediaTek MT7628AN (integrated 2.4 GHz)" ;;
+				*"mt7621"*) chipset="MediaTek MT7621AN/AT (integrated 2.4 GHz)" ;;
+				*"mt7622"*) chipset="MediaTek MT7622 (integrated 2.4/5 GHz)" ;;
+				*)          chipset="" ;;
 			esac
+
+			if [ -z "$chipset" ]; then
+				modalias=$(cat "$dir/device/modalias" 2>/dev/null)
+				mediatek_socs_with_mt76_wmac_modalias="$modalias"
+				write_debug "mediatek_socs_with_mt76_wmac_modalias"
+
+				case "$modalias" in
+					*"mt7628"*) chipset="MediaTek MT7628AN (integrated 2.4 GHz)" ;;
+					*"mt7621"*) chipset="MediaTek MT7621AN/AT (integrated 2.4 GHz)" ;;
+					*"mt7622"*) chipset="MediaTek MT7622 (integrated 2.4/5 GHz)" ;;
+					*)          chipset="Legacy MediaTek mt76_wmac SoC" ;;
+				esac
+			fi
+
+			mediatek_socs_with_mt76_wmac_chipset="$chipset"
+			write_debug "mediatek_socs_with_mt76_wmac_chipset"
 		fi
 
-		# 5. Ralink rt2800pci
-		if [ -z "$chipset" ] && echo "$driver" | grep -q rt2800pci; then
-			chipset="Ralink RT3062 / RT3562 / RT3593 (rt2800pci – Wi-Fi 4)"
+		# MediaTek Filogic 820/830 integrated (mt7622-wmac – eg. E8450 etc.)
+		if [ -z "$chipset" ] && echo "$driver" | grep -q mt7622-wmac; then
+			chipset="MediaTek MT7622 (integrated 2.4 GHz)"
+
+			filogic_integrated_mt7622_wmac_chipset="$chipset"
+			write_debug "filogic_integrated_mt7622_wmac_chipset"
 		fi
 
-		# 6. Marvell mwlwifi (Linksys WRT1900ACS, WRT1200AC, WRT32X, etc.)
-		if [ -z "$chipset" ] && echo "$driver" | grep -q mwlwifi; then
-			chipset="Marvell 88W8864 (Wi-Fi 5) (mwlwifi)"
+		# MediaTek Ralink rt7620/rt2880
+		if [ -z "$chipset" ] && [ "$driver" = "rt2800_wmac" ]; then
+			chipset="MediaTek Ralink Embedded MT7620-RT2880 series(Wi-Fi 4)"
+			ralink_rt7620_rt2880_chipset="$chipset"
+			write_debug ralink_rt7620_rt2880_chipset
 		fi
 
-		# 7. Qualcomm Atheros – ath9k + ath10k + ath11k
-		if [ -z "$chipset" ] && echo "$driver" | grep -q -E 'ath9k|ath10k|ath11k'; then
+		# MediaTek Ralink rt2800pci / rt2800usb
+		if [ -z "$chipset" ] && echo "$driver" | grep -q -E 'rt2800pci|rt2800usb'; then
+			chipset="MediaTek Ralink RT5370/RT3070 (2.4 GHz, Wi-Fi 4)"
+			ralink_rt2800pci_usb_chipset="$chipset"
+			write_debug "ralink_rt2800pci_usb_chipset"
+		fi
+
+		# Realtek rtl8192cu
+		if [ -z "$chipset" ] && echo "$driver" | grep -q rtl8192cu; then
+			chipset="Realtek RTL8192CU (2.4/5 GHz, Wi-Fi 4)"
+			realtek_rtl8192cu_chipset="$chipset"
+			write_debug "realtek_rtl8192cu_chipset"
+		fi
+
+		# Marvell mwlwifi mwifiex_sdio
+		if [ -z "$chipset" ] && echo "$driver" | grep -q -E 'mwlwifi|mwifiex_sdio'; then
+			compat=$(grep -Eh 'PCI_ID|SDIO_ID' "$dir"/device/uevent 2>/dev/null | cut -d= -f2)
+			marvell_mwlwifi_mwifiex_sdio_compat="$compat"
+			write_debug "marvell_mwlwifi_mwifiex_sdio_compat"
+			case "$compat" in
+				"11AB:2A55") chipset="Marvell 88W8864 (2.4/5 GHz, Wi-Fi 5)" ;;
+				"11AB:2B40") chipset="Marvell 88W8964 (2.4/5 GHz, Wi-Fi 5)" ;;
+				"11AB:2B38") chipset="Marvell 88W8897 (2.4/5 GHz, Wi-Fi 5)" ;;
+				"02DF:9135") chipset="Marvell 88W8887 (2.4/5 GHz, Wi-Fi 5)" ;;
+				*) chipset="unknown Marvell Wi-Fi" ;;
+			esac
+
+			marvell_mwlwifi_mwifiex_sdio_chipset="$chipset"
+			write_debug "marvell_mwlwifi_mwifiex_sdio_chipset"
+		fi
+
+		# Qualcomm Atheros – ath9k + ath10k + ath11k + ath12k (Wi-Fi 7)
+		if [ -z "$chipset" ] && echo "$driver" | grep -q -E 'ath9k|ath10k|ath11k|ath12k'; then
 			compat=$(grep -h '^OF_COMPATIBLE_' "$dir"/hwmon/hwmon*/uevent "$dir"/hwmon*/uevent 2>/dev/null | head -n1 | cut -d= -f2)
+
+			if [ -z "$compat" ]; then
+				compat=$(grep -h '^OF_COMPATIBLE_' "$dir"/device/uevent 2>/dev/null | head -n1 | cut -d= -f2)
+			fi
+
+			qualcomm_atheros_ath9k_ath10k_ath11k_compat="$compat"
+			write_debug "qualcomm_atheros_ath9k_ath10k_ath11k_compat"
+
+			modalias=$(cat "$dir/device/modalias" 2>/dev/null)
+			qualcomm_atheros_ath9k_ath10k_ath11k_modalias="$modalias"
+			write_debug "qualcomm_atheros_ath9k_ath10k_ath11k_modalias"
 
 			case "$driver" in
 				ath9k)
-					label=$(cat "$dir/device/label" 2>/dev/null || true)
+					case "$compat" in
+						*"qca,qca9530-wmac"*) chipset="Qualcomm Atheros AR953x series (2.4 GHz, Wi-Fi 4)" ;;
+						*)                    chipset="" ;;
+					esac
 
-					if [ -n "$label" ]; then
-						chipset="Qualcomm Atheros $label (ath9k)"
-					else
-						chipset="Qualcomm Atheros AR93xx/AR5416 series (ath9k)"
+					if [ -z "$chipset" ]; then
+						case "$modalias" in
+							*"953"*) chipset="Qualcomm Atheros QCA9531/QCA9533 (integrated 2.4 GHz)" ;;
+							*"956"*) chipset="Qualcomm Atheros QCA9561/QCA9563 (integrated 2.4 GHz)" ;;
+							*"9556"*) chipset="Qualcomm Atheros QCA9556 (integrated 2.4 GHz)" ;;
+							*"9557"*) chipset="Qualcomm Atheros QCA9557 (integrated 2.4 GHz)" ;;
+							*"9558"*) chipset="Qualcomm Atheros QCA9558 (integrated 2.4 GHz)" ;;
+							*)        chipset="" ;;
+						esac
 					fi
-					;;
-				ath10k_ahb)
-					chipset="Qualcomm Atheros QCA9886 (ath10k_ahb – older Lantiq VRX518 platform)"
-					;;
-				ath10k_pci)
-					chipset="Qualcomm Atheros QCA9984/QCA9886 (ath10k_pci – ipq40xx, etc.)"
-					;;
+
+					if [ -z "$chipset" ]; then
+						chipset="Qualcomm Atheros AR93xx/AR92xx/AR5416 series"
+					fi
+				;;
+
+				ath10k_ahb) chipset="Qualcomm Atheros QCA9886 (AHB)" ;;
+				ath10k_pci) chipset="Qualcomm Atheros QCA9984/QCA988x/QCA986x series (PCI)" ;;
 				ath11k)
 					case "$compat" in
-						*ipq5018-wifi*) chipset="Qualcomm IPQ5018 integrated 2.4 GHz (ath11k)" ;;
-						*qcn6122*)      chipset="Qualcomm QCN6122 (Wi-Fi 6E) (ath11k)" ;;
-						*qcn9074*)      chipset="Qualcomm QCN9074 (ath11k)" ;;
-						*ipq6018-wifi*) chipset="Qualcomm QCN9074 (ath11k)" ;;
-						*ipq807*)       chipset="Qualcomm QCN9074/QCN5024 (ath11k)" ;;
-						*)              chipset="Qualcomm ath11k Wi-Fi 6" ;;
+						*"ipq5018-wifi"*) chipset="Qualcomm IPQ5018 integrated 2.4 GHz" ;;
+						*"qcn6122"*)      chipset="Qualcomm QCN6122 (Wi-Fi 6E)" ;;
+						*"qcn9074"*)      chipset="Qualcomm QCN9074" ;;
+						*"ipq6018-wifi"*) chipset="Qualcomm QCN9074" ;;
+						*"ipq807"*)       chipset="Qualcomm QCN9074/QCN5024" ;;
+						*)                chipset="Qualcomm QCN9074/QCN5024" ;;
 					esac
 					;;
+				ath12k_pci|ath12k)
+					chipset="Qualcomm FastConnect 7800 (WCN785x Wi-Fi 7)"
+					;;
 			esac
+
+			qualcomm_atheros_ath9k_ath10k_ath11k_ath12k_chipset="$chipset"
+			write_debug "qualcomm_atheros_ath9k_ath10k_ath11k_ath12k_chipset [ $chipset ]"
 		fi
 
 		[ -z "$chipset" ] && chipset="unknown"
-		echo "name=\"$name\"; chipset_$name=\"$chipset\"; driver_$name=\"$driver\"" >> $tmpdir/detect
+		echo "      \"$name\": {" >> "$outputfile"
+		echo "        \"Chipset\": \"$chipset\"," >> "$outputfile"
+		echo "        \"Bands\": [" >> "$outputfile"
+
+		for band in $bands; do
+			echo "          \"$band\"," >> "$outputfile"
+		done
+
+		sed -i '$ s/.$//' "$outputfile"
+		echo "        ]," >> "$outputfile"
+
+		echo "        \"Standards\": [" >> "$outputfile"
+
+		for standard in $standards; do
+			echo "          \"802.11$standard\"," >> "$outputfile"
+		done
+
+		sed -i '$ s/.$//' "$outputfile"
+		echo "        ]," >> "$outputfile"
+
+		if [ "$mesh" = "yes" ]; then
+			echo "        \"MeshPoint\": \"802.11s\"," >> "$outputfile"
+		else
+			echo "        \"MeshPoint\": \"N/A\"," >> "$outputfile"
+		fi
+
+		echo "        \"Wi-FiGeneration\": \"$wifigen\"," >> "$outputfile"
+		echo "        \"MIMO\": \"$mimo\"," >> "$outputfile"
+		echo "        \"MaxChannelWidth\": \"$max_width\"," >> "$outputfile"
+		echo "        \"ChannelWidthCap\": $channel_width_cap," >> "$outputfile"
+		echo "        \"Antennas\": \"$antennas\"," >> "$outputfile"
+		echo "        \"TheoreticalMaxMbps\": \"$theoretical_mbps\"," >> "$outputfile"
+
+		if echo "$standards" | grep -q "be"; then
+			echo "        \"Aggregated_MLO_MaxMbps\": \"$aggregated_mbps\"," >> "$outputfile"
+		fi
+
+		echo "        \"TXQS\": $txqs," >> "$outputfile"
+		echo "        \"AIRTIME_FAIRNESS\": $airtime_fairness," >> "$outputfile"
+		echo "        \"AQL_Extended\": $aql," >> "$outputfile"
+		echo "        \"AQL_Runtime\": $aql_runtime_support," >> "$outputfile"
+		echo "        \"Driver\": \"$driver\"" >> "$outputfile"
+		echo "      }," >> "$outputfile"
 	done
+
+	sed -i '$ s/.$//' "$outputfile"
+	echo "    }" >> "$outputfile"
+	echo "  }" >> "$outputfile"
+	echo "}" >> "$outputfile"
 }
 
 fix_dropbear() {
@@ -4839,6 +5718,37 @@ fix_dropbear() {
 		sed -i '/^[[:space:]]*STOP=/c\STOP=15' /etc/init.d/dropbear
 		/sbin/service dropbear restart
 	fi
+}
+
+# Wrappers for write_to_syslog
+log_warning() {
+	syslogmessage="$1"
+	debugtype="warn"
+	write_to_syslog
+}
+
+log_error() {
+	syslogmessage="$1"
+	debugtype="err"
+	write_to_syslog
+}
+
+log_notice() {
+	syslogmessage="$1"
+	debugtype="notice"
+	write_to_syslog
+}
+
+log_info() {
+	syslogmessage="$1"
+	debugtype="info"
+	write_to_syslog
+}
+
+log_debug() {
+	syslogmessage="$1"
+	debugtype="debug"
+	write_to_syslog
 }
 
 ##############
@@ -5379,13 +6289,13 @@ elif [ "$1" = "status" ]; then
 					echo "          \"path_change_count\":\"$path_change_count\","
 
 					metric=$(echo "$peer" | awk -F"/" '{printf "%s", $3}')
-					echo "          \"metric\":\"$metric\""
+					echo "          \"metric\":\"$metric\","
 
 					sequence_number=$(echo "$peer" | awk -F"/" '{printf "%s", $6}')
 					echo "          \"sequence_number\":\"$sequence_number\","
 
 					flags_bitmask=$(echo "$peer" | awk -F"/" '{printf "%s", $7}')
-					echo "          \"hwmp_flags_bitmask\":\"$flags_bitmask\","
+					echo "          \"hwmp_flags_bitmask\":\"$flags_bitmask\""
 
 					if [ "$peers" = "$peernum" ]; then
 						echo "        }"
@@ -5501,9 +6411,16 @@ elif [ "$1" = "status" ]; then
 elif [ "$1" = "connect" ]; then
 	mute=$mutestate
 	firstloop=0
-	get_portal_state
 
-	if [ "$auto_config" -eq 0 ]; then
+	if [ -f "$tmpdir/is_portal" ]; then
+		. $tmpdir/is_portal
+	fi
+
+	if [ -f "$tmpdir/devicemac" ]; then
+		. $tmpdir/devicemac
+	fi
+
+	if [ "$auto_config" -eq 0 ] || [ -z "$detected_state" ]; then
 		echo "======================================================================"
 		echo "Unable to connect -  enable auto_config to connect to other meshnodes"
 		echo "======================================================================"
@@ -5522,7 +6439,7 @@ elif [ "$1" = "connect" ]; then
 
 	if [ -z "$nodeaddr" ]; then
 		echo " If the node you are looking for is not in the list - re-run this command."
-		echo "=========================================================================================="
+		echo "===================================================================================================================="
 		echo " The following meshnodes are available for remote connection:"
 	fi
 
@@ -5532,6 +6449,7 @@ elif [ "$1" = "connect" ]; then
 		for connectto in $connectlist; do
 			linklocal="${connectto%,*}"
 			ndpmac="${connectto##*,}"
+			nodeid=$(echo "$ndpmac" | awk -F ":" '{printf "%s%s", $5. $6}')
 
 			check_if_peer
 
@@ -5543,13 +6461,48 @@ elif [ "$1" = "connect" ]; then
 			ip6addr=$(echo "$linklocal" | awk -F "%" '{printf "%s", $1}')
 
 			if [ -z "$nodeaddr" ]; then
-				ula_pref=$(uci get network.globals.ula_prefix 2>/dev/null | awk -F ":" '{printf "%s:%s:%s", $1, $2, $3}')
-				node_ula=$(ip -6 neigh | grep "$ula_pref" | grep "$ndpmac" | awk -F " " '{printf "%s", $1}')
+				# Generate EUI-64 from target peer's MAC (ndpmac)
+				mac_no_colons="${ndpmac//:/}"
+				first_byte_hex=${mac_no_colons:0:2}
+				first_byte_dec=$((0x$first_byte_hex ^ 0x02))
+				first_byte=$(printf "%02x" "$first_byte_dec")
+				eui64="${first_byte}${mac_no_colons:2:2}${mac_no_colons:4:2}fffe${mac_no_colons:6:2}${mac_no_colons:8:2}${mac_no_colons:10:2}"
+				eui64_formatted="${eui64:0:4}:${eui64:4:4}:${eui64:8:4}:${eui64:12:4}"
 
-				if [ ! -z "$node_ula" ]; then
-					echo "$ndpmacf [ ipaddress: $ip6addr] [ web_ui: https://[$node_ula] ]"
-				else
-					echo "$ndpmacf [ ipaddress: $ip6addr]"
+				# Get deterministic mesh prefix (4 segments)
+				set_ula_prefix "get"
+				ula_base="${ula_prefix%%::*}"   # everything before the last ::
+
+				# If we are the portal in MBP mode, prefer upstream delegated ULA prefix (for client reachability)
+				if [ "$detected_state" = "portal" ] && [ "$portal_detect" -eq 4 ]; then
+					# Find upstream ULA prefix: fd00::/8 on-link route on bridge, excluding local mesh prefix
+					upstream_prefix=$(ip -6 route show dev "$device" | \
+						grep -E 'fd[0-9a-f:]+::/[0-9]+' | \
+						grep 'proto kernel' | \
+						grep -v "$ula_base" | \
+						awk '{print $1}' | \
+						head -1)
+
+					if [ -n "$upstream_prefix" ]; then
+						# Strip /64 and remove any trailing :: (if present in route output)
+						ula_base=$(echo "$upstream_prefix" | awk -F"/" '{print $1}' | sed 's/::$//')
+						log_debug "MBP portal: Using upstream ULA prefix $ula_base for client-visible URLs"
+					else
+						log_debug "MBP portal: No upstream ULA detected — falling back to local mesh prefix"
+					fi
+				fi
+
+				# Construct final clean 8-segment ULA for this peer
+				node_ula="$ula_base:$eui64_formatted"
+
+				pingreturn=$(ping6 -q -c 1 -W 1 -I $device $ip6addr &>/dev/null; echo $?)
+
+				if [ "$pingreturn" -eq 0 ]; then
+					if [ -n "$node_ula" ]; then
+						echo "$ndpmacf [ ipaddress: $ip6addr] [ web_ui: https://[$node_ula] ]"
+					else
+						echo "$ndpmacf [ ipaddress: $ip6addr]"
+					fi
 				fi
 
 			elif [ ! -z "$nodeaddr" ]; then
@@ -5567,7 +6520,7 @@ elif [ "$1" = "connect" ]; then
 		done
 	fi
 
-	echo "=========================================================================================="
+	echo "===================================================================================================================="
 	echo
 
 	exit 0
@@ -6327,9 +7280,45 @@ elif [ "$1" = "get_valid_channels" ]; then
 	echo "$valid_channels"
 	exit 0
 
-elif [ "$1" = "daemon" ]; then
-	# Detect what we are running on - Write $tmpdir/detect file with os, device wireless chipset and driver info
+elif [ "$1" = "wifi_chipset_detect" ]; then
 	wifi_chipset_detect
+	exit 0
+
+elif [ "$1" = "active_nodecount" ]; then
+
+	if [ -f "$tmpdir/active_mesh_ifname" ]; then
+		. "$tmpdir/active_mesh_ifname"
+		active_nodecount=$(($(iw dev "$active_mesh_ifname" mpath dump | wc -l) -1))
+		echo -n "$active_nodecount"
+	else
+		echo "0"
+	fi
+
+	exit 0
+
+elif [ "$1" = "daemon" ]; then
+	# Detect what we are running on - Write $tmpdir/wifidetect file with os, device wireless chipset and driver info
+	# vars Sdriver, $chipset labelmac and others are set
+	outputfile="/$tmpdir/wifidetect"
+	wifi_chipset_detect
+	installver="legacy"
+
+	if [ -f "/etc/factory_mac" ]; then
+		. /etc/factory_mac
+
+		if [ "$installver" != "$version" ]; then
+			rm "/etc/factory_mac"
+		fi
+	fi
+
+	strlen="$((${#labelmac}))"
+	factory_mac=${labelmac:1:strlen}
+
+	if [ ! -f "/etc/factory_mac" ]; then
+		echo "factory_mac=\"$factory_mac\"; installver=\"$version\"" > /etc/factory_mac
+	fi
+
+	# Fix dropbear - make sure reboot terminates ssh session before closing wireless
 	fix_dropbear
 
 	debugtype="notice"
@@ -6342,11 +7331,13 @@ elif [ "$1" = "daemon" ]; then
 	enabled=1 #bit 0
 
 	# Initial conditions
+	link_to_portal=1
 	statusmode=0
 	changed=0
 	firstloop=1 # Set if we have just started
 	daemon_startup=1 # For future watchdog tests
 	autoconfig=0
+	autostartup=0
 	macfixup=0 # Used if we need to fix the mesh interface mac address
 	mute=0 # Mute some debug messages in function calls
 	previous_path_change_count=1
@@ -6356,6 +7347,7 @@ elif [ "$1" = "daemon" ]; then
 	apmondloopcount=0
 	apmondloopstart=6
 	setroute=0
+	check_channel_now=0
 
 	#loop counter for Mesh Reactive Stabilsation Threshold:
 	mrstloopcount=0
@@ -6383,7 +7375,13 @@ elif [ "$1" = "daemon" ]; then
 	# unconditionally try to stop openNDS
 	manage_opennds stop
 
-	if [ "$auto_config" -gt 0 ]; then
+	if [ -e "$tmpdir/auto_config_test" ] && [ "$auto_config" -eq 0 ]; then
+		autostartup=1
+	elif [ "$auto_config" -gt 0 ]; then
+		autostartup=1
+	fi
+
+	if [ "$autostartup" -eq 1 ]; then
 
 		if [ "$commit_all" -eq 0 ]; then 
 			# redirect luci web ui
@@ -6400,11 +7398,56 @@ elif [ "$1" = "daemon" ]; then
 		for config in $configs; do
 			uci revert "$config"
 
+			# Copy the default config if we have not already done so
 			if [ ! -f "/etc/config/$config""_mesh11sd_default" ]; then
 				cp "/etc/config/$config" "/etc/config/$config""_mesh11sd_default"
 			fi
 
 		done
+
+		# Set ula prefix for forced portal modes
+		if [ "$portal_detect" -eq 0 ] || [ "$portal_detect" -eq 4 ]; then
+			set_ula_prefix "set"
+			/sbin/service network reload
+		fi
+
+		# Force a restart of ethernet ports - some built in switch chips do not initialise on reboot, only on cold start
+		ports=$(cat /etc/config/network_mesh11sd_default | grep "list ports" | awk -F "'" '{printf "%s ", $2}' )
+		wanport=$(uci get network_mesh11sd_default.wan.device)
+		ports="$ports""$wanport"
+
+		for port in $ports; do
+			ip link set $port down && sleep 1 && ip link set $port up
+		done
+
+		# Set default dhcp settings for lan
+		if [ "$portal_detect" -ne 4 ]; then
+			uci set dhcp.$auto_mesh_network.dhcpv4='server'
+			uci set dhcp.$auto_mesh_network.dhcpv6='server'
+			uci set dhcp.$auto_mesh_network.ra='server'
+			uci set dhcp.$auto_mesh_network.ignore='0'
+			echo "del_list dhcp.$auto_mesh_network.ra_flags='none'" | uci batch 2> /dev/null
+			echo "del_list dhcp.$auto_mesh_network.ra_flags='managed-config'" | uci batch 2> /dev/null
+			echo "del_list dhcp.$auto_mesh_network.ra_flags='other-config'" | uci batch 2> /dev/null
+			echo "add_list dhcp.$auto_mesh_network.ra_flags='managed-config'" | uci batch 2> /dev/null
+			echo "add_list dhcp.$auto_mesh_network.ra_flags='other-config'" | uci batch 2> /dev/null
+			echo "add_list dhcp.$auto_mesh_network.ra_dns='$portal_ula'" | uci batch 2> /dev/null
+			echo "set network.$auto_mesh_network.proto='static'" | uci batch
+
+			uci set dhcp.@dnsmasq[0].rebind_protection='1'
+		else
+			uci set dhcp.$auto_mesh_network.dhcpv4='disabled'
+			uci set dhcp.$auto_mesh_network.dhcpv6='disabled'
+			uci set dhcp.$auto_mesh_network.ra='disabled'
+			uci set dhcp.$auto_mesh_network.ignore='1'
+	
+			echo "del_list dhcp.$auto_mesh_network.ra_flags='managed-config'" | uci batch 2> /dev/null
+			echo "del_list dhcp.$auto_mesh_network.ra_flags='other-config'" | uci batch 2> /dev/null
+			echo "del_list dhcp.$auto_mesh_network.ra_flags='none'" | uci batch 2> /dev/null
+			echo "add_list dhcp.$auto_mesh_network.ra_flags='none'" | uci batch 2> /dev/null
+			echo "set network.$auto_mesh_network.proto='dhcp'" | uci batch
+		fi
+
 
 		# Do we have a previously commited auto_config? If so get the active_mesh_ifname.
 		meshifs=$(uci show wireless | grep "mode='mesh'" | awk -F "." '{printf "%s.%s ", $1, $2}')
@@ -6505,7 +7548,7 @@ elif [ "$1" = "daemon" ]; then
 				write_to_syslog
 			fi
 
-			suffix=$(echo $devicemac | awk -F":" '{printf "%s%s", $5, $6}')
+			suffix=$(echo $bridge_mac | awk -F":" '{printf "%s%s", $5, $6}')
 
 			if [ "$cpe_mode" = "relay" ]; then
 				## Relay Mode - May fail with some versions of Android, Android turns off its interface after ~60 seconds - because Google
@@ -6636,6 +7679,8 @@ elif [ "$1" = "daemon" ]; then
 	refresh_bridgemac
 
 	luci_add_custom
+
+	get_portal_ula
 
 	# Start the main loop
 	while true; do
@@ -6809,7 +7854,7 @@ elif [ "$1" = "daemon" ]; then
 
 						uci set mesh11sd.mesh_params.mesh_connected_to_as='1'
 
-						if [ -z "$authoritative" ] || [ "$authoritative" -eq 0 ]; then
+###						if [ -z "$authoritative" ] || [ "$authoritative" -eq 0 ]; then
 							debugtype="notice"
 							syslogmessage="Portal detection is disabled, forcing portal mode"
 							write_to_syslog
@@ -6818,18 +7863,17 @@ elif [ "$1" = "daemon" ]; then
 								kill $(cat /var/run/udhcpc-$device.pid)
 							fi
 
-							echo "set dhcp.$auto_mesh_network.dhcpv4='server'" | uci batch
-							echo "set dhcp.$auto_mesh_network.dhcpv6='server'" | uci batch
-							echo "set dhcp.$auto_mesh_network.ignore='0'" | uci batch
-							restore_ipv4
-
-							uci set dhcp.@dnsmasq[0].authoritative='1'
-							echo "set dhcp.$auto_mesh_network.ra_default='2'" | uci batch
-							echo "set dhcp.$auto_mesh_network.ra='server'" | uci batch
-							uci set dhcp.@dnsmasq[0].logfacility='-'
-							uci set dhcp.@dnsmasq[0].quietdhcp='1'
-
 							if [ "$portal_detect" -eq 0 ]; then
+								echo "set dhcp.$auto_mesh_network.dhcpv4='server'" | uci batch
+								echo "set dhcp.$auto_mesh_network.dhcpv6='server'" | uci batch
+								echo "set dhcp.$auto_mesh_network.ignore='0'" | uci batch
+								restore_ipv4
+
+								uci set dhcp.@dnsmasq[0].authoritative='1'
+								echo "set dhcp.$auto_mesh_network.ra_default='2'" | uci batch
+								echo "set dhcp.$auto_mesh_network.ra='server'" | uci batch
+								uci set dhcp.@dnsmasq[0].logfacility='-'
+								uci set dhcp.@dnsmasq[0].quietdhcp='1'
 
 								if [ "$vtunnel" = "configured" ]; then
 									uci set dhcp.vtunlan.dhcpv4='server'
@@ -6839,12 +7883,27 @@ elif [ "$1" = "daemon" ]; then
 								fi
 
 							else
+								echo "set dhcp.$auto_mesh_network.dhcpv4='disabled'" | uci batch
+								echo "set dhcp.$auto_mesh_network.dhcpv6='disabled'" | uci batch
+								echo "set dhcp.$auto_mesh_network.ignore='1'" | uci batch
+								restore_ipv4
+
+								uci set dhcp.@dnsmasq[0].authoritative='1'
+								echo "set dhcp.$auto_mesh_network.ra_default='2'" | uci batch
+								echo "set dhcp.$auto_mesh_network.ra='disabled'" | uci batch
+								uci set dhcp.@dnsmasq[0].logfacility='-'
+								uci set dhcp.@dnsmasq[0].quietdhcp='1'
 
 								if [ "$vtunnel" = "configured" ]; then
 									uci set dhcp.vtunlan.dhcpv4='disabled'
 									uci set dhcp.vtunlan.dhcpv6='disabled'
 									uci set dhcp.vtunlan.ra='disabled'
 									uci set dhcp.vtunlan.ignore='1'
+									echo "del_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
+									echo "del_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
+									echo "add_list dhcp.vtunlan.ra_flags='none'" | uci batch
+									echo "del_list dhcp.vtunlan.ra_dns='$portal_ula'" | uci batch 2> /dev/null
+									uci set dhcp.@dnsmasq[0].rebind_protection='0'
 								fi
 
 							fi
@@ -6858,7 +7917,7 @@ elif [ "$1" = "daemon" ]; then
 							/sbin/service dnsmasq restart
 							/sbin/service odhcpd restart
 							restart_mesh
-						fi
+###						fi
 					fi
 
 				elif [ "$portal_detect" -eq 3 ] && [ "$commit_all" -eq 0 ]; then
@@ -6902,6 +7961,8 @@ elif [ "$1" = "daemon" ]; then
 					fi
 
 				elif [ "$portal_detect" -eq 0 ]; then
+					/sbin/service dnsmasq restart
+					/sbin/service odhcpd restart
 
 					if [ -z "$opennds_conf" ] || [ "$opennds_conf" -eq 0 ]; then
 						opennds_conf=1
@@ -6956,9 +8017,19 @@ elif [ "$1" = "daemon" ]; then
 			commit_all=1
 		fi
 
-		debugtype="info"
-		syslogmessage="Checkinterval [$checkinterval]"
-		write_to_syslog
+		if [ "$portal_detect" -eq 4 ] && [ "$link_to_portal" -eq 1 ]; then
+			get_portal_ula
+
+			if [ "$link_to_portal" -eq 1 ]; then
+				/sbin/service network reload
+			fi
+		fi
+
+		if [ "$portal_detect" -eq 4 ]; then
+			manage_fallback_ula_route
+		fi
+
+		log_info "Checkinterval [$checkinterval]"
 
 		sleep $checkinterval
 	done
