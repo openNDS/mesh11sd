@@ -31,33 +31,43 @@ config mesh11sd 'setup'
 	# Default 1
 	#
 	# Possible values:
-	#  0  - Force ipv4 nat routed Portal mode regardless of an upstream connection.
+	#  0  - Mesh Routed Portal (MRP). Force ipv4 nat routed Portal mode regardless of an upstream connection.
 	#
-	#  1  - Detect if the meshnode is a portal, meaning it has an upstream wan link.
+	#  1  - Auto Detect Node (ADN). Detect if the meshnode is a portal, meaning it has an upstream wan link, or if it is a peer with upstream connection via the mesh backhaul.
 	# 	If the upstream link is active, the router hosting the meshnode will serve ipv4 dhcp into the mesh network.
 	# 	If the upstream link is not connected, dhcp will be disabled and the meshnode will function as a layer 2 bridge on the mesh network.
 	#
 	#  2  - Deprecated - no longer used - replaced by mode 5.
 	#
-	#  3  - Force CPE mode (Customer Premises Equipment)
+	#  3  - Client Premises Equipment (CPE)
+	#  	Also known as Customer Premises Equipment
 	#  	This is a peer mode but treats the mesh backhaul as an upstream wan connection.
-	#  	A nat routed ipv4 lan is created with its own ipv4 subnet.
-	#       If selected, option vtun_enable is forced to 0
 	#
-	#  4  - Force Bridge vxlan trunk portal node
-	#	This mode should be used if a bridged connection to the upstream ISP router is required (ie bridged/no-nat ipv4 ).
+	#  	A nat routed ipv4 lan is created with its own ipv4 subnet.
+	#  	By default a nat66 routed ipv6 lan is created with its own ipv6 subnet.
+	#
+	#   	Depending on the upstream ISP, possible optional modes are prefix_delegation, relay and nat66, settable using the cpe_mode option (see below)
+	#
+	#  4  - Mesh Bridge Portal (MBP) node. Force Bridge vxlan trunk portal node
+	#	This mode should be used if a bridged connection to the upstream ISP router is required (ie bridged/no-nat ipv4/ipv6 ).
 	#	Functions in a similar way to 0, but forces BRIDGED rather than routed portal mode, ADDING the wan ethernet port to the vxtunnel bridge (default br-tun69)
+	#
 	#	The wan port will be an ethernet end point into the vxtunnel, supporting vlans if required.
+	#
 	#	The wan port and lan port(s) form independent layer 2 networks carried by the mesh backhaul to all peer meshnodes.
 	#	the vxlan tunnel can be treated as a separate virtual ethernet tunnel to all mesh nodes.
-	#	ie the wan port on a mode 4 portal is the end point of a virtual vlan supporting ethernet network connecting
-	#	to the wan ports of all mode 5 bridge vxlantrunk peer nodes.
-	#	In normal use, BOTH the wan and a lan port could be patched to the upstream router or an intermediate switch.
 	#
-	#  5  - Bridge vxlan trunk peer node
+	#	ie the wan port on a mode 4 portal is the entry point of a virtual peer to multi-peer vxlan, supporting ethernet network connecting
+	#	to the VTunnel access pints of all nodes as well as the wan ports of all mode 5 Trunk Peer Nodes.
+	#	In normal use, the lan port could be patched to the upstream router. The wan port is the ethernet entry point of the vxlan tunnel.
+	#	The vxlan tunnel an be used as if it was a port on a managed switch, supporting vlan tagging if required.
+	#
+	#  5  - Trunk Peer Node (TPN)
+	#	This is a special case of a peer node where its wan port is an endpoint of the multi-peer vxlan.
 	#	Compatible with portal nodes configured with portal_detect 0, 1 or 4.
-	#	Functions in a similar way to 0, but FORCES peer mode and adds wan ethernet port to the vxtunnel bridge (default br-tun69)
+	#
 	#	The wan port will be an ethernet end point into the vxtunnel, supporting vlans if required.
+	#
 	#	The lan port(s) will be ethernet end points into the mesh backhaul and will NOT support vlans.
 	#
 	#
@@ -261,7 +271,9 @@ config mesh11sd 'setup'
 	#	If ssid_suffix_enable is set to 1, must be a maximum of 22 characters in length
 	#	Excess characters will be truncated
 	#
-	# Default - uses the ssid string set in the wireless config
+	# Default:
+	#	1 - uses the ssid string set in the wireless config if it is NOT set to OpenWrt
+	#	2 - uses the ssid string MeshGate if the SSID string in the wireless config is OpenWrt
 	#
 	#
 	# When set, overrides the ssid string set in the wireless config
@@ -381,9 +393,9 @@ config mesh11sd 'setup'
 	#	If ssid_suffix_enable is set to 1, must be a maximum of 22 characters in length
 	#	Excess characters will be truncated
 	#
-	# Default: Guest
+	# Default: VTunnel
 	#
-	#option vtun_base_ssid 'CustomerNetwork'
+	#option vtun_base_ssid 'GuestNetwork'
 
 	###########################################################################################
 	# vtun_path_cost (optional)
