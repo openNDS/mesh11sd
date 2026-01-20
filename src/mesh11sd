@@ -4373,7 +4373,7 @@ luci_cgi() {
 	echo -e "echo \"Generally this is safe to do if the location and functionality of your mesh nodes<br>is unlikely to change from the current state.<br><br>\"" >> "$cgi"
 	echo -e "echo \"<strong>Be warned</strong> that LuCI may well omit or incorrectly display most aspects of the network configuration.<br>This process can be reverted at any time.<br><br>\"" >> "$cgi"
 	echo -e "echo \"See the documentation at:<br>\"" >> "$cgi"
-	echo -e "echo \"<a href=\\\"https://github.com/openNDS/mesh11sd/tree/v6.2.0beta#13-command-line-interface\\\">https://github.com/openNDS/mesh11sd/tree/v6.2.0beta#13-command-line-interface</a>\"" >> "$cgi"
+	echo -e "echo \"<a href=\\\"https://github.com/openNDS/mesh11sd?tab=readme-ov-file#13-command-line-interface\\\">https://github.com/openNDS/mesh11sd?tab=readme-ov-file#13-command-line-interface</a>\"" >> "$cgi"
 	echo -e "echo \"</div>\"" >> "$cgi"
 
 	# Version
