@@ -2199,28 +2199,26 @@ This command provides a comprehensive, live view of client distribution, connect
 ***Get a list of meshnodes:***
 
 ```
-root@meshnode-c525:~# mesh11sd connect
+root@meshnode-8ecb:/tmp/mesh11sd# mesh11sd connect
 ===========================================================================
  Connect a remote terminal session on a remote meshnode
     Usage: mesh11sd connect [remote_meshnode_macaddress]
 
- Waiting for node list to build * * * * *
+ Building node list * * * * * * 
 
  If the node you are looking for is not in the list - re-run this command.
-===========================================================================
+====================================================================================================================
  The following meshnodes are available for remote connection:
-	e4-95-6e-44-60-2e	[ ip address: fe80::e695:6eff:fe44:602e ]
-	94-83-c4-20-77-4e	[ ip address: fe80::9683:c4ff:fe20:774e ]
-	94-83-c4-29-f5-a4	[ ip address: fe80::9683:c4ff:fe29:f5a4 ]
-	94-83-c4-08-14-83	[ ip address: fe80::9683:c4ff:fe08:1483 ]
-	94-83-c4-17-16-ad	[ ip address: fe80::9683:c4ff:fe17:16ad ]
-	94-83-c4-2e-ef-d0	[ ip address: fe80::9683:c4ff:fe2e:efd0 ]
-	e4-95-6e-4a-43-e5	[ ip address: fe80::e695:6eff:fe4a:43e5 ]
-	e4-95-6e-45-1a-14	[ ip address: fe80::e695:6eff:fe45:1a14 ]
-	94-83-c4-36-85-ea	[ ip address: fe80::9683:c4ff:fe36:85ea ]
-===========================================================================
-root@meshnode-c525:~#
+e4-95-6e-4a-43-e5 [ ipaddress: fe80::e695:6eff:fe4a:43e5] [ web_ui: https://[fd39:2821:bf83:8:e695:6eff:fe4a:43e5] ]
+e4-95-6e-42-23-4f [ ipaddress: fe80::e695:6eff:fe42:234f] [ web_ui: https://[fd39:2821:bf83:8:e695:6eff:fe42:234f] ]
+94-83-c4-5c-25-6d [ ipaddress: fe80::9683:c4ff:fe5c:256d] [ web_ui: https://[fd39:2821:bf83:8:9683:c4ff:fe5c:256d] ]
+94-83-c4-5c-2a-52 [ ipaddress: fe80::9683:c4ff:fe5c:2a52] [ web_ui: https://[fd39:2821:bf83:8:9683:c4ff:fe5c:2a52] ]
+96-83-c4-5e-2a-52 [ ipaddress: fe80::9483:c4ff:fe5e:2a52] [ web_ui: https://[fd39:2821:bf83:8:9483:c4ff:fe5e:2a52] ]
+94-83-c4-13-58-bd [ ipaddress: fe80::9683:c4ff:fe13:58bd] [ web_ui: https://[fd39:2821:bf83:8:9683:c4ff:fe13:58bd] ]
+94-83-c4-2c-c5-25 [ ipaddress: fe80::9683:c4ff:fe2c:c525] [ web_ui: https://[fd39:2821:bf83:8:9683:c4ff:fe2c:c525] ]
+====================================================================================================================
 
+root@meshnode-8ecb:/tmp/mesh11sd#
 
 ```
 
