@@ -1634,7 +1634,7 @@ manage_fallback_ula_route() {
 	fi
 
 	# Strip /48 to get clean 4-segment base (e.g. fd46:cfe5:34c5:ddd6)
-	ula_base=$(echo "$ula_prefix" | awk -F"/" '{print $1}')
+	ula_base="${ula_prefix%%::*}"   # everything before the last ::
 	log_debug "ula_base [ $ula_base ]"
 
 	# --------------------------------------------------------------------
@@ -3994,7 +3994,7 @@ set_ula_prefix() {
 		second=${auto_mesh_id:11:4}
 		third=${auto_mesh_id:15:4}
 		fourth=${auto_mesh_id:20:4}           # ← fourth segment from hash
-		ula_prefix="fd$first:$second:$third:$fourth/48"   # ← no trailing ::
+		ula_prefix="fd$first:$second:$third:$fourth::/48"   # ← trailing ::
 	else
 		return 1
 	fi
@@ -4030,7 +4030,7 @@ get_portal_ula() {
 	set_ula_prefix "get"
 
 	# Get base prefix without /48 (now 4 segments, no trailing ::)
-	ula_base=$(echo "$ula_prefix" | awk -F"/" '{print $1}')
+	ula_base=$(echo "$ula_prefix" | awk -F"::/" '{print $1}')
 
 	# Portal ULA = prefix + ::1 (standard gateway address)
 	portal_ula="$ula_base::1"
@@ -4336,6 +4336,8 @@ luci_cgi() {
 	echo -e "status=\$(mesh11sd -v)" >> "$cgi"
 	echo -e "hostname=\$(uci get system.@system[0].hostname)" >> "$cgi"
 	echo -e "portal_ula=\$(mesh11sd get_portal_ula)" >> "$cgi"
+	echo -e "active_nodecount=\$(mesh11sd active_nodecount)" >> "$cgi"
+	echo -e "current_time=\$(date)" >> "$cgi"
 	echo -e "host=\"\$HTTP_HOST\"" >> "$cgi"
 	echo -e "echo -e \"<!DOCTYPE html>\"" >> "$cgi"
 	echo -e "echo -e \"<html>\"" >> "$cgi"
@@ -4348,12 +4350,13 @@ luci_cgi() {
 	echo -e "echo -e \"<title>\$hostname</title>\"" >> "$cgi"
 	echo -e "echo -e \"</head>\"" >> "$cgi"
 	echo -e "echo -e \"<body>\"" >> "$cgi"
-	echo -e "echo \"<br><hr><b>\"" >> "$cgi"
+	echo -e "echo \"<b><span style=\\\"font-size: 2.0em\\\">Mesh11sd Node Status</span><br><hr></b>\"" >> "$cgi"
 	echo -e "echo \"Hostname: [\$hostname] <br><br> \"" >> "$cgi"
 	echo -e "echo \"Host ula: \$host <br><br> \"" >> "$cgi"
-	echo -e "echo \"Portal ula: [\$portal_ula] <br>\"" >> "$cgi"
-	echo -e "echo \"<hr> <br> \$status <br> <hr>\"" >> "$cgi"
-	echo -e "echo \"</b>\"" >> "$cgi"
+	echo -e "echo \"Portal ula: [\$portal_ula] <br><br>\"" >> "$cgi"
+	echo -e "echo \"Active Node Count: [\$active_nodecount] <br><br>\"" >> "$cgi"
+	echo -e "echo \"System Time: [\$current_time] <br><br>\"" >> "$cgi"
+	echo -e "echo \"<hr> <br> <span style=\\\"font-size: 0.8em\\\"> \$status </span><br> <hr>\"" >> "$cgi"
 	echo -e "echo \"</body>\"" >> "$cgi"
 	echo -e "echo \"</html>\"" >> "$cgi"
 
@@ -6388,9 +6391,16 @@ elif [ "$1" = "status" ]; then
 elif [ "$1" = "connect" ]; then
 	mute=$mutestate
 	firstloop=0
-	get_portal_state
 
-	if [ "$auto_config" -eq 0 ]; then
+	if [ -f "$tmpdir/is_portal" ]; then
+		. $tmpdir/is_portal
+	fi
+
+	if [ -f "$tmpdir/devicemac" ]; then
+		. $tmpdir/devicemac
+	fi
+
+	if [ "$auto_config" -eq 0 ] || [ -z "$detected_state" ]; then
 		echo "======================================================================"
 		echo "Unable to connect -  enable auto_config to connect to other meshnodes"
 		echo "======================================================================"
@@ -6439,9 +6449,9 @@ elif [ "$1" = "connect" ]; then
 				eui64="${first_byte}${mac_no_colons:2:2}${mac_no_colons:4:2}fffe${mac_no_colons:6:2}${mac_no_colons:8:2}${mac_no_colons:10:2}"
 				eui64_formatted="${eui64:0:4}:${eui64:4:4}:${eui64:8:4}:${eui64:12:4}"
 
-				# Get deterministic mesh prefix (now 4 segments, no trailing ::)
+				# Get deterministic mesh prefix (4 segments)
 				set_ula_prefix "get"
-				ula_base=$(echo "$ula_prefix" | awk -F"/" '{print $1}')   # e.g. fd46:cfe5:34c5:abcd
+				ula_base="${ula_prefix%%::*}"   # everything before the last ::
 
 				# If we are the portal in MBP mode, prefer upstream delegated ULA prefix (for client reachability)
 				if [ "$detected_state" = "portal" ] && [ "$portal_detect" -eq 4 ]; then
@@ -6465,10 +6475,14 @@ elif [ "$1" = "connect" ]; then
 				# Construct final clean 8-segment ULA for this peer
 				node_ula="$ula_base:$eui64_formatted"
 
-				if [ -n "$node_ula" ]; then
-					echo "$ndpmacf [ ipaddress: $ip6addr] [ web_ui: https://[$node_ula] ]"
-				else
-					echo "$ndpmacf [ ipaddress: $ip6addr]"
+				pingreturn=$(ping6 -q -c 1 -W 1 -I $device $ip6addr &>/dev/null; echo $?)
+
+				if [ "$pingreturn" -eq 0 ]; then
+					if [ -n "$node_ula" ]; then
+						echo "$ndpmacf [ ipaddress: $ip6addr] [ web_ui: https://[$node_ula] ]"
+					else
+						echo "$ndpmacf [ ipaddress: $ip6addr]"
+					fi
 				fi
 
 			elif [ ! -z "$nodeaddr" ]; then
@@ -7248,6 +7262,18 @@ elif [ "$1" = "get_valid_channels" ]; then
 
 elif [ "$1" = "wifi_chipset_detect" ]; then
 	wifi_chipset_detect
+	exit 0
+
+elif [ "$1" = "active_nodecount" ]; then
+
+	if [ -f "$tmpdir/active_mesh_ifname" ]; then
+		. "$tmpdir/active_mesh_ifname"
+		active_nodecount=$(($(iw dev "$active_mesh_ifname" mpath dump | wc -l) -1))
+		echo -n "$active_nodecount"
+	else
+		echo "0"
+	fi
+
 	exit 0
 
 elif [ "$1" = "daemon" ]; then
