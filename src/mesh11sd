@@ -4332,7 +4332,7 @@ luci_cgi() {
 	fi
 
 	echo "#!/bin/sh" > "$cgi"
-	echo "printf \"%s\n\n\" \"Content-type: text/html\"" >> "$cgi"
+	echo "printf \"%s\n%s\n\n\" \"Content-type: text/html\"" >> "$cgi"
 	echo -e "status=\$(mesh11sd -v)" >> "$cgi"
 	echo -e "hostname=\$(uci get system.@system[0].hostname)" >> "$cgi"
 	echo -e "portal_ula=\$(mesh11sd get_portal_ula)" >> "$cgi"
@@ -4348,21 +4348,41 @@ luci_cgi() {
 	echo -e "echo -e \"<meta charset=\\\"utf-8\\\">\"" >> "$cgi"
 	echo -e "echo -e \"<meta name=\\\"viewport\\\" content=\\\"width=device-width, initial-scale=1.0\\\">\"" >> "$cgi"
 	echo -e "echo -e \"<title>\$hostname</title>\"" >> "$cgi"
+	echo -e "echo -e \"<style>\"" >> "$cgi"
+	echo -e "echo -e \"  body { font-family: Arial, sans-serif; background: #f8f9fa; color: #212529; margin: 20px; }\"" >> "$cgi"
+	echo -e "echo -e \"  .warning { background: #fff3cd; color: #856404; border: 1px solid #ffeeba; padding: 15px; border-radius: 6px; margin: 20px 0; }\"" >> "$cgi"
+	echo -e "echo -e \"  .warning strong { color: #c82333; }\"" >> "$cgi"
+	echo -e "echo -e \"  hr { border: 0; height: 1px; background: #dee2e6; margin: 20px 0; }\"" >> "$cgi"
+	echo -e "echo -e \"  @media (prefers-color-scheme: dark) { body { background: #212529; color: #dee2e6; } .warning { background: #664d03; color: #fff3cd; border-color: #856404; } }\"" >> "$cgi"
+	echo -e "echo -e \"</style>\"" >> "$cgi"
 	echo -e "echo -e \"</head>\"" >> "$cgi"
 	echo -e "echo -e \"<body>\"" >> "$cgi"
-	echo -e "echo \"<b><span style=\\\"font-size: 2.0em\\\">Mesh11sd Node Status</span><br><hr></b>\"" >> "$cgi"
-	echo -e "echo \"Hostname: [\$hostname] <br><br> \"" >> "$cgi"
-	echo -e "echo \"Host ula: \$host <br><br> \"" >> "$cgi"
-	echo -e "echo \"Portal ula: [\$portal_ula] <br><br>\"" >> "$cgi"
-	echo -e "echo \"Active Node Count: [\$active_nodecount] <br><br>\"" >> "$cgi"
-	echo -e "echo \"System Time: [\$current_time] <br><br>\"" >> "$cgi"
-	echo -e "echo \"<hr> <br> <span style=\\\"font-size: 0.8em\\\"> \$status </span><br> <hr>\"" >> "$cgi"
+	echo -e "echo \"<h2 style=\\\"margin-top: 0;\\\">Mesh11sd Node Status</h2><hr>\"" >> "$cgi"
+	echo -e "echo \"<b>Hostname:</b> [\$hostname] <br><br> \"" >> "$cgi"
+	echo -e "echo \"<b>Host ULA:</b> [\$host] <br><br> \"" >> "$cgi"
+	echo -e "echo \"<b>Portal ULA:</b> [\$portal_ula] <br><br>\"" >> "$cgi"
+	echo -e "echo \"<b>Active Node Count:</b> [\$active_nodecount] <br><br>\"" >> "$cgi"
+	echo -e "echo \"<b>System Time:</b> [\$current_time] <br><br>\"" >> "$cgi"
+	echo -e "echo \"<hr>\"" >> "$cgi"
+
+	# WARNING BLOCK - placed at the end, before version
+	echo -e "echo \"<div class=\\\"warning\\\">\"" >> "$cgi"
+	echo -e "echo \"<strong>WARNING: LuCI is currently DISABLED</strong><br>\"" >> "$cgi"
+	echo -e "echo \"LuCI does not understand Mesh11sd's autonomous dynamic Auto Configuration.<br><br>\"" >> "$cgi"
+	echo -e "echo \"At your own risk, Mesh11sd's configuration changes can be persisted to flash/disk storage,<br>thus re-enabling LuCI.<br><br>\"" >> "$cgi"
+	echo -e "echo \"Generally this is safe to do if the location and functionality of your mesh nodes<br>is unlikely to change from the current state.<br><br>\"" >> "$cgi"
+	echo -e "echo \"<strong>Be warned</strong> that LuCI may well omit or incorrectly display most aspects of the network configuration.<br>This process can be reverted at any time.<br><br>\"" >> "$cgi"
+	echo -e "echo \"See the documentation at:<br>\"" >> "$cgi"
+	echo -e "echo \"<a href=\\\"https://github.com/openNDS/mesh11sd/tree/v6.2.0beta#13-command-line-interface\\\">https://github.com/openNDS/mesh11sd/tree/v6.2.0beta#13-command-line-interface</a>\"" >> "$cgi"
+	echo -e "echo \"</div>\"" >> "$cgi"
+
+	# Version
+	echo -e "echo \"<br><small>\$status</small><br><hr>\"" >> "$cgi"
 	echo -e "echo \"</body>\"" >> "$cgi"
 	echo -e "echo \"</html>\"" >> "$cgi"
 
 	chmod 755 "$cgi"
 }
-
 luci_add_custom() {
 
 	if [ "$auto_config" -ne 0 ]; then
