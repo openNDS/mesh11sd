@@ -4359,7 +4359,7 @@ luci_cgi() {
 	echo -e "echo -e \"<body>\"" >> "$cgi"
 	echo -e "echo \"<h2 style=\\\"margin-top: 0;\\\">Mesh11sd Node Status</h2><hr>\"" >> "$cgi"
 	echo -e "echo \"<b>Hostname:</b> [\$hostname] <br><br> \"" >> "$cgi"
-	echo -e "echo \"<b>Host ULA:</b> [\$host] <br><br> \"" >> "$cgi"
+	echo -e "echo \"<b>Host ULA:</b> \$host <br><br> \"" >> "$cgi"
 	echo -e "echo \"<b>Portal ULA:</b> [\$portal_ula] <br><br>\"" >> "$cgi"
 	echo -e "echo \"<b>Active Node Count:</b> [\$active_nodecount] <br><br>\"" >> "$cgi"
 	echo -e "echo \"<b>System Time:</b> [\$current_time] <br><br>\"" >> "$cgi"
