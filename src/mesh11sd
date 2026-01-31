@@ -631,12 +631,8 @@ get_current_setup() {
 		#####
 		vtun_enable=$(uci get mesh11sd.setup.vtun_enable 2> /dev/null)
 
-		if [ -z "$vtun_enable" ]; then
+		if [ -z "$vtun_enable" ] || [ "$vtun_enable" -gt 1 ]; then
 			vtun_enable=1
-		elif [ "$vtun_enable" -gt 1 ]; then
-			vtun_enable=1
-		else
-			vtun_enable=0
 		fi
 
 		syslogmessage="option vtun_enable [ $vtun_enable ]"
@@ -1614,10 +1610,18 @@ check_channel() {
 
 manage_fallback_ula_route() {
 	# ------------------------------------------------------------
-	# Always assign deterministic ULA address to bridge on ALL nodes
+	# Always assign deterministic ULA address to bridge on ALL peer nodes
 	# + add portal-specific ::1 on MBP portal
 	# + add sticky on-link route on peers in auto-detect modes
 	# ------------------------------------------------------------
+log_debug "detected_state=$detected_state"
+return 0
+
+	if [ "$portal_detect" -ne 4 ] && [ "$detected_state" = "portal" ]; then
+		log_debug "manage_fallback_ula_route - Node is a routed portal"
+		return 0
+	fi
+
 	if [ -f "$tmpdir/devicemac" ]; then
 		. "$tmpdir/devicemac"
 	else
@@ -2215,7 +2219,7 @@ check_portal() {
 					echo "del_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
 					echo "del_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
 					echo "add_list dhcp.vtunlan.ra_flags='none'" | uci batch
-					echo "del_list dhcp.vtunlan.ra_dns='$portal_ula'" | uci batch 2> /dev/null
+					echo "del_list dhcp.vtunlan.ra_dns='$portal_ula_vtun'" | uci batch 2> /dev/null
 					uci set dhcp.@dnsmasq[0].rebind_protection='0'
 				fi
 
@@ -2322,6 +2326,7 @@ check_portal() {
 				echo "del_list dhcp.$auto_mesh_network.ra_flags='other-config'" | uci batch 2> /dev/null
 				echo "add_list dhcp.$auto_mesh_network.ra_flags='managed-config'" | uci batch 2> /dev/null
 				echo "add_list dhcp.$auto_mesh_network.ra_flags='other-config'" | uci batch 2> /dev/null
+				echo "del_list dhcp.$auto_mesh_network.ra_dns=''" | uci batch 2> /dev/null
 				echo "add_list dhcp.$auto_mesh_network.ra_dns='$portal_ula'" | uci batch 2> /dev/null
 				uci set dhcp.@dnsmasq[0].rebind_protection='1'
 
@@ -2335,7 +2340,7 @@ check_portal() {
 					echo "del_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
 					echo "add_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
 					echo "add_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
-					echo "add_list dhcp.vtunlan.ra_dns='$portal_ula'" | uci batch 2> /dev/null
+					echo "add_list dhcp.vtunlan.ra_dns='$portal_ula_vtun'" | uci batch 2> /dev/null
 					uci set dhcp.@dnsmasq[0].rebind_protection='1'
 
 				fi
@@ -3682,7 +3687,7 @@ create_vxlan_if() {
 		echo "del_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
 		echo "add_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
 		echo "add_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
-		echo "add_list dhcp.vtunlan.ra_dns='$portal_ula'" | uci batch 2> /dev/null
+		echo "add_list dhcp.vtunlan.ra_dns='$portal_ula_vtun'" | uci batch 2> /dev/null
 		uci set dhcp.@dnsmasq[0].rebind_protection='1'
 	else
 		uci set dhcp.vtunlan.dhcpv4='disabled'
@@ -3810,7 +3815,7 @@ check_vtunnel() {
 						echo "del_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
 						echo "add_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
 						echo "add_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
-						echo "add_list dhcp.vtunlan.ra_dns='$portal_ula'" | uci batch 2> /dev/null
+						echo "add_list dhcp.vtunlan.ra_dns='$portal_ula_vtun'" | uci batch 2> /dev/null
 						uci set dhcp.@dnsmasq[0].rebind_protection='1'
 					fi
 				fi
@@ -3839,9 +3844,11 @@ check_vtunnel() {
 			echo "set network.vtunlan.netmask='$vtun_mask'" | uci batch
 			echo "set network.vtunlan.proto='$proto'" | uci batch
 			uci set network.vtunlan.ip6assign='64'
-
+			echo "set network.vtunlan.ip6hint='$ula_vxsubnet'" | uci batch
 			echo "set network.vtunlan.ip6privacy='0'" | uci batch
 			echo "set dhcp.vtunlan.ra_lifetime='3600'" | uci batch
+			echo "set dhcp.vtunlan.ra_mininterval='20'" | uci batch
+			echo "set dhcp.vtunlan.ra_maxinterval='60'" | uci batch
 
 			if [ "$portal_detect" -eq 4 ] || [ "$portal_detect" -eq 5 ]; then
 				# Disable wan and add the port that was wan to the vtunnel bridge
@@ -3929,7 +3936,7 @@ check_vtunnel() {
 					echo "del_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
 					echo "del_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
 					echo "add_list dhcp.vtunlan.ra_flags='none'" | uci batch
-					echo "del_list dhcp.vtunlan.ra_dns='$portal_ula'" | uci batch 2> /dev/null
+					echo "del_list dhcp.vtunlan.ra_dns='$portal_ula_vtun'" | uci batch 2> /dev/null
 					uci set dhcp.@dnsmasq[0].rebind_protection='0'
 					/sbin/service dnsmasq restart
 					/sbin/service odhcpd restart
@@ -4007,8 +4014,9 @@ set_ula_prefix() {
 		first=${auto_mesh_id:9:2}
 		second=${auto_mesh_id:11:4}
 		third=${auto_mesh_id:15:4}
-		fourth=${auto_mesh_id:20:4}           # ← fourth segment from hash
-		ula_prefix="fd$first:$second:$third:$fourth::/64"   # ← trailing ::
+		ula_subnet=${auto_mesh_id:20:4}           # ← fourth segment from hash becomes lan subnet/ip6hint value for odhcpd
+		ula_vxsubnet=${auto_mesh_id:25:4}           # ← fourth segment from hash becomes vxlan subnet/ip6hint value for odhcpd
+		ula_prefix="fd$first:$second:$third::/48"   # ← trailing ::
 	else
 		return 1
 	fi
@@ -4033,6 +4041,7 @@ set_ula_prefix() {
 			fi
 
 			echo "set network.globals.ula_prefix='$ula_prefix'" | uci batch
+			echo "set network.$auto_mesh_network.ip6hint='$ula_subnet'" | uci batch
 		fi
 	fi
 }
@@ -4047,15 +4056,15 @@ get_portal_ula() {
 	ula_base=$(echo "$ula_prefix" | awk -F"::/" '{print $1}')
 
 	# Portal ULA = prefix + ::1 (standard gateway address)
-	portal_ula="$ula_base::1"
+	portal_ula="$ula_base:$ula_subnet::1"
+
+	# VXLAN tunnel variant: insert :$ula_vxsubnet: after the prefix (before ::)
+	portal_ula_vtun="$ula_base:$ula_vxsubnet::1"
 
 	pingstatus=$(ping -q -W 10 -c 1 "$portal_ula" &>/dev/null ; echo $?)
 
-	if [ "$pingstatus" -eq 1 ]; then
-		# VXLAN tunnel variant: insert :1: after the prefix (before ::)
-		# Example: fd46:cfe5:34c5:abcd::1 → fd46:cfe5:34c5:abcd:1::1
-		portal_ula_vtun="$ula_base:1::1"
-
+	if [ "$pingstatus" -eq 1 ] && [ "$vtun_enable" -eq 1 ]; then
+		# VXLAN tunnel variant: insert :$ula_vxsubnet: after the prefix (before ::)
 		pingstatus=$(ping -q -W 1 -c 1 "$portal_ula_vtun" &>/dev/null ; echo $?)
 
 		if [ "$pingstatus" -eq 0 ]; then
@@ -7445,6 +7454,7 @@ elif [ "$1" = "daemon" ]; then
 			echo "del_list dhcp.$auto_mesh_network.ra_flags='other-config'" | uci batch 2> /dev/null
 			echo "add_list dhcp.$auto_mesh_network.ra_flags='managed-config'" | uci batch 2> /dev/null
 			echo "add_list dhcp.$auto_mesh_network.ra_flags='other-config'" | uci batch 2> /dev/null
+			echo "del_list dhcp.$auto_mesh_network.ra_dns=''" | uci batch 2> /dev/null
 			echo "add_list dhcp.$auto_mesh_network.ra_dns='$portal_ula'" | uci batch 2> /dev/null
 			echo "set network.$auto_mesh_network.proto='static'" | uci batch
 
@@ -7507,6 +7517,8 @@ elif [ "$1" = "daemon" ]; then
 
 		echo "set network.lan.ip6privacy='0'" | uci batch
 		echo "set dhcp.lan.ra_lifetime='3600'" | uci batch
+		echo "set dhcp.lan.ra_mininterval='20'" | uci batch
+		echo "set dhcp.lan.ra_maxinterval='60'" | uci batch
 
 		# Before restarting the network, check if CPE mode is requested
 		if [ "$portal_detect" -eq 3 ] && [ "$commit_all" -eq 0 ]; then
@@ -7584,8 +7596,10 @@ elif [ "$1" = "daemon" ]; then
 				echo "set dhcp.lan.dhcpv6='relay'" | uci batch
 				echo "set dhcp.lan.ndp='relay'" | uci batch
 				echo "set dhcp.lan.ra_slaac='1'" | uci batch
-				echo "set dhcp.lan.ra_default='1'" | uci batch
-				echo "set dhcp.lan.ra_default_lifetime='1800'" | uci batch
+				echo "set dhcp.lan.ra_default='2'" | uci batch
+				echo "set dhcp.lan.ra_lifetime='3600'" | uci batch
+				echo "set dhcp.lan.ra_mininterval='20'" | uci batch
+				echo "set dhcp.lan.ra_maxinterval='60'" | uci batch
 
 			elif [ "$cpe_mode" = "prefix_delegation" ]; then
 				# Prefix delegation mode - compatible with everything but available prefixes may get exhausted
@@ -7603,9 +7617,10 @@ elif [ "$1" = "daemon" ]; then
 				echo "set dhcp.lan.dhcpv6='server'" | uci batch
 				echo "set dhcp.lan.ra='server'" | uci batch
 				echo "set dhcp.lan.ra_slaac='1'" | uci batch
-				echo "set dhcp.lan.ra_default='1'" | uci batch
-				echo "set dhcp.lan.ra_default_lifetime='1800'" | uci batch
-				echo "set dhcp.lan.ndp='server'" | uci batch
+				echo "set dhcp.lan.ra_default='2'" | uci batch
+				echo "set dhcp.lan.ra_lifetime='3600'" | uci batch
+				echo "set dhcp.lan.ra_mininterval='20'" | uci batch
+				echo "set dhcp.lan.ra_maxinterval='60'" | uci batch
 
 				if [ "$wanzoneindex" -le "$zones" ]; then
 					echo "set firewall.@zone[$wanzoneindex].masq6='0'" | uci batch
@@ -7638,9 +7653,10 @@ elif [ "$1" = "daemon" ]; then
 				echo "set dhcp.lan.dhcpv6='server'" | uci batch
 				echo "set dhcp.lan.ra='server'" | uci batch
 				echo "set dhcp.lan.ra_slaac='1'" | uci batch
-				echo "set dhcp.lan.ra_default='1'" | uci batch
-				echo "set dhcp.lan.ra_default_lifetime='1800'" | uci batch
-				echo "set dhcp.lan.ndp='server'" | uci batch
+				echo "set dhcp.lan.ra_default='2'" | uci batch
+				echo "set dhcp.lan.ra_lifetime='3600'" | uci batch
+				echo "set dhcp.lan.ra_mininterval='20'" | uci batch
+				echo "set dhcp.lan.ra_maxinterval='60'" | uci batch
 
 			else
 				debugtype="err"
@@ -7915,7 +7931,7 @@ elif [ "$1" = "daemon" ]; then
 								echo "del_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
 								echo "del_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
 								echo "add_list dhcp.vtunlan.ra_flags='none'" | uci batch
-								echo "del_list dhcp.vtunlan.ra_dns='$portal_ula'" | uci batch 2> /dev/null
+								echo "del_list dhcp.vtunlan.ra_dns='$portal_ula_vtun'" | uci batch 2> /dev/null
 								uci set dhcp.@dnsmasq[0].rebind_protection='0'
 							fi
 
