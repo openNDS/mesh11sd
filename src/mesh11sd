@@ -1357,9 +1357,9 @@ write_log() {
 		fi
 
 		if [ "$log_entries" -gt "$max_log_entries" ]; then
-			mv "$logfile" "$logfile.cut"
-			tail -n "$max_log_entries" "$logfile.cut" >> "$logfile"
-			rm "$logfile.cut"
+			mv "$logfile" "$logfile.cut" 2>/dev/null
+			tail -n "$max_log_entries" "$logfile.cut" 2>/dev/null >> "$logfile"
+			rm "$logfile.cut" 2>/dev/null
 		fi
 
 		available=$(df | grep -w  "$log_mountpoint" | eval "$awkcmd")
