@@ -1614,8 +1614,6 @@ manage_fallback_ula_route() {
 	# + add portal-specific ::1 on MBP portal
 	# + add sticky on-link route on peers in auto-detect modes
 	# ------------------------------------------------------------
-log_debug "detected_state=$detected_state"
-return 0
 
 	if [ "$portal_detect" -ne 4 ] && [ "$detected_state" = "portal" ]; then
 		log_debug "manage_fallback_ula_route - Node is a routed portal"
@@ -1642,9 +1640,9 @@ return 0
 	log_debug "ula_base [ $ula_base ]"
 
 	# --------------------------------------------------------------------
-	# Part 1: Deterministic ULA address on bridge (ALL nodes)
+	# Part 1: Deterministic ULA address on bridge (ALL peer nodes)
 	# --------------------------------------------------------------------
-	if [ -n "$device" ] && [ -n "$devicemac" ]; then
+	if [ -n "$device" ] && [ -n "$devicemac" ] && [ "$portal_detect" -ne 4 ]; then
 
 		# Generate EUI-64 from bridge MAC
 		mac_no_colons="${devicemac//:/}"
@@ -1656,11 +1654,11 @@ return 0
 		# Format EUI-64 with colons
 		eui64_formatted="${eui64:0:4}:${eui64:4:4}:${eui64:8:4}:${eui64:12:4}"
 
-		# Full address: 4-segment prefix : EUI-64 /64
-		ula_addr="$ula_base:$eui64_formatted/64"
+		# Full address: 3-segment prefix : 1-segment subnet : EUI-64 /64
+		ula_addr="$ula_base:$ula_subnet:$eui64_formatted/64"
 
 		# Check if already present
-		if ! ip -6 addr show dev "$device" | grep -q "$ula_base:$eui64_formatted"; then
+		if ! ip -6 addr show dev "$device" | grep -q "$ula_addr"; then
 			log_info "Adding deterministic ULA address $ula_addr to bridge $device"
 
 			ip -6 addr add "$ula_addr" dev "$device" 2>/dev/null
@@ -1674,16 +1672,16 @@ return 0
 		fi
 	fi
 
-	# --------------------------------------------------------------------
-	# Part 2: Add portal-specific ::1 ULA to bridge (only on MBP portal)
-	# --------------------------------------------------------------------
+	# -------------------------------------------------------------------------------
+	# Part 2: Add portal-specific ::1 ULA to bridge (only on MBP, Mesh Bridge Portal)
+	# -------------------------------------------------------------------------------
 	if [ "$detected_state" = "portal" ] && [ "$portal_detect" -eq 4 ] && [ -n "$device" ]; then
 
-		# Portal ULA = prefix : :1 /64
-		portal_ula_addr="$ula_base::1/64"
+		# Portal ULA = prefix:subnet::1 /64
+		portal_ula_addr="$ula_base:$ula_subnet::1/64"
 
 		# Check if already present
-		if ! ip -6 addr show dev "$device" | grep -q "$ula_base::1"; then
+		if ! ip -6 addr show dev "$device" | grep -q "$portal_ula_addr"; then
 			log_info "MBP portal mode → adding portal ULA $portal_ula_addr to bridge $device"
 
 			ip -6 addr add "$portal_ula_addr" dev "$device" 2>/dev/null
@@ -1704,16 +1702,16 @@ return 0
 	   [ "$portal_detect" -ne 0 ] && [ "$portal_detect" -ne 4 ] && \
 	   [ -n "$device" ]; then
 
-		if ! ip -6 route show "$ula_prefix" 2>/dev/null | grep -q "dev[[:space:]]\+$device.*proto static.*metric 512.*onlink"; then
+		if ! ip -6 route show "$ula_base:$ula_subnet::/64" 2>/dev/null | grep -q "dev[[:space:]]\+$device.*proto static.*metric 512.*onlink"; then
 			log_info "Adding sticky fallback on-link route $ula_prefix dev $device (peer auto-detect mode)"
 
-			ip -6 route add "$ula_prefix" dev "$device" scope link onlink metric 512 proto static 2>/dev/null
+			ip -6 route add "$ula_base:$ula_subnet::/64" dev "$device" scope link onlink metric 512 proto static 2>/dev/null
 
 			if [ $? -eq 0 ]; then
 				log_notice "Sticky fallback on-link route added on $device"
 			else
 				log_error "Failed to add fallback route on $device"
-				log_debug "ip error: $(ip -6 route add "$ula_prefix" dev "$device" scope link onlink metric 512 proto static 2>&1)"
+				log_debug "ip error: $(ip -6 route add "$$ula_base:$ula_subnet::/64" dev "$device" scope link onlink metric 512 proto static 2>&1)"
 			fi
 		fi
 	fi
@@ -1723,9 +1721,9 @@ return 0
 	# --------------------------------------------------------------------
 	if [ "$detected_state" != "peer" ] || [ -z "$device" ] || [ ! -f "$tmpdir/devicemac" ]; then
 		if [ -n "$ula_prefix" ] && [ -n "$device" ] && \
-		   ip -6 route show "$ula_prefix" 2>/dev/null | grep -q "dev[[:space:]]\+$device.*proto static"; then
-			log_info "Removing fallback route $ula_prefix on $device (no longer required)"
-			ip -6 route del "$ula_prefix" dev "$device" 2>/dev/null
+		   ip -6 route show "$ula_base:$ula_subnet::/64" 2>/dev/null | grep -q "dev[[:space:]]\+$device.*proto static"; then
+			log_info "Removing fallback route $ula_base:$ula_subnet::/64 on $device (no longer required)"
+			ip -6 route del "$ula_base:$ula_subnet::/64" dev "$device" 2>/dev/null
 		fi
 	fi
 
@@ -1925,6 +1923,43 @@ get_portal_state() {
 	fi
 
 	echo "is_portal=\"$is_portal\"; detected_state=\"$detected_state\"" > $tmpdir/is_portal
+}
+
+get_portal_type() {
+	. $tmpdir/is_portal
+
+	if [ "$detected_state" = "portal" ]; then
+
+		if [ "$portal_detect" -eq 4 ]; then
+			portal_type="MBP"
+		else
+			portal_type="MRP"
+		fi
+
+		log_info "Portal type [ $portal_type ]"
+		return 0
+	fi
+
+	get_portal_ula
+
+	if [ "$link_to_portal" -gt 0 ]; then
+		log_info "portal not accessible"
+		portal_type="UNKNOWN"
+		return 1
+	fi
+
+	portal_mac=$(ip -6 neigh | grep "$portal_ula" | awk '{print $5}')
+	portal_ipv4=$(ip -4 neigh | grep "$device" | grep "$portal_mac" | awk '{printf "%s", $1}')
+	mrp_default_ipv4_gw=$(ip -4 route | grep -m 1 "default via $portal_ipv4 dev $device")
+
+	if [ -z "$mrp_default_ipv4_gw" ]; then
+		portal_type="MBP"
+	else
+		portal_type="MRP"
+	fi
+
+	log_info "Portal type [ $portal_type ]"
+	return 0
 }
 
 portal_watchdog() {
@@ -2267,7 +2302,7 @@ check_portal() {
 				check_dns_server
 				/sbin/service dnsmasq reload
 				/sbin/service system restart
-
+				echo 2 > /proc/sys/net/ipv6/conf/$device/accept_ra
 				# Just become a peer so stop opennds if it is installed and enabled
 				manage_opennds stop
 			fi
@@ -2362,6 +2397,8 @@ check_portal() {
 				if [ "$daemon_startup" -eq 1 ]; then
 					daemon_startup=0
 				fi
+
+				echo 0 > /proc/sys/net/ipv6/conf/$device/accept_ra
 
 				if [ "$portal_detect" -ne 4 ]; then
 					# Just become a portal so start opennds if it is installed and enabled
@@ -3093,7 +3130,7 @@ sys_setup() {
 
 	echo 2 > /proc/sys/net/ipv6/conf/all/accept_ra
 	echo 2 > /proc/sys/net/ipv6/conf/default/accept_ra
-	echo 2 > /proc/sys/net/ipv6/conf/$device/accept_ra
+	echo 0 > /proc/sys/net/ipv6/conf/$device/accept_ra
 	echo 1 > /proc/sys/net/ipv6/conf/all/forwarding
 	echo 1 > /proc/sys/net/ipv6/conf/default/forwarding
 	echo 1 > /proc/sys/net/ipv6/conf/$device/forwarding
@@ -7119,6 +7156,11 @@ elif [ "$1" = "get_portal_ula" ]; then
 	echo "$portal_ula"
 	exit 0
 
+elif [ "$1" = "get_portal_type" ]; then
+	get_portal_type
+	echo "portal_type=$portal_type; portal_mac=\"$portal_mac\"; portal_ipv4=\"$portal_ipv4\"; mrp_default_ipv4_gw=\"$mrp_default_ipv4_gw\""
+	exit 0
+
 elif [ "$1" = "set_ula_prefix" ]; then
 	set_ula_prefix "$2"
 	retval=$?
@@ -8057,6 +8099,22 @@ elif [ "$1" = "daemon" ]; then
 
 		if [ "$portal_detect" -eq 4 ] || [ "$portal_detect" -eq 5 ]; then
 			manage_fallback_ula_route
+		fi
+
+		accept_ra=$(cat /proc/sys/net/ipv6/conf/$device/accept_ra)
+
+		if [ "$detected_state" = "portal" ] && [ "$portal_detect" -ne 4 ] && [ "$accept_ra" -ne 0 ]; then
+			echo 0 > /proc/sys/net/ipv6/conf/$device/accept_ra
+		elif [ "$portal_detect" -eq 4 ] && [ "$accept_ra" -ne 2 ]; then
+			echo 2 > /proc/sys/net/ipv6/conf/$device/accept_ra
+		elif [ "$detected_state" = "peer" ] && [ "$accept_ra" -ne 2 ]; then
+			echo 2 > /proc/sys/net/ipv6/conf/$device/accept_ra
+		fi
+
+		get_portal_type
+
+		if [ "$portal_type" = "MBP" ] && [ ! -z "$portal_mac" ] && [ ! -z "$portal_ipv4" ] && [ ! -z "$mrp_default_ipv4_gw" ]; then
+			/sbin/service network restart
 		fi
 
 		log_info "Checkinterval [$checkinterval]"
