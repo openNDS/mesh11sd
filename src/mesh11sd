@@ -1711,7 +1711,7 @@ manage_fallback_ula_route() {
 				log_notice "Sticky fallback on-link route added on $device"
 			else
 				log_error "Failed to add fallback route on $device"
-				log_debug "ip error: $(ip -6 route add "$$ula_base:$ula_subnet::/64" dev "$device" scope link onlink metric 512 proto static 2>&1)"
+				log_debug "ip error: $(ip -6 route add "$ula_base:$ula_subnet::/64" dev "$device" scope link onlink metric 512 proto static 2>&1)"
 			fi
 		fi
 	fi
@@ -1927,6 +1927,7 @@ get_portal_state() {
 
 get_portal_type() {
 	. $tmpdir/is_portal
+	. $tmpdir/devicemac
 
 	if [ "$detected_state" = "portal" ]; then
 
@@ -1936,7 +1937,7 @@ get_portal_type() {
 			portal_type="MRP"
 		fi
 
-		log_info "Portal type [ $portal_type ]"
+		log_info "Portal [ $portal_type@$devicemac ]"
 		return 0
 	fi
 
@@ -1945,6 +1946,7 @@ get_portal_type() {
 	if [ "$link_to_portal" -gt 0 ]; then
 		log_info "portal not accessible"
 		portal_type="UNKNOWN"
+		log_warn "Portal [ $portal_type ]"
 		return 1
 	fi
 
@@ -1958,7 +1960,8 @@ get_portal_type() {
 		portal_type="MRP"
 	fi
 
-	log_info "Portal type [ $portal_type ]"
+	log_info "Portal [ $portal_type@$portal_mac ]"
+	echo "portal_type=\"$portal_type\"; portal_mac=\"$portal_mac\"; portal_ipv4=\"$portal_ipv4\"; mrp_default_ipv4_gw=\"$mrp_default_ipv4_gw\"" > "$tmpdir/portal_type"
 	return 0
 }
 
@@ -7157,8 +7160,14 @@ elif [ "$1" = "get_portal_ula" ]; then
 	exit 0
 
 elif [ "$1" = "get_portal_type" ]; then
-	get_portal_type
-	echo "portal_type=$portal_type; portal_mac=\"$portal_mac\"; portal_ipv4=\"$portal_ipv4\"; mrp_default_ipv4_gw=\"$mrp_default_ipv4_gw\""
+
+	if [ -f "$tmpdir/portal_type" ]; then
+		. "$tmpdir/portal_type"
+		echo "portal_type=\"$portal_type\"; portal_mac=\"$portal_mac\"; portal_ipv4=\"$portal_ipv4\"; mrp_default_ipv4_gw=\"$mrp_default_ipv4_gw\""
+	else
+		echo "UNKNOWN"
+	fi
+
 	exit 0
 
 elif [ "$1" = "set_ula_prefix" ]; then
