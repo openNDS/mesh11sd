@@ -3215,7 +3215,17 @@ mobility_settings() {
 		write_to_syslog
 	fi
 
-	mesh_driver=$(grep -A 3 "$phy" "$tmpdir/wifidetect" | grep "Driver" | awk -F "\"" '{printf "%s", $4}')
+	case "$auto_mesh_band" in
+		"2g")	mesh_band="2.4GHz" ;;
+		"2g40")	mesh_band="2.4GHz" ;;
+		"5g")	mesh_band="5GHz" ;;
+		"6g")	mesh_band="6GHz" ;;
+		"60g")	mesh_band="60GHz" ;;
+	esac
+
+	start_marker="\"$mesh_band\""
+	end_marker="}"
+	mesh_driver=$(eval $(echo "sed -n '/$start_marker/,/$end_marker/{/$start_marker\|$end_marker/!p}' /tmp/mesh11sd/wifidetect") | grep "\"Driver\"" | awk -F "\"" '{print $4}')
 
 	if [ "$mesh_driver" = "ath11k" ]; then
 		beacon_int=100
