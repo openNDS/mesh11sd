@@ -292,7 +292,7 @@ get_current_setup() {
 	channel_tracking_checkinterval=$(uci get mesh11sd.setup.channel_tracking_checkinterval 2> /dev/null)
 
 	if [ -z "$channel_tracking_checkinterval" ]; then
-		channel_tracking_checkinterval="$(($checkinterval*7/3))"
+		channel_tracking_checkinterval="$(($checkinterval*10/2))"
 	fi
 
 	syslogmessage="option channel_tracking_checkinterval [ $channel_tracking_checkinterval ]"
@@ -1965,6 +1965,12 @@ get_portal_type() {
 }
 
 portal_watchdog() {
+
+	if [ "$portal_detect_threshold" -eq 0 ]; then
+		log_info "Portal Watchdog is disabled"
+		return 0
+	fi
+
 	# Set auto_detect state
 	case $portal_detect in
 		"0") auto_detect="0";;
@@ -1980,116 +1986,117 @@ portal_watchdog() {
 		return 0
 	fi
 
-	log_debug "Portal Watchdog - checking status ...."
-
 	if [ -f "$tmpdir/is_portal" ]; then
 		. $tmpdir/is_portal
 	fi
 
 	if [ "$detected_state" != "portal" ] && [ "$auto_detect" -eq 1 ]; then
 		# do portal detect with watchdog:
-		failcount=$(($failcount + 1))
-		check_channel_now=1
-		check_channel
-		check_channel_now=0
+
+		# Wait until we reach the threshold before we start checking for the portal
+		if [ "$portal_detect_threshold" -gt "$failcount" ]; then
+			log_debug "Portal Watchdog countdown [ $(($portal_detect_threshold - $failcount)) ] "
+			failcount=$(($failcount + 1))
+			return 0
+		fi
+
+		log_debug "Portal Watchdog - checking status ...."
+
+		get_portal_ula
 
 		if [ "$link_to_portal" -eq 0 ]; then
-			# link to portal detected
+			log_debug "Portal Watchdog - portal detected ...."
+			failcount=0
+			network_restart=0
 			is_portal="detected"
 			detected_state="peer"
 			return 0
 		fi
 
-		if [ "$portal_detect_threshold" -eq 0 ] || [ "$portal_detect_threshold" -gt "$failcount" ]; then
-			dhcpdevice=$(echo "get network.$auto_mesh_network.device" | uci batch | awk '{printf "%s", $1}')
-			debugtype="debug"
-			syslogmessage="ipV4 link to portal fail, attempting to (re)establish via device [ $dhcpdevice ], iteration [ $failcount ]"
-			mute=$muteorg
-			write_to_syslog
+		# Do a channel Scan for our mesh_id
+		check_channel_now=1
+		check_channel
+		check_channel_now=0
 
-			dhcp4_renew
-
-		elif [ "$portal_detect_threshold" -le "$failcount" ]; then
-			# we have reached the portal detect threshold. This either means there is no portal, or something has stopped working
-
-			if [ "$leechmode" -eq 1 ]; then
-				echo "set mesh11sd.setup.mesh_leechmode_enable='0'" | uci batch
-				leechmode=0
-				echo "leechmode=$leechmode" > "$tmpdir/leechmode"
-				# Reset failcount to go around again to the portal_detect_threshold, giving HWMP some cycles to establish a path
-				failcount=0
-
-				debugtype="err"
-				syslogmessage="portal detect threshold reached, enabling HWMP announcments"
-				mute=$muteorg
-				write_to_syslog
-				write_to_watchdog_nonvolatile_log
-
-			elif [ "$network_restart" -eq 0 ]; then
-				dhcpdevice=$(echo "get network.$auto_mesh_network.device" | uci batch | awk '{printf "%s", $1}')
-				debugtype="err"
-				syslogmessage="portal detect threshold reached, watchdog is monitoring"
-				mute=$muteorg
-				write_to_syslog
-				write_to_watchdog_nonvolatile_log
-				network_restart=1
-				dhcp4_renew
-
-			elif [ "$network_restart" -eq 1 ]; then
-				dhcpdevice=$(echo "get network.$auto_mesh_network.device" | uci batch | awk '{printf "%s", $1}')
-				debugtype="notice"
-				syslogmessage="portal detect threshold exceeded, watchdog continuing to monitor..."
-				mute=$muteorg
-				write_to_syslog
-				write_to_watchdog_nonvolatile_log
-				restart_mesh
-				network_restart=2
-				dhcp4_renew
-
-			elif [ "$network_restart" -eq 2 ]; then
-				dhcpdevice=$(echo "get network.$auto_mesh_network.device" | uci batch | awk '{printf "%s", $1}')
-				debugtype="notice"
-				syslogmessage="portal detect threshold exceeded, watchdog is restarting the network..."
-				mute=$muteorg
-				write_to_syslog
-				write_to_watchdog_nonvolatile_log
-				network_restart=3
-				/sbin/service network restart
-				wait_for_mesh
-				dhcp4_renew
-
-			elif [ "$network_restart" -eq 3 ]; then
-				# restarting the network did not work so:
-				debugtype="err"
-
-				if [ "$stop_on_error" -gt 0 ]; then
-					syslogmessage="portal detect threshold exceeded, restarting network did not work... disabling mesh management, changing to mesh status mode"
-					enabled=0
-					mute=$muteorg
-					write_to_syslog
-					write_to_watchdog_nonvolatile_log
-
-				elif [ "$reboot_on_error" -gt 0 ]; then
-					syslogmessage="portal detect threshold exceeded, restarting network did not work... rebooting node"
-					mute=$muteorg
-					write_to_syslog
-					write_to_watchdog_nonvolatile_log
-					reboot
-
-				else
-					#Reset the portal detect threshold. Keep trying to find a portal...
-					failcount=0
-					network_restart=0
-				fi
-			fi
-
-		else
+		if [ "$link_to_portal" -eq 0 ]; then
+			# link to portal found
+			log_debug "Portal Watchdog - portal found ...."
 			failcount=0
 			network_restart=0
+			is_portal="detected"
+			detected_state="peer"
+			return 0
 		fi
-	fi
 
-	if [ "$detected_state" = "portal" ]; then
+		# If we got here, we cannot see the portal, so start kicking things...
+		if [ "$link_to_portal" -ne 0 ] && [ "$network_restart" -eq 0 ]; then
+			# Try a dhcp4 renew - this sends a layer 2 broadcast
+			dhcpdevice=$(echo "get network.$auto_mesh_network.device" | uci batch | awk '{printf "%s", $1}')
+			mute=$muteorg
+			log_debug "Link to portal fail, attempting to (re)establish via device [ $dhcpdevice ], iteration [ $failcount ]"
+			dhcp4_renew
+			failcount=0
+			network_restart=1
+			return 0
+		fi
+
+		if [ "$link_to_portal" -ne 0 ] && [ "$network_restart" -eq 1 ]; then
+			# Still no portal, try dhcp4 renew again and make a non-volatile log if enabled
+			dhcpdevice=$(echo "get network.$auto_mesh_network.device" | uci batch | awk '{printf "%s", $1}')
+			debugtype="err"
+			syslogmessage="portal detect threshold reached, watchdog is monitoring"
+			mute=$muteorg
+			write_to_syslog
+			write_to_watchdog_nonvolatile_log
+			network_restart=2
+			failcount=0
+			dhcp4_renew
+			return 0
+		fi
+
+		if [ "$link_to_portal" -ne 0 ] && [ "$network_restart" -eq 2 ]; then
+			# Do a network restart this time, followed by a dhcp4 renew
+			dhcpdevice=$(echo "get network.$auto_mesh_network.device" | uci batch | awk '{printf "%s", $1}')
+			debugtype="notice"
+			syslogmessage="portal detect threshold exceeded, watchdog is restarting the network..."
+			mute=$muteorg
+			write_to_syslog
+			write_to_watchdog_nonvolatile_log
+			network_restart=3
+			/sbin/service network restart
+			wait_for_mesh
+			dhcp4_renew
+
+		if [ "$link_to_portal" -ne 0 ] && [ "$network_restart" -eq 3 ]; then
+			# restarting the network did not work so:
+			debugtype="err"
+
+			if [ "$stop_on_error" -gt 0 ]; then
+				syslogmessage="portal detect threshold exceeded, restarting network did not work... disabling mesh management, changing to mesh status mode"
+				enabled=0
+				mute=$muteorg
+				write_to_syslog
+				write_to_watchdog_nonvolatile_log
+			elif [ "$reboot_on_error" -gt 0 ]; then
+				syslogmessage="portal detect threshold exceeded, restarting network did not work... rebooting node"
+				mute=$muteorg
+				write_to_syslog
+				write_to_watchdog_nonvolatile_log
+				reboot
+			else
+				#Reset the portal detect threshold. Keep trying to find a portal...
+				failcount=0
+				network_restart=0
+			fi
+		fi
+
+	else
+		failcount=0
+		network_restart=0
+	fi
+fi
+
+if [ "$detected_state" = "portal" ]; then
 		ipv4statusdev=$(ip -4 addr show "$device" 2> /dev/null | grep -q "inet"; echo $?)
 
 		if [ "$vtun_enable" -eq 1 ]; then
@@ -5784,10 +5791,10 @@ wifi_chipset_detect() {
 }
 
 fix_dropbear() {
-	local fixed=$(grep -q -w "STOP=15" /etc/init.d/dropbear; echo $?)
+	local fixed=$(grep -q -w "STOP=10" /etc/init.d/dropbear; echo $?)
 
 	if [ "$fixed" -eq 1 ]; then
-		sed -i '/^[[:space:]]*STOP=/c\STOP=15' /etc/init.d/dropbear
+		sed -i '/^[[:space:]]*STOP=/c\STOP=10' /etc/init.d/dropbear
 		/sbin/service dropbear restart
 	fi
 }
