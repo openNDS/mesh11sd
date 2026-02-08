@@ -1479,22 +1479,21 @@ mesh_gate_state() {
 	mesh_device=$(echo "get $meshdev.device" | uci batch 2>/dev/null); echo "$mesh_device"
 
 	for gate in $aplist; do
-		config_state=$(echo "get wireless.$gate.disabled" | uci batch 2> /dev/null)
 		gate_device=$(echo "get wireless.$gate.device" | uci batch 2>/dev/null)
 
-		if [ -z "$config_state" ] && [ "$mesh_gate_enable" -eq 1 ]; then
+		if [ "$mesh_gate_enable" -eq 1 ]; then
 			ucibatch="set wireless.$gate.disabled='0'"
 			echo "$ucibatch" | uci batch
 
-		elif [ -z "$config_state" ] && [ "$mesh_gate_enable" -eq 0 ]; then
+		elif [ "$mesh_gate_enable" -eq 0 ]; then
 			ucibatch="set wireless.$gate.disabled='1'"
 			echo "$ucibatch" | uci batch
 
-		elif [ -z "$config_state" ] && [ "$mesh_gate_enable" -eq 2 ] && [ "$gate_device" = "$mesh_device" ]; then
+		elif [ "$mesh_gate_enable" -eq 2 ] && [ "$gate_device" = "$mesh_device" ]; then
 			ucibatch="set wireless.$gate.disabled='1'"
 			echo "$ucibatch" | uci batch
 
-		elif [ -z "$config_state" ] && [ "$mesh_gate_enable" -eq 2 ] && [ "$gate_device" != "$mesh_device" ]; then
+		elif [ "$mesh_gate_enable" -eq 2 ] && [ "$gate_device" != "$mesh_device" ]; then
 			ucibatch="set wireless.$gate.disabled='0'"
 			echo "$ucibatch" | uci batch
 		fi
