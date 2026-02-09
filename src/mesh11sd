@@ -1702,15 +1702,15 @@ manage_fallback_ula_route() {
 	   [ -n "$device" ]; then
 
 		if ! ip -6 route show "$ula_base:$ula_subnet::/64" 2>/dev/null | grep -q "dev[[:space:]]\+$device.*proto static.*metric 512.*onlink"; then
-			log_info "Adding sticky fallback on-link route $ula_prefix dev $device (peer auto-detect mode)"
+			log_info "Adding sticky fallback on-link route $ula_base:$ula_subnet::/64 dev $device (peer auto-detect mode)"
 
-			ip -6 route add "$ula_base:$ula_subnet::/64" dev "$device" scope link onlink metric 512 proto static 2>/dev/null
+			ip_error=$(ip -6 route add "$ula_base:$ula_subnet::/64" dev "$device" onlink metric 512 proto static 2>&1)
 
 			if [ $? -eq 0 ]; then
 				log_notice "Sticky fallback on-link route added on $device"
 			else
 				log_error "Failed to add fallback route on $device"
-				log_debug "ip error: $(ip -6 route add "$ula_base:$ula_subnet::/64" dev "$device" scope link onlink metric 512 proto static 2>&1)"
+				log_debug "ip error: $ip_error"
 			fi
 		fi
 	fi
