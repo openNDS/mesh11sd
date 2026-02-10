@@ -4714,6 +4714,7 @@ get_system_stats_json() {
 
 	# Output JSON
 	echo "    \"node_status\": {"
+	echo "      \"mesh11sd_version\": \"$version\","
 	echo "      \"factory_mac\": \"$factory_mac\","
 	echo "      \"mesh_bridge_mac\": \"$devicemac\","
 	echo "      \"uptime_seconds\": $uptime_sec,"
@@ -4792,14 +4793,8 @@ get_ap_data() {
 
 			if [ ! -z "$is_station_id" ]; then
 
-				#if [ "$first_ap" -eq 0 ]; then
-				#	echo -n "," >> $tmpdir/apmond/clients
-				#fi
-
 				if [ "$first_sta" -eq 1 ]; then
 					echo -e "      \"$ap_ssid@$ap_ifname\": {" >> $tmpdir/apmond/clients # this is the first sta on the list for this ap
-				#else
-				#	echo "," >> $tmpdir/apmond/clients
 				fi
 
 				echo "$line" | awk '{printf "        \"%s\": {", $2}' >> $tmpdir/apmond/clients; echo >> $tmpdir/apmond/clients
@@ -4830,8 +4825,6 @@ get_ap_data() {
 		done
 
 		first_ap=0 # finished with the first ap
-		#echo -n -e "\n" >> $tmpdir/apmond/clients
-
 	done
 
 	if [ "$sta_flag" -eq 1 ]; then
