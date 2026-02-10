@@ -1945,7 +1945,7 @@ get_portal_type() {
 	if [ "$link_to_portal" -gt 0 ]; then
 		log_info "portal not accessible"
 		portal_type="UNKNOWN"
-		log_warn "Portal [ $portal_type ]"
+		log_warning "Portal [ $portal_type ]"
 		return 1
 	fi
 
@@ -4204,13 +4204,54 @@ is_hex() {
 
 write_node_data() {
 	node_id="$1"
+
+	if [ -z "$node_id" ]; then
+		mute=0
+		log_warning "Empty node node hostname - rejecting attempted apmond server access"
+		return 1
+	fi
+
 	data_raw="$2"
 
 	node_type=$(echo "$node_id" | awk -F ";" '{printf "%s", $1}')
-	node_hostname=$(echo "$node_id" | awk -F ";" '{printf "%s", $2}')
-	node_mac=$(echo "$node_id" | awk -F ";" '{printf "%s", $3}' | awk -F ":" 'NF==6 {printf "%s%s%s%s%s%s%s", $1, $2, $3, $4, $5, $6}')
-	chunkstatus=$(echo "$node_id" | awk -F ";" '{printf "%s", $4}')
-	strindex=$(echo "$node_id" | awk -F ";" '{printf "%s", $5}')
+
+	if [ -z "$node_type" ]; then
+		mute=0
+		log_warning "Empty node type - rejecting attempted apmond server access"
+		return 1
+	fi
+
+	# Check the user agent is valid for apmond
+	if [ "$node_type" = "apmond" ]; then
+		node_hostname=$(echo "$node_id" | awk -F ";" '{printf "%s", $2}')
+
+		if [ -z "$node_hostname" ]; then
+			mute=0
+			log_warning "Empty node node hostname - rejecting attempted apmond server access"
+			return 1
+		fi
+
+		if [ "${node_hostname:0:9}" = "meshnode-" ]; then
+			node_mac=$(echo "$node_id" | awk -F ";" '{printf "%s", $3}' | awk -F ":" 'NF==6 {printf "%s%s%s%s%s%s%s", $1, $2, $3, $4, $5, $6}')
+			chunkstatus=$(echo "$node_id" | awk -F ";" '{printf "%s", $4}')
+			strindex=$(echo "$node_id" | awk -F ";" '{printf "%s", $5}')
+		else
+			mute=0
+			log_warning "Bad node node hostname - rejecting attempted apmond server access"
+			return 1
+		fi
+
+		if [ -z "$node_mac" ] || [ -z "$chunkstatus" ] || [ -z "$strindex" ]; then
+			mute=0
+			log_warning "Invalid parameters - rejecting attempted apmond server access"
+			return 1
+		fi
+	else
+		mute=0
+		log_warning "Invalid node type - rejecting attempted apmond server access"
+		return 1
+	fi
+
 	maxchunksize=16 # 16 is max size for hextest
 	strindex=0
 	chunkstr=""
