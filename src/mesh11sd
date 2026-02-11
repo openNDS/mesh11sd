@@ -292,7 +292,7 @@ get_current_setup() {
 	channel_tracking_checkinterval=$(uci get mesh11sd.setup.channel_tracking_checkinterval 2> /dev/null)
 
 	if [ -z "$channel_tracking_checkinterval" ]; then
-		channel_tracking_checkinterval="$(($checkinterval*10/2))"
+		channel_tracking_checkinterval="$(($checkinterval*8/3))"
 	fi
 
 	syslogmessage="option channel_tracking_checkinterval [ $channel_tracking_checkinterval ]"
@@ -1840,7 +1840,7 @@ get_portal_state() {
 
 					if [ -z "$default_gw" ]; then
 						debugtype="debug"
-						syslogmessage="Portal upstream link check  [$br_zone] - iteration [ $retry ] ...."
+						syslogmessage="Portal upstream link check  [$br_zone] - iteration [ $((retry -1)) ] ...."
 						mute=$muteorg
 						write_to_syslog
 						wait_for_interface "$br_zone"
@@ -4753,9 +4753,12 @@ get_system_stats_json() {
 		factory_mac="unknown"
 	fi
 
+	get_node_type_code
+
 	# Output JSON
 	echo "    \"node_status\": {"
 	echo "      \"mesh11sd_version\": \"$version\","
+	echo "      \"node_type\": \"$node_type_code\","
 	echo "      \"factory_mac\": \"$factory_mac\","
 	echo "      \"mesh_bridge_mac\": \"$devicemac\","
 	echo "      \"uptime_seconds\": $uptime_sec,"
@@ -5864,6 +5867,33 @@ log_debug() {
 	write_to_syslog
 }
 
+get_node_type_code() {
+
+	if [ -f "$tmpdir/is_portal" ]; then
+		. $tmpdir/is_portal
+	else
+		return 1
+	fi
+
+	case "$portal_detect" in
+		0) node_type_code="MRP" ;;	# Mesh Routed Portal
+		1) 
+
+			case "$detected_state" in
+				"portal")	node_type_code="MRP" ;;
+				"peer")		node_type_code="MPE" ;;	# Mesh PEer
+				*)		node_type_code="N/A" ;;
+			esac
+		;;
+		3) node_type_code="CPE" ;;	# Customer (or Client) PEer
+		4) node_type_code="MBP" ;;	# Mesh Bridge Portal
+		5) node_type_code="TPE" ;;	# Tunnel PEer
+		*) node_type_code="N/A" ;;	# Not Available
+	esac
+
+	return 0
+}
+
 ##############
 # Start point
 ##############
@@ -6217,12 +6247,14 @@ elif [ "$1" = "status" ]; then
 	fi
 
 	procd_status=$(/etc/init.d/mesh11sd status)
+	get_node_type_code
 
 	echo "{"
 	echo "  \"setup\":{"
 	echo "    \"version\":\"$version\","
 	echo "    \"enabled\":\"$enabled\","
 	echo "    \"procd_status\":\"$procd_status\","
+	echo "    \"node_type\":\"$node_type_code\","
 	echo "    \"portal_detect\":\"$portal_detect\","
 	echo "    \"portal_detect_threshold\":\"$portal_detect_threshold\","
 	echo "    \"portal_channel\":\"$portal_channel\","
@@ -7415,10 +7447,16 @@ elif [ "$1" = "active_nodecount" ]; then
 		active_nodecount=$(($(iw dev "$active_mesh_ifname" mpath dump | wc -l) -1))
 		echo -n "$active_nodecount"
 	else
-		echo "0"
+		echo -n "0"
 	fi
 
 	exit 0
+
+elif [ "$1" = "get_node_type_code" ]; then
+	get_node_type_code
+	exitcode=$?
+	echo -n "$node_type_code"
+	exit $exitcode
 
 elif [ "$1" = "daemon" ]; then
 	# Detect what we are running on - Write $tmpdir/wifidetect file with os, device wireless chipset and driver info
