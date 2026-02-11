@@ -15,6 +15,7 @@
 
 last_version="6.1.0~be7a"
 version="6.2.0~be7a"
+checksum=$(sha256sum /usr/sbin/mesh11sd | awk '{printf "%s", $1}')
 fixup1=0
 failcount=0
 network_restart=0
@@ -4501,7 +4502,7 @@ luci_cgi() {
 	echo -e "echo \"</div>\"" >> "$cgi"
 
 	# Version
-	echo -e "echo \"<br><small>\$status</small><br><hr>\"" >> "$cgi"
+	echo -e "echo \"<br><small>\$status<br>$checksum</small><br><hr>\"" >> "$cgi"
 	echo -e "echo \"</body>\"" >> "$cgi"
 	echo -e "echo \"</html>\"" >> "$cgi"
 
@@ -4762,6 +4763,7 @@ get_system_stats_json() {
 	# Output JSON
 	echo "    \"node_status\": {"
 	echo "      \"mesh11sd_version\": \"$version\","
+	echo "      \"mesh11sd_checksum\": \"$checksum\","
 	echo "      \"node_type\": \"$node_type_code\","
 	echo "      \"factory_mac\": \"$factory_mac\","
 	echo "      \"mesh_bridge_mac\": \"$devicemac\","
@@ -6256,6 +6258,7 @@ elif [ "$1" = "status" ]; then
 	echo "{"
 	echo "  \"setup\":{"
 	echo "    \"version\":\"$version\","
+	echo "    \"checksum\":\"$checksum\","
 	echo "    \"enabled\":\"$enabled\","
 	echo "    \"procd_status\":\"$procd_status\","
 	echo "    \"node_type\":\"$node_type_code\","
