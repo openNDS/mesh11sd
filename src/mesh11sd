@@ -1743,6 +1743,8 @@ scan_channel() {
 			for meshconfig in $meshconfigs; do
 				ifname=$(uci get $meshconfig.ifname)
 				our_channel=$(iw dev $ifname info 2> /dev/null | grep -w "channel" | awk -F " " '{printf "%s", $2}')
+
+				log_info "Current channel [ $our_channel ]"
 				mesh_id=$(uci get $meshconfig.mesh_id)
 				scanned_channels=$(iw dev $ifname scan 2> /dev/null | grep -F -w -B 20 "MESH ID: $mesh_id" | awk -F "primary channel: " '$2 != "" {printf "%s ",$2}')
 
@@ -1759,6 +1761,8 @@ scan_channel() {
 						if [ "$channel" -gt 14 ] && [ "$band" = "2g" ]; then
 							continue
 						fi
+
+						log_info "Scanning channel [ $channel ]"
 
 						if [ "$channel" -eq "$our_channel" ]; then
 							continue
@@ -4490,8 +4494,8 @@ luci_cgi() {
 	echo -e "echo \"<strong>WARNING: LuCI is currently DISABLED</strong><br>\"" >> "$cgi"
 	echo -e "echo \"LuCI does not understand Mesh11sd's autonomous dynamic Auto Configuration.<br><br>\"" >> "$cgi"
 	echo -e "echo \"At your own risk, Mesh11sd's configuration changes can be persisted to flash/disk storage,<br>thus re-enabling LuCI.<br><br>\"" >> "$cgi"
-	echo -e "echo \"Generally this is safe to do if the location and functionality of your mesh nodes<br>is unlikely to change from the current state.<br><br>\"" >> "$cgi"
-	echo -e "echo \"<strong>Be warned</strong> that LuCI may well omit or incorrectly display most aspects of the network configuration.<br>This process can be reverted at any time.<br><br>\"" >> "$cgi"
+	echo -e "echo \"Generally this is safe to do if the location and functionality of your mesh nodes<br>is unlikely to change from the current state.<br>This process can be reverted at any time.<br><br>\"" >> "$cgi"
+	echo -e "echo \"<strong>Be warned</strong> that LuCI may well omit or incorrectly display many aspects of the network configuration.<br><br>\"" >> "$cgi"
 	echo -e "echo \"See the documentation at:<br>\"" >> "$cgi"
 	echo -e "echo \"<a href=\\\"https://github.com/openNDS/mesh11sd?tab=readme-ov-file#13-command-line-interface\\\">https://github.com/openNDS/mesh11sd?tab=readme-ov-file#13-command-line-interface</a>\"" >> "$cgi"
 	echo -e "echo \"</div>\"" >> "$cgi"
