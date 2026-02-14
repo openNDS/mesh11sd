@@ -31,11 +31,13 @@ config mesh11sd 'setup'
 	# Default 1
 	#
 	# Possible values:
-	#  0  - Mesh Routed Portal (MRP). Force ipv4 nat routed Portal mode regardless of an upstream connection.
+	#  0  - Forced Mesh Routed Portal (MRP). Force ipv4 nat and ipv6 routed Portal mode regardless of an upstream connection.
 	#
-	#  1  - Auto Detect Node (ADN). Detect if the meshnode is a portal, meaning it has an upstream wan link, or if it is a peer with upstream connection via the mesh backhaul.
-	# 	If the upstream link is active, the router hosting the meshnode will serve ipv4 dhcp into the mesh network.
+	#  1  - Auto Detect Node. Detect if the meshnode is a portal, meaning it has an upstream wan link, or if it is a peer with upstream connection via the mesh backhaul.
+	# 	If the upstream link is active, the router hosting the meshnode will serve both ipv4 and ipv6 dhcp into the mesh network.
+	#		Such a node will be a Mesh Routed Portal (MRP)
 	# 	If the upstream link is not connected, dhcp will be disabled and the meshnode will function as a layer 2 bridge on the mesh network.
+	#		Such a node will be a Mesh Peer (MPE)
 	#
 	#  2  - Deprecated - no longer used - replaced by mode 5.
 	#
