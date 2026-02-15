@@ -28,18 +28,28 @@ The beauty of it is the self-healing nature: the network adapts as nodes join or
 
 Mesh11sd is an OpenWrt package that autonomously manages all aspects of an 802.11s mesh network and its connected nodes. [^3]
 
-The package acts as a service daemon, dynamically configuring network parameters across multiple mesh nodes and is particularly useful for simplifying setup, reducing manual configuration, and improving network reliability.
+The package acts as a service daemon, continuously and dynamically configuring network parameters across multiple mesh nodes. It can be likened to a distributed virtual system composed of all the nodes within a mesh working in unison.
+
+From version 6.x.x onwards, enhanced mesh routing protocols are used to support meshnode mobility.  
+Several mobility levels are possible, the most basic supporting three dimensional intra-mesh relative velocities (3dRV) of up to ~1.5 meters per second.
+
+Mesh11sd is also particularly useful for simplifying the rollout of a multi node network, reducing or even eliminating manual configuration, and improving network reliability.
 
 ## 3. Major Features:
- 1. **Auto configuration** of 802.11s mesh backhaul (Default)
- 2. **Bridge Portal Mode** Configures a bridged portal (ie no ipv4 routing) and supports tunnelling of a VLAN trunk over the mesh backhaul (Optional).
- 3. **Trunk Peer Mode** providing ethernet downstream VLAN support from connections to remote peers (Optional).
- 4. **Customer Premises Equipment Mode (CPE)** (AKA Client Premises Equipment Mode), providing a routed peer with an upstream Internet connection via the mesh backhaul (Optional). Ideal for WISP or Community Network use cases.
- 5. **Opportunistic Wireless Encryption (OWE)**, with OWE Transition. It provides encryption for open Wi-Fi networks without requiring user authentication, enhancing security for public or guest networks (Default).
- 6. **Portal-Node to Peer-Group Mode**, enabling "guest" networking over mesh backhaul without the need for setting up a VLAN (Default).
- 7. **Access Point Monitoring** (AKA Mesh Gate Monitoring). Incorporates the code and functionality of the apmond package. A centralised Access Point usage database is created, enabling access point statistics, such as client connections, client data volumes etc., to be viewed on the Mesh Portal in json format (Default).
- 8. **Leech Mode Peer**, enables a special type of peer that can join the mesh backhaul without contributing to the backhaul infrastructure. Useful for providing coverage "fill in" where access point signals are too weak for client devices. The Leech Mode peer forwards only the traffic of clients that are connected to it, it does not forward the traffic of other peers.
- 9. **Mesh Node Mobility Level**, supports inter node relative velocities in excess of 1.5 metres per second where conditions allow. Enables mesh_hwmp_rts for on air collision avoidance, enables transmit queue and aql_threshold to minimise latency, enables rapid path convergence.
+ 1. **Auto configuration** of 802.11s mesh backhaul
+ 2. **Mesh Routed Portal Mode (MRP)** Configures a routed portal (ie ipv4 and ipv6 routing) and supports tunnelling of a VXLAN trunk over the mesh backhaul (Optional).
+ 3. **Auto Detect Mode** Detect if the meshnode is a portal, meaning it has an upstream wan link, or if it is a peer with upstream connection via the mesh backhaul.  
+    If the upstream link is active, the router hosting the meshnode will serve both ipv4 and ipv6 dhcp into the mesh network.  
+    ***Such a node will be a Mesh Routed Portal (MRP)***  
+    If the upstream link is not connected, dhcp will be disabled and the meshnode will function as a layer 2 bridge on the mesh network.  
+    ***Such a node will be a Mesh Peer (MPE)***
+ 3. **Mesh Bridge Portal Mode (MBP)** Configures a bridged portal (ie **NO** ipv4 routing) and supports tunnelling of a VXLAN trunk over the mesh backhaul (Optional).
+ 4. **Trunk Peer Mode (TPM)** providing ethernet downstream VLAN support (via the VXLAN tunnel) from connections to remote peers (Optional).
+ 5. **Customer Premises Equipment Mode (CPE)** (AKA Client Premises Equipment Mode), providing a routed peer with an upstream Internet connection via the mesh backhaul (Optional). Ideal for WISP or Community Network use cases.
+ 6. **Opportunistic Wireless Encryption (OWE)**, with OWE Transition. It provides encryption for open Wi-Fi networks without requiring user authentication, enhancing security for public or guest networks (Default).
+ 7. **Portal-Node to Peer-Group Mode**, enabling, for example, "guest" networking over mesh backhaul without the need for setting up a VLAN (Default).
+ 8. **Access Point Monitoring** (AKA Mesh Gate Monitoring). Incorporates the code and functionality of the apmond package. A centralised Access Point usage database is created, enabling access point statistics, such as client connections, client data volumes etc., to be viewed on the Mesh Portal in json format (Default).
+ 9. **Mesh Node Mobility Level**, supports three dimensional relative velocities (3dRV) in excess of 1.5 metres per second where conditions allow. Enables mesh_hwmp_rts for on air collision avoidance, enables transmit queue and aql_threshold to minimise latency, enables rapid path convergence.
 
 ## 4. Getting Started:
 To get started, you will need at least two mesh capable devices to use as meshnodes. These meshnodes should have:
@@ -109,9 +119,11 @@ Click on “Customize installed packages and/or first boot script”
 
 In the upper text box, labelled “Installed Packages”, you will see a list of packages.
 
-At or near the end you will see wpad-basic-mbedtls. Add a minus sign (-) in front of it, ie -wpad-basic-mbedtls
+You will see, often near the end of the list, wpad-basic-mbedtls. Add a minus sign (-) in front of it, ie -wpad-basic-mbedtls.
 
-At the end of the list add the following dependency packages:
+You will also see in the list, luci. Add a minus sign in front of this too.
+
+**At the end of the list add the following dependency packages:**
 
   1. wpad-mbedtls
   2. luci-ssl
@@ -123,7 +135,7 @@ At the end of the list add the following dependency packages:
 
 ***NOTE: If the node you are configuring uses ath10k-ct drivers, you must change to the none-ct versions. If you do not, mesh11sd will log an error to syslog and terminate.***
 
-For our example of the GL-MT300N-V2, the upper text box, labelled "Installed Packages"  will now look like this:
+For our example of the GL-MT300N-V2, the upper text box, labelled "Installed Packages" will now look something like this:
 
 ```
 base-files busybox ca-bundle dnsmasq dropbear firewall4 fstools kmod-gpio-button-hotplug
@@ -228,19 +240,54 @@ Having reflashed the meshnode you want to be the portal node, ie the one that is
 
 On your computer, It should either listen to router announcements or make dhcp requests. So we can look at the routing table.
 
-**On Linux this would be ip -6 route.** (See later for Windows)
+Make a note of the mac address on the label of the node.  
+It will look something like this format:
+
+```
+94:83:c4:a2:8e:c9
+```
+
+Note the last two pairs of hex digits, in this case:
+
+```
+8ec9
+```
+
+Remove the last hex digit, giving a three digit string. In our example:
+
+```
+8ec
+```
+
+Remember this three hex digit string for later.
+
+**On Linux we would look at the routing table using the "ip -6 route" command.** (See later for Windows)
 
 Look for a line in the output with the keyword "via".
 
 For example you might see:
 
-        default via fe80::9683:c4ff:fea2:8ecb dev enp3s0f3u2u4 proto ra metric 20100 pref medium
+```
+default via fe80::9683:c4ff:fea2:8ecb dev enp3s0f3u4 proto ra metric 20100 pref medium
+```
+
+Or it might look something like this:
+
+```
+default proto ra metric 100 pref medium
+	nexthop via fe80::9683:c4ff:fea2:8ecb dev enp3s0f3u4 weight 1 
+	nexthop via fe80::9683:c4ff:fe2c:c524 dev enp3s0f3u4 weight 1 
+```
 
 It may take a few minutes to appear and initially may not say "default".
 
 Re-run the command if necessary.
 
-In this example, the link local ipv6 address is:
+Look for link local ipv6 addresses. They begin with `fe80` and come with sections of four hex digits.
+
+Look for a link local address with the three digit string remembered previously, occuring as the first three digits of the last section of a link local address.
+
+In this example, we see a link local ipv6 address containing:
 
         fe80::9683:c4ff:fea2:8ecb
 
@@ -259,6 +306,8 @@ To start an ssh terminal window for the device, you would run:
         ssh root@fe80::9683:c4ff:fea2:8ecb%enp3s0f3u2u4
 
 **On Windows this would be the ipconfig command**
+
+Follow the logic we used for Linux, modified for Windows of course.
 
  1. Open Command Prompt: Press Windows Key + R, type cmd, and hit Enter.
  2. Run the command: Type ipconfig and press Enter.
@@ -408,11 +457,13 @@ You must now stop the mesh11sd service using the following command:
 
 **Country Code**
 
-This should be set in the normal OpenWrt way, using either the uci utility or the Luci Web UI.
+This can be set in the normal OpenWrt way, using either the uci utility or the Luci Web UI.  
+If not set, it will default to DFS-ETSI (as this is safer than DFS-UNSET for a mesh)
 
-**Base IP Address and Subnet Mask**
+**Base IP Version 4 Address and Subnet Mask**
 
-This should be set in the normal OpenWrt way, using either the uci utility or the Luci Web UI.
+This should be set in the normal OpenWrt way, using either the uci utility or the Luci Web UI.  
+If the OpenWrt default of 192.168.1.1 is found it will be set to a system generated RFC1917 address eg 192.168.xxx.1 to minimise the potential of clashing with an upstream router.
 
 **Mesh Encryption Seed Values**
 
@@ -427,6 +478,8 @@ Optionally add a mesh key seed, eg "MyMeshKeySeed"
 ```
 	uci set mesh11sd.setup.auto_mesh_key='MyMeshKeySeed'
 ```
+
+These seed values are used to generate a secure mesh identifier/encryption key pair and of course must be the same on every mesh node.
 
 **Gateway SSID**
 
@@ -538,33 +591,45 @@ config mesh11sd 'setup'
 	# Default 1
 	#
 	# Possible values:
-	#  0  - Force ipv4 nat routed Portal mode regardless of an upstream connection.
+	#  0  - Forced Mesh Routed Portal (MRP). Force ipv4 nat and ipv6 routed Portal mode regardless of an upstream connection.
 	#
-	#  1  - Detect if the meshnode is a portal, meaning it has an upstream wan link.
-	# 	If the upstream link is active, the router hosting the meshnode will serve ipv4 dhcp into the mesh network.
+	#  1  - Auto Detect Node. Detect if the meshnode is a portal, meaning it has an upstream wan link, or if it is a peer with upstream connection via the mesh backhaul.
+	# 	If the upstream link is active, the router hosting the meshnode will serve both ipv4 and ipv6 dhcp into the mesh network.
+	#		Such a node will be a Mesh Routed Portal (MRP)
 	# 	If the upstream link is not connected, dhcp will be disabled and the meshnode will function as a layer 2 bridge on the mesh network.
+	#		Such a node will be a Mesh Peer (MPE)
 	#
 	#  2  - Deprecated - no longer used - replaced by mode 5.
 	#
-	#  3  - Force CPE mode (Customer Premises Equipment)
+	#  3  - Client Premises Equipment (CPE)
+	#  	Also known as Customer Premises Equipment
 	#  	This is a peer mode but treats the mesh backhaul as an upstream wan connection.
-	#  	A nat routed ipv4 lan is created with its own ipv4 subnet.
-	#       If selected, option vtun_enable is forced to 0
 	#
-	#  4  - Force Bridge vxlan trunk portal node
-	#	This mode should be used if a bridged connection to the upstream ISP router is required (ie bridged/no-nat ipv4 ).
+	#  	A nat routed ipv4 lan is created with its own ipv4 subnet.
+	#  	By default a nat66 routed ipv6 lan is created with its own ipv6 subnet.
+	#
+	#   	Depending on the upstream ISP, possible optional modes are prefix_delegation, relay and nat66, settable using the cpe_mode option (see below)
+	#
+	#  4  - Mesh Bridge Portal (MBP) node. Force Bridge vxlan trunk portal node
+	#	This mode should be used if a bridged connection to the upstream ISP router is required (ie bridged/no-nat ipv4/ipv6 ).
 	#	Functions in a similar way to 0, but forces BRIDGED rather than routed portal mode, ADDING the wan ethernet port to the vxtunnel bridge (default br-tun69)
+	#
 	#	The wan port will be an ethernet end point into the vxtunnel, supporting vlans if required.
+	#
 	#	The wan port and lan port(s) form independent layer 2 networks carried by the mesh backhaul to all peer meshnodes.
 	#	the vxlan tunnel can be treated as a separate virtual ethernet tunnel to all mesh nodes.
-	#	ie the wan port on a mode 4 portal is the end point of a virtual vlan supporting ethernet network connecting
-	#	to the wan ports of all mode 5 bridge vxlantrunk peer nodes.
-	#	In normal use, BOTH the wan and a lan port could be patched to the upstream router or an intermediate switch.
 	#
-	#  5  - Bridge vxlan trunk peer node
+	#	ie the wan port on a mode 4 portal is the entry point of a virtual peer to multi-peer vxlan, supporting ethernet network connecting
+	#	to the VTunnel access pints of all nodes as well as the wan ports of all mode 5 Trunk Peer Nodes.
+	#	In normal use, the lan port could be patched to the upstream router. The wan port is the ethernet entry point of the vxlan tunnel.
+	#	The vxlan tunnel an be used as if it was a port on a managed switch, supporting vlan tagging if required.
+	#
+	#  5  - Trunk Peer Node (TPN)
+	#	This is a special case of a peer node where its wan port is an endpoint of the multi-peer vxlan.
 	#	Compatible with portal nodes configured with portal_detect 0, 1 or 4.
-	#	Functions in a similar way to 0, but FORCES peer mode and adds wan ethernet port to the vxtunnel bridge (default br-tun69)
+	#
 	#	The wan port will be an ethernet end point into the vxtunnel, supporting vlans if required.
+	#
 	#	The lan port(s) will be ethernet end points into the mesh backhaul and will NOT support vlans.
 	#
 	#
@@ -768,7 +833,9 @@ config mesh11sd 'setup'
 	#	If ssid_suffix_enable is set to 1, must be a maximum of 22 characters in length
 	#	Excess characters will be truncated
 	#
-	# Default - uses the ssid string set in the wireless config
+	# Default:
+	#	1 - uses the ssid string set in the wireless config if it is NOT set to OpenWrt
+	#	2 - uses the ssid string MeshGate if the SSID string in the wireless config is OpenWrt
 	#
 	#
 	# When set, overrides the ssid string set in the wireless config
@@ -888,9 +955,9 @@ config mesh11sd 'setup'
 	#	If ssid_suffix_enable is set to 1, must be a maximum of 22 characters in length
 	#	Excess characters will be truncated
 	#
-	# Default: Guest
+	# Default: VTunnel
 	#
-	#option vtun_base_ssid 'CustomerNetwork'
+	#option vtun_base_ssid 'GuestNetwork'
 
 	###########################################################################################
 	# vtun_path_cost (optional)
@@ -1210,6 +1277,7 @@ config mesh11sd 'mesh_params'
 	#
 	# The command: "mesh11sd status" gives a full list of supported parameters.
 
+
 ```
 All mesh parameter settings in the config file are dynamic and will take effect immediately.
 
@@ -1355,8 +1423,12 @@ Sets the mesh gate base ssid string.
 If ssid_suffix_enable is set to 0, must be a maximum of 30 characters in length.  
 If ssid_suffix_enable is set to 1, must be a maximum of 22 characters in length.  
 Excess characters will be truncated.  
-Default - uses the ssid string set in the wireless config.  
-When set, overrides the ssid string set in the wireless config.
+Default:
+     1. uses the ssid string set in the wireless config if it is NOT set to OpenWrt
+     2. uses the ssid string MeshGate if the SSID string in the wireless config is OpenWrt
+
+
+    When set, overrides the ssid string set in the wireless config.
 
 - **mesh_gate_encryption** (optional).  
 Determines whether this node's gate (Access Point) will be a encrypted.  
@@ -1418,7 +1490,7 @@ Sets the vxtunnel base ssid string.
 If ssid_suffix_enable is set to 0, must be a maximum of 30 characters in length.  
 If ssid_suffix_enable is set to 1, must be a maximum of 22 characters in length.  
 Excess characters will be truncated.  
-Default: Guest
+Default: VTunnel
 
 - **vtun_path_cost** (optional).  
 Note: All vtun options require the ip-full and vxlan packages to be installed, otherwise the options will be ignored.  
@@ -1687,6 +1759,18 @@ MP_FLAGS - Mesh Path FLAGS, a bitmask representing the status of a backhaul peer
 
 HWMPSeqL - HWMP Sequence Lifetime, the number of milliseconds of remaining validity of a peer path sequence number.
 
+3dRV - Three dimensional Relative Velocity
+
+MBP - Mesh Bridge Portal
+
+MRP - Mesh Routed Portal
+
+MPE - Mesh PEer
+
+CPE - Client Premises Equipment
+
+TPN - Trunk Peer Node
+
 
 ## 12. HWMP Peer Status and MP_FLAGS (Mesh Path FLAGS) Values
 Hybrid Wireless Mesh Protocol (HWMP) is the underlying protocol used for dynamic backhaul mac-routing. Its maintains a distributed mac routing table within the backhaul.  
@@ -1910,6 +1994,24 @@ Mesh11sd is an OpenWrt service daemon and runs continuously in the background. I
          Usage: mesh11sd get_valid_channels
          Returns a list of valid wireless channels for the current country setting.
          Note: DFS channels are not suitable for use in a mesh backhaul so are excluded.
+
+        Option: wifi_chipset_detect
+         Usage: mesh11sd wifi_chipset_detect
+         Detects and returns a json formatted list of available wireless chipsets and their capabilities.
+
+        Option: active_nodecount
+         Usage: mesh11sd active_nodecount
+         Returns the current number of nodes that are active in the mesh.
+
+        Option: get_node_type_code
+         Usage: mesh11sd get_node_type_code
+         Returns the mesh11sd node type code of the current node.
+         Can be:
+           MBP (Mesh Bridge Portal)
+           MRP (Mesh Routed Portal)
+           MPE (Mesh Peer)
+           CPE (Client Premises Equipment)
+           TPN (Trunk Peer Node)
 
 **Example status output:**
 

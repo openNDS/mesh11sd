@@ -15,12 +15,14 @@
 
 last_version="6.1.0~be7a"
 version="6.2.0~be7a"
+checksum=$(sha256sum /usr/sbin/mesh11sd | awk '{printf "%s", $1}')
 fixup1=0
 failcount=0
 network_restart=0
 
 # initial tmpdir, use $log_mountpoint/mesh11sd once startup begins
 tmpdir="/tmp/mesh11sd"
+outputfile="$tmpdir/wifidetect"
 mkdir -p "$tmpdir"
 
 if [ "$1" = "daemon" ]; then
@@ -292,7 +294,7 @@ get_current_setup() {
 	channel_tracking_checkinterval=$(uci get mesh11sd.setup.channel_tracking_checkinterval 2> /dev/null)
 
 	if [ -z "$channel_tracking_checkinterval" ]; then
-		channel_tracking_checkinterval="120"
+		channel_tracking_checkinterval="$(($checkinterval*8/3))"
 	fi
 
 	syslogmessage="option channel_tracking_checkinterval [ $channel_tracking_checkinterval ]"
@@ -631,12 +633,8 @@ get_current_setup() {
 		#####
 		vtun_enable=$(uci get mesh11sd.setup.vtun_enable 2> /dev/null)
 
-		if [ -z "$vtun_enable" ]; then
+		if [ -z "$vtun_enable" ] || [ "$vtun_enable" -gt 1 ]; then
 			vtun_enable=1
-		elif [ "$vtun_enable" -gt 1 ]; then
-			vtun_enable=1
-		else
-			vtun_enable=0
 		fi
 
 		syslogmessage="option vtun_enable [ $vtun_enable ]"
@@ -1361,9 +1359,9 @@ write_log() {
 		fi
 
 		if [ "$log_entries" -gt "$max_log_entries" ]; then
-			mv "$logfile" "$logfile.cut"
-			tail -n "$max_log_entries" "$logfile.cut" >> "$logfile"
-			rm "$logfile.cut"
+			mv "$logfile" "$logfile.cut" 2>/dev/null
+			tail -n "$max_log_entries" "$logfile.cut" 2>/dev/null >> "$logfile"
+			rm "$logfile.cut" 2>/dev/null
 		fi
 
 		available=$(df | grep -w  "$log_mountpoint" | eval "$awkcmd")
@@ -1483,22 +1481,21 @@ mesh_gate_state() {
 	mesh_device=$(echo "get $meshdev.device" | uci batch 2>/dev/null); echo "$mesh_device"
 
 	for gate in $aplist; do
-		config_state=$(echo "get wireless.$gate.disabled" | uci batch 2> /dev/null)
 		gate_device=$(echo "get wireless.$gate.device" | uci batch 2>/dev/null)
 
-		if [ -z "$config_state" ] && [ "$mesh_gate_enable" -eq 1 ]; then
+		if [ "$mesh_gate_enable" -eq 1 ]; then
 			ucibatch="set wireless.$gate.disabled='0'"
 			echo "$ucibatch" | uci batch
 
-		elif [ -z "$config_state" ] && [ "$mesh_gate_enable" -eq 0 ]; then
+		elif [ "$mesh_gate_enable" -eq 0 ]; then
 			ucibatch="set wireless.$gate.disabled='1'"
 			echo "$ucibatch" | uci batch
 
-		elif [ -z "$config_state" ] && [ "$mesh_gate_enable" -eq 2 ] && [ "$gate_device" = "$mesh_device" ]; then
+		elif [ "$mesh_gate_enable" -eq 2 ] && [ "$gate_device" = "$mesh_device" ]; then
 			ucibatch="set wireless.$gate.disabled='1'"
 			echo "$ucibatch" | uci batch
 
-		elif [ -z "$config_state" ] && [ "$mesh_gate_enable" -eq 2 ] && [ "$gate_device" != "$mesh_device" ]; then
+		elif [ "$mesh_gate_enable" -eq 2 ] && [ "$gate_device" != "$mesh_device" ]; then
 			ucibatch="set wireless.$gate.disabled='0'"
 			echo "$ucibatch" | uci batch
 		fi
@@ -1614,10 +1611,16 @@ check_channel() {
 
 manage_fallback_ula_route() {
 	# ------------------------------------------------------------
-	# Always assign deterministic ULA address to bridge on ALL nodes
+	# Always assign deterministic ULA address to bridge on ALL peer nodes
 	# + add portal-specific ::1 on MBP portal
 	# + add sticky on-link route on peers in auto-detect modes
 	# ------------------------------------------------------------
+
+	if [ "$portal_detect" -ne 4 ] && [ "$detected_state" = "portal" ]; then
+		log_debug "manage_fallback_ula_route - Node is a routed portal"
+		return 0
+	fi
+
 	if [ -f "$tmpdir/devicemac" ]; then
 		. "$tmpdir/devicemac"
 	else
@@ -1638,9 +1641,9 @@ manage_fallback_ula_route() {
 	log_debug "ula_base [ $ula_base ]"
 
 	# --------------------------------------------------------------------
-	# Part 1: Deterministic ULA address on bridge (ALL nodes)
+	# Part 1: Deterministic ULA address on bridge (ALL peer nodes)
 	# --------------------------------------------------------------------
-	if [ -n "$device" ] && [ -n "$devicemac" ]; then
+	if [ -n "$device" ] && [ -n "$devicemac" ] && [ "$portal_detect" -ne 4 ]; then
 
 		# Generate EUI-64 from bridge MAC
 		mac_no_colons="${devicemac//:/}"
@@ -1652,11 +1655,11 @@ manage_fallback_ula_route() {
 		# Format EUI-64 with colons
 		eui64_formatted="${eui64:0:4}:${eui64:4:4}:${eui64:8:4}:${eui64:12:4}"
 
-		# Full address: 4-segment prefix : EUI-64 /64
-		ula_addr="$ula_base:$eui64_formatted/64"
+		# Full address: 3-segment prefix : 1-segment subnet : EUI-64 /64
+		ula_addr="$ula_base:$ula_subnet:$eui64_formatted/64"
 
 		# Check if already present
-		if ! ip -6 addr show dev "$device" | grep -q "$ula_base:$eui64_formatted"; then
+		if ! ip -6 addr show dev "$device" | grep -q "$ula_addr"; then
 			log_info "Adding deterministic ULA address $ula_addr to bridge $device"
 
 			ip -6 addr add "$ula_addr" dev "$device" 2>/dev/null
@@ -1670,16 +1673,16 @@ manage_fallback_ula_route() {
 		fi
 	fi
 
-	# --------------------------------------------------------------------
-	# Part 2: Add portal-specific ::1 ULA to bridge (only on MBP portal)
-	# --------------------------------------------------------------------
+	# -------------------------------------------------------------------------------
+	# Part 2: Add portal-specific ::1 ULA to bridge (only on MBP, Mesh Bridge Portal)
+	# -------------------------------------------------------------------------------
 	if [ "$detected_state" = "portal" ] && [ "$portal_detect" -eq 4 ] && [ -n "$device" ]; then
 
-		# Portal ULA = prefix : :1 /64
-		portal_ula_addr="$ula_base::1/64"
+		# Portal ULA = prefix:subnet::1 /64
+		portal_ula_addr="$ula_base:$ula_subnet::1/64"
 
 		# Check if already present
-		if ! ip -6 addr show dev "$device" | grep -q "$ula_base::1"; then
+		if ! ip -6 addr show dev "$device" | grep -q "$portal_ula_addr"; then
 			log_info "MBP portal mode → adding portal ULA $portal_ula_addr to bridge $device"
 
 			ip -6 addr add "$portal_ula_addr" dev "$device" 2>/dev/null
@@ -1700,16 +1703,16 @@ manage_fallback_ula_route() {
 	   [ "$portal_detect" -ne 0 ] && [ "$portal_detect" -ne 4 ] && \
 	   [ -n "$device" ]; then
 
-		if ! ip -6 route show "$ula_prefix" 2>/dev/null | grep -q "dev[[:space:]]\+$device.*proto static.*metric 512.*onlink"; then
-			log_info "Adding sticky fallback on-link route $ula_prefix dev $device (peer auto-detect mode)"
+		if ! ip -6 route show "$ula_base:$ula_subnet::/64" 2>/dev/null | grep -q "dev[[:space:]]\+$device.*proto static.*metric 512.*onlink"; then
+			log_info "Adding sticky fallback on-link route $ula_base:$ula_subnet::/64 dev $device (peer auto-detect mode)"
 
-			ip -6 route add "$ula_prefix" dev "$device" scope link onlink metric 512 proto static 2>/dev/null
+			ip_error=$(ip -6 route add "$ula_base:$ula_subnet::/64" dev "$device" onlink metric 512 proto static 2>&1)
 
 			if [ $? -eq 0 ]; then
 				log_notice "Sticky fallback on-link route added on $device"
 			else
 				log_error "Failed to add fallback route on $device"
-				log_debug "ip error: $(ip -6 route add "$ula_prefix" dev "$device" scope link onlink metric 512 proto static 2>&1)"
+				log_debug "ip error: $ip_error"
 			fi
 		fi
 	fi
@@ -1719,9 +1722,9 @@ manage_fallback_ula_route() {
 	# --------------------------------------------------------------------
 	if [ "$detected_state" != "peer" ] || [ -z "$device" ] || [ ! -f "$tmpdir/devicemac" ]; then
 		if [ -n "$ula_prefix" ] && [ -n "$device" ] && \
-		   ip -6 route show "$ula_prefix" 2>/dev/null | grep -q "dev[[:space:]]\+$device.*proto static"; then
-			log_info "Removing fallback route $ula_prefix on $device (no longer required)"
-			ip -6 route del "$ula_prefix" dev "$device" 2>/dev/null
+		   ip -6 route show "$ula_base:$ula_subnet::/64" 2>/dev/null | grep -q "dev[[:space:]]\+$device.*proto static"; then
+			log_info "Removing fallback route $ula_base:$ula_subnet::/64 on $device (no longer required)"
+			ip -6 route del "$ula_base:$ula_subnet::/64" dev "$device" 2>/dev/null
 		fi
 	fi
 
@@ -1742,6 +1745,12 @@ scan_channel() {
 			for meshconfig in $meshconfigs; do
 				ifname=$(uci get $meshconfig.ifname)
 				our_channel=$(iw dev $ifname info 2> /dev/null | grep -w "channel" | awk -F " " '{printf "%s", $2}')
+
+				if [ -z "$our_channel" ]; then
+					continue
+				fi
+
+				log_info "Current channel [ $our_channel ]"
 				mesh_id=$(uci get $meshconfig.mesh_id)
 				scanned_channels=$(iw dev $ifname scan 2> /dev/null | grep -F -w -B 20 "MESH ID: $mesh_id" | awk -F "primary channel: " '$2 != "" {printf "%s ",$2}')
 
@@ -1839,7 +1848,7 @@ get_portal_state() {
 
 					if [ -z "$default_gw" ]; then
 						debugtype="debug"
-						syslogmessage="Portal upstream link check  [$br_zone] - iteration [ $retry ] ...."
+						syslogmessage="Portal upstream link check  [$br_zone] - iteration [ $((retry -1)) ] ...."
 						mute=$muteorg
 						write_to_syslog
 						wait_for_interface "$br_zone"
@@ -1848,6 +1857,9 @@ get_portal_state() {
 							default_gw=$(ip route | grep "default via" | grep -w "dev $br_zone")
 
 							if [ -z "$default_gw" ]; then
+								get_portal_ula
+								scan_channel
+
 								dhcpdevice="$br_zone"
 								dhcp4_renew
 								default_gw=$(ip route | grep "default via" | grep -w "dev $br_zone")
@@ -1923,10 +1935,52 @@ get_portal_state() {
 	echo "is_portal=\"$is_portal\"; detected_state=\"$detected_state\"" > $tmpdir/is_portal
 }
 
+get_portal_type() {
+	. $tmpdir/is_portal
+	. $tmpdir/devicemac
+
+	if [ "$detected_state" = "portal" ]; then
+
+		if [ "$portal_detect" -eq 4 ]; then
+			portal_type="MBP"
+		else
+			portal_type="MRP"
+		fi
+
+		log_info "Portal [ $portal_type@$devicemac ]"
+		return 0
+	fi
+
+	get_portal_ula
+
+	if [ "$link_to_portal" -gt 0 ]; then
+		log_info "portal not accessible"
+		portal_type="UNKNOWN"
+		log_warning "Portal [ $portal_type ]"
+		return 1
+	fi
+
+	portal_mac=$(ip -6 neigh | grep "$portal_ula" | awk '{print $5}')
+	portal_ipv4=$(ip -4 neigh | grep "$device" | grep "$portal_mac" | awk '{printf "%s", $1}')
+	mrp_default_ipv4_gw=$(ip -4 route | grep -m 1 "default via $portal_ipv4 dev $device")
+
+	if [ -z "$mrp_default_ipv4_gw" ]; then
+		portal_type="MBP"
+	else
+		portal_type="MRP"
+	fi
+
+	log_info "Portal [ $portal_type@$portal_mac ]"
+	echo "portal_type=\"$portal_type\"; portal_mac=\"$portal_mac\"; portal_ipv4=\"$portal_ipv4\"; mrp_default_ipv4_gw=\"$mrp_default_ipv4_gw\"" > "$tmpdir/portal_type"
+	return 0
+}
+
 portal_watchdog() {
-	debugtype="debug"
-	syslogmessage="Portal Watchdog - checking status ...."
-	write_to_syslog
+
+	if [ "$portal_detect_threshold" -eq 0 ]; then
+		log_info "Portal Watchdog is disabled"
+		return 0
+	fi
 
 	# Set auto_detect state
 	case $portal_detect in
@@ -1934,10 +1988,14 @@ portal_watchdog() {
 		"1") auto_detect="1";;
 		"3") auto_detect="1";;
 		"4") auto_detect="0";;
-		"5") auto_detect="1";;
+		"5") auto_detect="0";;
 		*) auto_detect="0";;
 	esac
 
+	if [ "$auto_detect" -eq 0 ]; then
+		log_debug "Portal auto_detect [ $auto_detect ]"
+		return 0
+	fi
 
 	if [ -f "$tmpdir/is_portal" ]; then
 		. $tmpdir/is_portal
@@ -1945,108 +2003,111 @@ portal_watchdog() {
 
 	if [ "$detected_state" != "portal" ] && [ "$auto_detect" -eq 1 ]; then
 		# do portal detect with watchdog:
-		failcount=$(($failcount + 1))
-		check_channel_now=1
-		check_channel
-		check_channel_now=0
+
+		# Wait until we reach the threshold before we start checking for the portal
+		if [ "$portal_detect_threshold" -gt "$failcount" ]; then
+			log_debug "Portal Watchdog countdown [ $(($portal_detect_threshold - $failcount)) ] "
+			failcount=$(($failcount + 1))
+			return 0
+		fi
+
+		log_debug "Portal Watchdog - checking status ...."
+
+		get_portal_ula
 
 		if [ "$link_to_portal" -eq 0 ]; then
-			# link to portal detected
+			log_debug "Portal Watchdog - portal detected ...."
+			failcount=0
+			network_restart=0
 			is_portal="detected"
 			detected_state="peer"
 			return 0
 		fi
 
-		if [ "$portal_detect_threshold" -eq 0 ] || [ "$portal_detect_threshold" -gt "$failcount" ]; then
-			dhcpdevice=$(echo "get network.$auto_mesh_network.device" | uci batch | awk '{printf "%s", $1}')
-			debugtype="debug"
-			syslogmessage="ipV4 link to portal fail, attempting to (re)establish via device [ $dhcpdevice ], iteration [ $failcount ]"
-			mute=$muteorg
-			write_to_syslog
+		# Do a channel Scan for our mesh_id
+		check_channel_now=1
+		check_channel
+		check_channel_now=0
 
-			dhcp4_renew
-
-		elif [ "$portal_detect_threshold" -le "$failcount" ]; then
-			# we have reached the portal detect threshold. This either means there is no portal, or something has stopped working
-
-			if [ "$leechmode" -eq 1 ]; then
-				echo "set mesh11sd.setup.mesh_leechmode_enable='0'" | uci batch
-				leechmode=0
-				echo "leechmode=$leechmode" > "$tmpdir/leechmode"
-				# Reset failcount to go around again to the portal_detect_threshold, giving HWMP some cycles to establish a path
-				failcount=0
-
-				debugtype="err"
-				syslogmessage="portal detect threshold reached, enabling HWMP announcments"
-				mute=$muteorg
-				write_to_syslog
-				write_to_watchdog_nonvolatile_log
-
-			elif [ "$network_restart" -eq 0 ]; then
-				dhcpdevice=$(echo "get network.$auto_mesh_network.device" | uci batch | awk '{printf "%s", $1}')
-				debugtype="err"
-				syslogmessage="portal detect threshold reached, watchdog is monitoring"
-				mute=$muteorg
-				write_to_syslog
-				write_to_watchdog_nonvolatile_log
-				network_restart=1
-				dhcp4_renew
-
-			elif [ "$network_restart" -eq 1 ]; then
-				dhcpdevice=$(echo "get network.$auto_mesh_network.device" | uci batch | awk '{printf "%s", $1}')
-				debugtype="notice"
-				syslogmessage="portal detect threshold exceeded, watchdog continuing to monitor..."
-				mute=$muteorg
-				write_to_syslog
-				write_to_watchdog_nonvolatile_log
-				restart_mesh
-				network_restart=2
-				dhcp4_renew
-
-			elif [ "$network_restart" -eq 2 ]; then
-				dhcpdevice=$(echo "get network.$auto_mesh_network.device" | uci batch | awk '{printf "%s", $1}')
-				debugtype="notice"
-				syslogmessage="portal detect threshold exceeded, watchdog is restarting the network..."
-				mute=$muteorg
-				write_to_syslog
-				write_to_watchdog_nonvolatile_log
-				network_restart=3
-				/sbin/service network restart
-				wait_for_mesh
-				dhcp4_renew
-
-			elif [ "$network_restart" -eq 3 ]; then
-				# restarting the network did not work so:
-				debugtype="err"
-
-				if [ "$stop_on_error" -gt 0 ]; then
-					syslogmessage="portal detect threshold exceeded, restarting network did not work... disabling mesh management, changing to mesh status mode"
-					enabled=0
-					mute=$muteorg
-					write_to_syslog
-					write_to_watchdog_nonvolatile_log
-
-				elif [ "$reboot_on_error" -gt 0 ]; then
-					syslogmessage="portal detect threshold exceeded, restarting network did not work... rebooting node"
-					mute=$muteorg
-					write_to_syslog
-					write_to_watchdog_nonvolatile_log
-					reboot
-
-				else
-					#Reset the portal detect threshold. Keep trying to find a portal...
-					failcount=0
-					network_restart=0
-				fi
-			fi
-
-		else
+		if [ "$link_to_portal" -eq 0 ]; then
+			# link to portal found
+			log_debug "Portal Watchdog - portal found ...."
 			failcount=0
 			network_restart=0
+			is_portal="detected"
+			detected_state="peer"
+			return 0
 		fi
-	fi
 
-	if [ "$detected_state" = "portal" ]; then
+		# If we got here, we cannot see the portal, so start kicking things...
+		if [ "$link_to_portal" -ne 0 ] && [ "$network_restart" -eq 0 ]; then
+			# Try a dhcp4 renew - this sends a layer 2 broadcast
+			dhcpdevice=$(echo "get network.$auto_mesh_network.device" | uci batch | awk '{printf "%s", $1}')
+			mute=$muteorg
+			log_debug "Link to portal fail, attempting to (re)establish via device [ $dhcpdevice ], iteration [ $failcount ]"
+			dhcp4_renew
+			failcount=0
+			network_restart=1
+			return 0
+		fi
+
+		if [ "$link_to_portal" -ne 0 ] && [ "$network_restart" -eq 1 ]; then
+			# Still no portal, try dhcp4 renew again and make a non-volatile log if enabled
+			dhcpdevice=$(echo "get network.$auto_mesh_network.device" | uci batch | awk '{printf "%s", $1}')
+			debugtype="err"
+			syslogmessage="portal detect threshold reached, watchdog is monitoring"
+			mute=$muteorg
+			write_to_syslog
+			write_to_watchdog_nonvolatile_log
+			network_restart=2
+			failcount=0
+			dhcp4_renew
+			return 0
+		fi
+
+		if [ "$link_to_portal" -ne 0 ] && [ "$network_restart" -eq 2 ]; then
+			# Do a network restart this time, followed by a dhcp4 renew
+			dhcpdevice=$(echo "get network.$auto_mesh_network.device" | uci batch | awk '{printf "%s", $1}')
+			debugtype="notice"
+			syslogmessage="portal detect threshold exceeded, watchdog is restarting the network..."
+			mute=$muteorg
+			write_to_syslog
+			write_to_watchdog_nonvolatile_log
+			network_restart=3
+			/sbin/service network restart
+			wait_for_mesh
+			dhcp4_renew
+
+		if [ "$link_to_portal" -ne 0 ] && [ "$network_restart" -eq 3 ]; then
+			# restarting the network did not work so:
+			debugtype="err"
+
+			if [ "$stop_on_error" -gt 0 ]; then
+				syslogmessage="portal detect threshold exceeded, restarting network did not work... disabling mesh management, changing to mesh status mode"
+				enabled=0
+				mute=$muteorg
+				write_to_syslog
+				write_to_watchdog_nonvolatile_log
+			elif [ "$reboot_on_error" -gt 0 ]; then
+				syslogmessage="portal detect threshold exceeded, restarting network did not work... rebooting node"
+				mute=$muteorg
+				write_to_syslog
+				write_to_watchdog_nonvolatile_log
+				reboot
+			else
+				#Reset the portal detect threshold. Keep trying to find a portal...
+				failcount=0
+				network_restart=0
+			fi
+		fi
+
+	else
+		failcount=0
+		network_restart=0
+	fi
+fi
+
+if [ "$detected_state" = "portal" ]; then
 		ipv4statusdev=$(ip -4 addr show "$device" 2> /dev/null | grep -q "inet"; echo $?)
 
 		if [ "$vtun_enable" -eq 1 ]; then
@@ -2213,7 +2274,7 @@ check_portal() {
 					echo "del_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
 					echo "del_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
 					echo "add_list dhcp.vtunlan.ra_flags='none'" | uci batch
-					echo "del_list dhcp.vtunlan.ra_dns='$portal_ula'" | uci batch 2> /dev/null
+					echo "del_list dhcp.vtunlan.ra_dns='$portal_ula_vtun'" | uci batch 2> /dev/null
 					uci set dhcp.@dnsmasq[0].rebind_protection='0'
 				fi
 
@@ -2261,7 +2322,7 @@ check_portal() {
 				check_dns_server
 				/sbin/service dnsmasq reload
 				/sbin/service system restart
-
+				echo 2 > /proc/sys/net/ipv6/conf/$device/accept_ra
 				# Just become a peer so stop opennds if it is installed and enabled
 				manage_opennds stop
 			fi
@@ -2320,6 +2381,7 @@ check_portal() {
 				echo "del_list dhcp.$auto_mesh_network.ra_flags='other-config'" | uci batch 2> /dev/null
 				echo "add_list dhcp.$auto_mesh_network.ra_flags='managed-config'" | uci batch 2> /dev/null
 				echo "add_list dhcp.$auto_mesh_network.ra_flags='other-config'" | uci batch 2> /dev/null
+				echo "del_list dhcp.$auto_mesh_network.ra_dns=''" | uci batch 2> /dev/null
 				echo "add_list dhcp.$auto_mesh_network.ra_dns='$portal_ula'" | uci batch 2> /dev/null
 				uci set dhcp.@dnsmasq[0].rebind_protection='1'
 
@@ -2333,7 +2395,7 @@ check_portal() {
 					echo "del_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
 					echo "add_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
 					echo "add_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
-					echo "add_list dhcp.vtunlan.ra_dns='$portal_ula'" | uci batch 2> /dev/null
+					echo "add_list dhcp.vtunlan.ra_dns='$portal_ula_vtun'" | uci batch 2> /dev/null
 					uci set dhcp.@dnsmasq[0].rebind_protection='1'
 
 				fi
@@ -2355,6 +2417,8 @@ check_portal() {
 				if [ "$daemon_startup" -eq 1 ]; then
 					daemon_startup=0
 				fi
+
+				echo 0 > /proc/sys/net/ipv6/conf/$device/accept_ra
 
 				if [ "$portal_detect" -ne 4 ]; then
 					# Just become a portal so start opennds if it is installed and enabled
@@ -3086,7 +3150,7 @@ sys_setup() {
 
 	echo 2 > /proc/sys/net/ipv6/conf/all/accept_ra
 	echo 2 > /proc/sys/net/ipv6/conf/default/accept_ra
-	echo 2 > /proc/sys/net/ipv6/conf/$device/accept_ra
+	echo 0 > /proc/sys/net/ipv6/conf/$device/accept_ra
 	echo 1 > /proc/sys/net/ipv6/conf/all/forwarding
 	echo 1 > /proc/sys/net/ipv6/conf/default/forwarding
 	echo 1 > /proc/sys/net/ipv6/conf/$device/forwarding
@@ -3168,7 +3232,17 @@ mobility_settings() {
 		write_to_syslog
 	fi
 
-	mesh_driver=$(grep -A 3 "$phy" "$tmpdir/wifidetect" | grep "Driver" | awk -F "\"" '{printf "%s", $4}')
+	case "$auto_mesh_band" in
+		"2g")	mesh_band="2.4GHz" ;;
+		"2g40")	mesh_band="2.4GHz" ;;
+		"5g")	mesh_band="5GHz" ;;
+		"6g")	mesh_band="6GHz" ;;
+		"60g")	mesh_band="60GHz" ;;
+	esac
+
+	start_marker="\"$mesh_band\""
+	end_marker="}"
+	mesh_driver=$(eval $(echo "sed -n '/$start_marker/,/$end_marker/{/$start_marker\|$end_marker/!p}' /tmp/mesh11sd/wifidetect") | grep "\"Driver\"" | awk -F "\"" '{print $4}')
 
 	if [ "$mesh_driver" = "ath11k" ]; then
 		beacon_int=100
@@ -3224,6 +3298,18 @@ mobility_settings() {
 		echo "set mesh11sd.mesh_params.mesh_hwmp_max_preq_retries='$mesh_hwmp_max_preq_retries'" | uci batch
 		echo "set mesh11sd.mesh_params.mesh_hwmp_rootmode='$rootmode'" | uci batch
 		echo "set mesh11sd.mesh_params.mesh_rssi_threshold='$mesh_rssi_threshold'" | uci batch
+	fi
+}
+
+check_mesh_hwmp_rootmode() {
+	log_debug "Checking mesh_hwmp_rootmode"
+	current_mesh_hwmp_rootmode=$(uci get mesh11sd.mesh_params.mesh_hwmp_rootmode)
+
+	if [ "$portal_detect" -eq 0 ] || [ "$portal_detect" -eq 4 ] || [ "$detected_state" = "portal" ]; then
+
+		if [ "$current_mesh_hwmp_rootmode" -ne 4 ]; then
+			uci set mesh11sd.mesh_params.mesh_hwmp_rootmode='4'
+		fi
 	fi
 }
 
@@ -3668,7 +3754,7 @@ create_vxlan_if() {
 		echo "del_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
 		echo "add_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
 		echo "add_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
-		echo "add_list dhcp.vtunlan.ra_dns='$portal_ula'" | uci batch 2> /dev/null
+		echo "add_list dhcp.vtunlan.ra_dns='$portal_ula_vtun'" | uci batch 2> /dev/null
 		uci set dhcp.@dnsmasq[0].rebind_protection='1'
 	else
 		uci set dhcp.vtunlan.dhcpv4='disabled'
@@ -3796,7 +3882,7 @@ check_vtunnel() {
 						echo "del_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
 						echo "add_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
 						echo "add_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
-						echo "add_list dhcp.vtunlan.ra_dns='$portal_ula'" | uci batch 2> /dev/null
+						echo "add_list dhcp.vtunlan.ra_dns='$portal_ula_vtun'" | uci batch 2> /dev/null
 						uci set dhcp.@dnsmasq[0].rebind_protection='1'
 					fi
 				fi
@@ -3825,9 +3911,11 @@ check_vtunnel() {
 			echo "set network.vtunlan.netmask='$vtun_mask'" | uci batch
 			echo "set network.vtunlan.proto='$proto'" | uci batch
 			uci set network.vtunlan.ip6assign='64'
-
+			echo "set network.vtunlan.ip6hint='$ula_vxsubnet'" | uci batch
 			echo "set network.vtunlan.ip6privacy='0'" | uci batch
 			echo "set dhcp.vtunlan.ra_lifetime='3600'" | uci batch
+			echo "set dhcp.vtunlan.ra_mininterval='20'" | uci batch
+			echo "set dhcp.vtunlan.ra_maxinterval='60'" | uci batch
 
 			if [ "$portal_detect" -eq 4 ] || [ "$portal_detect" -eq 5 ]; then
 				# Disable wan and add the port that was wan to the vtunnel bridge
@@ -3915,7 +4003,7 @@ check_vtunnel() {
 					echo "del_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
 					echo "del_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
 					echo "add_list dhcp.vtunlan.ra_flags='none'" | uci batch
-					echo "del_list dhcp.vtunlan.ra_dns='$portal_ula'" | uci batch 2> /dev/null
+					echo "del_list dhcp.vtunlan.ra_dns='$portal_ula_vtun'" | uci batch 2> /dev/null
 					uci set dhcp.@dnsmasq[0].rebind_protection='0'
 					/sbin/service dnsmasq restart
 					/sbin/service odhcpd restart
@@ -3993,8 +4081,9 @@ set_ula_prefix() {
 		first=${auto_mesh_id:9:2}
 		second=${auto_mesh_id:11:4}
 		third=${auto_mesh_id:15:4}
-		fourth=${auto_mesh_id:20:4}           # ← fourth segment from hash
-		ula_prefix="fd$first:$second:$third:$fourth::/48"   # ← trailing ::
+		ula_subnet=${auto_mesh_id:20:4}           # ← fourth segment from hash becomes lan subnet/ip6hint value for odhcpd
+		ula_vxsubnet=${auto_mesh_id:25:4}           # ← fourth segment from hash becomes vxlan subnet/ip6hint value for odhcpd
+		ula_prefix="fd$first:$second:$third::/48"   # ← trailing ::
 	else
 		return 1
 	fi
@@ -4019,6 +4108,7 @@ set_ula_prefix() {
 			fi
 
 			echo "set network.globals.ula_prefix='$ula_prefix'" | uci batch
+			echo "set network.$auto_mesh_network.ip6hint='$ula_subnet'" | uci batch
 		fi
 	fi
 }
@@ -4033,15 +4123,15 @@ get_portal_ula() {
 	ula_base=$(echo "$ula_prefix" | awk -F"::/" '{print $1}')
 
 	# Portal ULA = prefix + ::1 (standard gateway address)
-	portal_ula="$ula_base::1"
+	portal_ula="$ula_base:$ula_subnet::1"
+
+	# VXLAN tunnel variant: insert :$ula_vxsubnet: after the prefix (before ::)
+	portal_ula_vtun="$ula_base:$ula_vxsubnet::1"
 
 	pingstatus=$(ping -q -W 10 -c 1 "$portal_ula" &>/dev/null ; echo $?)
 
-	if [ "$pingstatus" -eq 1 ]; then
-		# VXLAN tunnel variant: insert :1: after the prefix (before ::)
-		# Example: fd46:cfe5:34c5:abcd::1 → fd46:cfe5:34c5:abcd:1::1
-		portal_ula_vtun="$ula_base:1::1"
-
+	if [ "$pingstatus" -eq 1 ] && [ "$vtun_enable" -eq 1 ]; then
+		# VXLAN tunnel variant: insert :$ula_vxsubnet: after the prefix (before ::)
 		pingstatus=$(ping -q -W 1 -c 1 "$portal_ula_vtun" &>/dev/null ; echo $?)
 
 		if [ "$pingstatus" -eq 0 ]; then
@@ -4125,13 +4215,54 @@ is_hex() {
 
 write_node_data() {
 	node_id="$1"
+
+	if [ -z "$node_id" ]; then
+		mute=0
+		log_warning "Empty node node hostname - rejecting attempted apmond server access"
+		return 1
+	fi
+
 	data_raw="$2"
 
 	node_type=$(echo "$node_id" | awk -F ";" '{printf "%s", $1}')
-	node_hostname=$(echo "$node_id" | awk -F ";" '{printf "%s", $2}')
-	node_mac=$(echo "$node_id" | awk -F ";" '{printf "%s", $3}' | awk -F ":" 'NF==6 {printf "%s%s%s%s%s%s%s", $1, $2, $3, $4, $5, $6}')
-	chunkstatus=$(echo "$node_id" | awk -F ";" '{printf "%s", $4}')
-	strindex=$(echo "$node_id" | awk -F ";" '{printf "%s", $5}')
+
+	if [ -z "$node_type" ]; then
+		mute=0
+		log_warning "Empty node type - rejecting attempted apmond server access"
+		return 1
+	fi
+
+	# Check the user agent is valid for apmond
+	if [ "$node_type" = "apmond" ]; then
+		node_hostname=$(echo "$node_id" | awk -F ";" '{printf "%s", $2}')
+
+		if [ -z "$node_hostname" ]; then
+			mute=0
+			log_warning "Empty node node hostname - rejecting attempted apmond server access"
+			return 1
+		fi
+
+		if [ "${node_hostname:0:9}" = "meshnode-" ]; then
+			node_mac=$(echo "$node_id" | awk -F ";" '{printf "%s", $3}' | awk -F ":" 'NF==6 {printf "%s%s%s%s%s%s%s", $1, $2, $3, $4, $5, $6}')
+			chunkstatus=$(echo "$node_id" | awk -F ";" '{printf "%s", $4}')
+			strindex=$(echo "$node_id" | awk -F ";" '{printf "%s", $5}')
+		else
+			mute=0
+			log_warning "Bad node node hostname - rejecting attempted apmond server access"
+			return 1
+		fi
+
+		if [ -z "$node_mac" ] || [ -z "$chunkstatus" ] || [ -z "$strindex" ]; then
+			mute=0
+			log_warning "Invalid parameters - rejecting attempted apmond server access"
+			return 1
+		fi
+	else
+		mute=0
+		log_warning "Invalid node type - rejecting attempted apmond server access"
+		return 1
+	fi
+
 	maxchunksize=16 # 16 is max size for hextest
 	strindex=0
 	chunkstr=""
@@ -4359,7 +4490,7 @@ luci_cgi() {
 	echo -e "echo -e \"<body>\"" >> "$cgi"
 	echo -e "echo \"<h2 style=\\\"margin-top: 0;\\\">Mesh11sd Node Status</h2><hr>\"" >> "$cgi"
 	echo -e "echo \"<b>Hostname:</b> [\$hostname] <br><br> \"" >> "$cgi"
-	echo -e "echo \"<b>Host ULA:</b> [\$host] <br><br> \"" >> "$cgi"
+	echo -e "echo \"<b>Host ULA:</b> \$host <br><br> \"" >> "$cgi"
 	echo -e "echo \"<b>Portal ULA:</b> [\$portal_ula] <br><br>\"" >> "$cgi"
 	echo -e "echo \"<b>Active Node Count:</b> [\$active_nodecount] <br><br>\"" >> "$cgi"
 	echo -e "echo \"<b>System Time:</b> [\$current_time] <br><br>\"" >> "$cgi"
@@ -4370,14 +4501,14 @@ luci_cgi() {
 	echo -e "echo \"<strong>WARNING: LuCI is currently DISABLED</strong><br>\"" >> "$cgi"
 	echo -e "echo \"LuCI does not understand Mesh11sd's autonomous dynamic Auto Configuration.<br><br>\"" >> "$cgi"
 	echo -e "echo \"At your own risk, Mesh11sd's configuration changes can be persisted to flash/disk storage,<br>thus re-enabling LuCI.<br><br>\"" >> "$cgi"
-	echo -e "echo \"Generally this is safe to do if the location and functionality of your mesh nodes<br>is unlikely to change from the current state.<br><br>\"" >> "$cgi"
-	echo -e "echo \"<strong>Be warned</strong> that LuCI may well omit or incorrectly display most aspects of the network configuration.<br>This process can be reverted at any time.<br><br>\"" >> "$cgi"
+	echo -e "echo \"Generally this is safe to do if the location and functionality of your mesh nodes<br>is unlikely to change from the current state.<br>This process can be reverted at any time.<br><br>\"" >> "$cgi"
+	echo -e "echo \"<strong>Be warned</strong> that LuCI may well omit or incorrectly display many aspects of the network configuration.<br><br>\"" >> "$cgi"
 	echo -e "echo \"See the documentation at:<br>\"" >> "$cgi"
-	echo -e "echo \"<a href=\\\"https://github.com/openNDS/mesh11sd/tree/v6.2.0beta#13-command-line-interface\\\">https://github.com/openNDS/mesh11sd/tree/v6.2.0beta#13-command-line-interface</a>\"" >> "$cgi"
+	echo -e "echo \"<a href=\\\"https://github.com/openNDS/mesh11sd?tab=readme-ov-file#13-command-line-interface\\\">https://github.com/openNDS/mesh11sd?tab=readme-ov-file#13-command-line-interface</a>\"" >> "$cgi"
 	echo -e "echo \"</div>\"" >> "$cgi"
 
 	# Version
-	echo -e "echo \"<br><small>\$status</small><br><hr>\"" >> "$cgi"
+	echo -e "echo \"<br><small>\$status<br>$checksum</small><br><hr>\"" >> "$cgi"
 	echo -e "echo \"</body>\"" >> "$cgi"
 	echo -e "echo \"</html>\"" >> "$cgi"
 
@@ -4387,51 +4518,65 @@ luci_add_custom() {
 
 	if [ "$auto_config" -ne 0 ]; then
 
+		uci del luci.mesh11sd_typecode 2> /dev/null
+		uci set luci.mesh11sd_typecode=command
+		uci set luci.mesh11sd_typecode.name='Show Node Type code for this node'
+		uci set luci.mesh11sd_typecode.command='mesh11sd get_node_type_code'
+
 		uci del luci.mesh11sd_status 2> /dev/null
 		uci set luci.mesh11sd_status=command
-		uci set luci.mesh11sd_status.name='Mesh11sd: MeshNode Status'
+		uci set luci.mesh11sd_status.name='Status of This Meshnode'
 		uci set luci.mesh11sd_status.command='mesh11sd status'
+
+		uci del luci.mesh11sd_nodecount 2> /dev/null
+		uci set luci.mesh11sd_nodecount=command
+		uci set luci.mesh11sd_nodecount.name='Current Active Node Count'
+		uci set luci.mesh11sd_nodecount.command='mesh11sd active_nodecount'
 
 		uci del luci.mesh11sd_stations 2> /dev/null
 		uci set luci.mesh11sd_stations=command
-		uci set luci.mesh11sd_stations.name='Mesh11sd: MeshNodes 1 Hop Away'
+		uci set luci.mesh11sd_stations.name='MeshNodes 1 Hop Away'
 		uci set luci.mesh11sd_stations.command='mesh11sd stations'
 
 		uci del luci.mesh11sd_connect 2> /dev/null
 		uci set luci.mesh11sd_connect=command
-		uci set luci.mesh11sd_connect.name='Mesh11sd: MeshNode List'
+		uci set luci.mesh11sd_connect.name='MeshNode List'
 		uci set luci.mesh11sd_connect.command='mesh11sd connect'
 
 		uci del luci.mesh11sd_portal_ap_data 2> /dev/null
 		uci set luci.mesh11sd_portal_ap_data=command
-		uci set luci.mesh11sd_portal_ap_data.name='Mesh11sd: Mesh Gate (AP) Data (portal node only)'
+		uci set luci.mesh11sd_portal_ap_data.name='Show ALL Mesh Gate (AP) Data (only portal nodes collect data)'
 		uci set luci.mesh11sd_portal_ap_data.command='mesh11sd show_ap_data all'
 
 		uci del luci.mesh11sd_ap_data 2> /dev/null
 		uci set luci.mesh11sd_ap_data=command
-		uci set luci.mesh11sd_ap_data.name='Mesh11sd: Mesh Gate (AP) Data (this node only)'
+		uci set luci.mesh11sd_ap_data.name='Show Data For This Mesh Gate (AP)'
 		uci set luci.mesh11sd_ap_data.command='mesh11sd get_ap_data'
 
 		uci del luci.mesh11sd_get_portal_ula 2> /dev/null
 		uci set luci.mesh11sd_get_portal_ula=command
-		uci set luci.mesh11sd_get_portal_ula.name='Mesh11sd: Mesh Portal ULA'
+		uci set luci.mesh11sd_get_portal_ula.name='Mesh Portal ULA'
 		uci set luci.mesh11sd_get_portal_ula.command='mesh11sd get_portal_ula'
 
 		uci del luci.mesh11sd_verbose_log 2> /dev/null
 		uci set luci.mesh11sd_verbose_log=command
-		uci set luci.mesh11sd_verbose_log.name='Mesh11sd: Enable verbose debugging'
+		uci set luci.mesh11sd_verbose_log.name='Enable verbose Mesh11sd logging'
 		uci set luci.mesh11sd_verbose_log.command='mesh11sd debuglevel 3'
 
 		uci del luci.mesh11sd_normal_log 2> /dev/null
 		uci set luci.mesh11sd_normal_log=command
-		uci set luci.mesh11sd_normal_log.name='Mesh11sd: Restore notification only logging'
+		uci set luci.mesh11sd_normal_log.name='Restore notification only Mesh11sd logging'
 		uci set luci.mesh11sd_normal_log.command='mesh11sd debuglevel 1'
 
 		uci del luci.mesh11sd_read_log 2> /dev/null
 		uci set luci.mesh11sd_read_log=command
-		uci set luci.mesh11sd_read_log.name='Mesh11sd: Read Mesh Log'
+		uci set luci.mesh11sd_read_log.name='Read Mesh11sd Log'
 		uci set luci.mesh11sd_read_log.command='mesh11sd read_log'
 
+		uci del luci.mesh11sd_wifidetect 2> /dev/null
+		uci set luci.mesh11sd_wifidetect=command
+		uci set luci.mesh11sd_wifidetect.name='Detect Wireless Chipset Capabilities'
+		uci set luci.mesh11sd_wifidetect.command='mesh11sd wifi_chipset_detect'
 
 	fi
 }
@@ -4633,8 +4778,13 @@ get_system_stats_json() {
 		factory_mac="unknown"
 	fi
 
+	get_node_type_code
+
 	# Output JSON
 	echo "    \"node_status\": {"
+	echo "      \"mesh11sd_version\": \"$version\","
+	echo "      \"mesh11sd_checksum\": \"$checksum\","
+	echo "      \"node_type\": \"$node_type_code\","
 	echo "      \"factory_mac\": \"$factory_mac\","
 	echo "      \"mesh_bridge_mac\": \"$devicemac\","
 	echo "      \"uptime_seconds\": $uptime_sec,"
@@ -4713,14 +4863,8 @@ get_ap_data() {
 
 			if [ ! -z "$is_station_id" ]; then
 
-				#if [ "$first_ap" -eq 0 ]; then
-				#	echo -n "," >> $tmpdir/apmond/clients
-				#fi
-
 				if [ "$first_sta" -eq 1 ]; then
 					echo -e "      \"$ap_ssid@$ap_ifname\": {" >> $tmpdir/apmond/clients # this is the first sta on the list for this ap
-				#else
-				#	echo "," >> $tmpdir/apmond/clients
 				fi
 
 				echo "$line" | awk '{printf "        \"%s\": {", $2}' >> $tmpdir/apmond/clients; echo >> $tmpdir/apmond/clients
@@ -4751,8 +4895,6 @@ get_ap_data() {
 		done
 
 		first_ap=0 # finished with the first ap
-		#echo -n -e "\n" >> $tmpdir/apmond/clients
-
 	done
 
 	if [ "$sta_flag" -eq 1 ]; then
@@ -5712,10 +5854,10 @@ wifi_chipset_detect() {
 }
 
 fix_dropbear() {
-	local fixed=$(grep -q -w "STOP=15" /etc/init.d/dropbear; echo $?)
+	local fixed=$(grep -q -w "STOP=10" /etc/init.d/dropbear; echo $?)
 
 	if [ "$fixed" -eq 1 ]; then
-		sed -i '/^[[:space:]]*STOP=/c\STOP=15' /etc/init.d/dropbear
+		sed -i '/^[[:space:]]*STOP=/c\STOP=10' /etc/init.d/dropbear
 		/sbin/service dropbear restart
 	fi
 }
@@ -5749,6 +5891,33 @@ log_debug() {
 	syslogmessage="$1"
 	debugtype="debug"
 	write_to_syslog
+}
+
+get_node_type_code() {
+
+	if [ -f "$tmpdir/is_portal" ]; then
+		. $tmpdir/is_portal
+	else
+		return 1
+	fi
+
+	case "$portal_detect" in
+		0) node_type_code="MRP" ;;	# Mesh Routed Portal
+		1) 
+
+			case "$detected_state" in
+				"portal")	node_type_code="MRP" ;;
+				"peer")		node_type_code="MPE" ;;	# Mesh PEer
+				*)		node_type_code="N/A" ;;
+			esac
+		;;
+		3) node_type_code="CPE" ;;	# Customer (or Client) PEer
+		4) node_type_code="MBP" ;;	# Mesh Bridge Portal
+		5) node_type_code="TPE" ;;	# Tunnel PEer
+		*) node_type_code="N/A" ;;	# Not Available
+	esac
+
+	return 0
 }
 
 ##############
@@ -6104,12 +6273,15 @@ elif [ "$1" = "status" ]; then
 	fi
 
 	procd_status=$(/etc/init.d/mesh11sd status)
+	get_node_type_code
 
 	echo "{"
 	echo "  \"setup\":{"
 	echo "    \"version\":\"$version\","
+	echo "    \"checksum\":\"$checksum\","
 	echo "    \"enabled\":\"$enabled\","
 	echo "    \"procd_status\":\"$procd_status\","
+	echo "    \"node_type\":\"$node_type_code\","
 	echo "    \"portal_detect\":\"$portal_detect\","
 	echo "    \"portal_detect_threshold\":\"$portal_detect_threshold\","
 	echo "    \"portal_channel\":\"$portal_channel\","
@@ -6446,6 +6618,8 @@ elif [ "$1" = "connect" ]; then
 	if [ ! -z "$peerlist" ]; then
 		# peerlist is a list of mac addresses of peers, both la and non la
 
+		get_portal_ula
+
 		for connectto in $connectlist; do
 			linklocal="${connectto%,*}"
 			ndpmac="${connectto##*,}"
@@ -6469,31 +6643,8 @@ elif [ "$1" = "connect" ]; then
 				eui64="${first_byte}${mac_no_colons:2:2}${mac_no_colons:4:2}fffe${mac_no_colons:6:2}${mac_no_colons:8:2}${mac_no_colons:10:2}"
 				eui64_formatted="${eui64:0:4}:${eui64:4:4}:${eui64:8:4}:${eui64:12:4}"
 
-				# Get deterministic mesh prefix (4 segments)
-				set_ula_prefix "get"
-				ula_base="${ula_prefix%%::*}"   # everything before the last ::
-
-				# If we are the portal in MBP mode, prefer upstream delegated ULA prefix (for client reachability)
-				if [ "$detected_state" = "portal" ] && [ "$portal_detect" -eq 4 ]; then
-					# Find upstream ULA prefix: fd00::/8 on-link route on bridge, excluding local mesh prefix
-					upstream_prefix=$(ip -6 route show dev "$device" | \
-						grep -E 'fd[0-9a-f:]+::/[0-9]+' | \
-						grep 'proto kernel' | \
-						grep -v "$ula_base" | \
-						awk '{print $1}' | \
-						head -1)
-
-					if [ -n "$upstream_prefix" ]; then
-						# Strip /64 and remove any trailing :: (if present in route output)
-						ula_base=$(echo "$upstream_prefix" | awk -F"/" '{print $1}' | sed 's/::$//')
-						log_debug "MBP portal: Using upstream ULA prefix $ula_base for client-visible URLs"
-					else
-						log_debug "MBP portal: No upstream ULA detected — falling back to local mesh prefix"
-					fi
-				fi
-
 				# Construct final clean 8-segment ULA for this peer
-				node_ula="$ula_base:$eui64_formatted"
+				node_ula="$ula_base:$ula_subnet:$eui64_formatted"
 
 				pingreturn=$(ping6 -q -c 1 -W 1 -I $device $ip6addr &>/dev/null; echo $?)
 
@@ -7096,6 +7247,17 @@ elif [ "$1" = "get_portal_ula" ]; then
 	echo "$portal_ula"
 	exit 0
 
+elif [ "$1" = "get_portal_type" ]; then
+
+	if [ -f "$tmpdir/portal_type" ]; then
+		. "$tmpdir/portal_type"
+		echo "portal_type=\"$portal_type\"; portal_mac=\"$portal_mac\"; portal_ipv4=\"$portal_ipv4\"; mrp_default_ipv4_gw=\"$mrp_default_ipv4_gw\""
+	else
+		echo "UNKNOWN"
+	fi
+
+	exit 0
+
 elif [ "$1" = "set_ula_prefix" ]; then
 	set_ula_prefix "$2"
 	retval=$?
@@ -7282,6 +7444,7 @@ elif [ "$1" = "get_valid_channels" ]; then
 
 elif [ "$1" = "wifi_chipset_detect" ]; then
 	wifi_chipset_detect
+	cat "$outputfile"
 	exit 0
 
 elif [ "$1" = "active_nodecount" ]; then
@@ -7291,10 +7454,16 @@ elif [ "$1" = "active_nodecount" ]; then
 		active_nodecount=$(($(iw dev "$active_mesh_ifname" mpath dump | wc -l) -1))
 		echo -n "$active_nodecount"
 	else
-		echo "0"
+		echo -n "0"
 	fi
 
 	exit 0
+
+elif [ "$1" = "get_node_type_code" ]; then
+	get_node_type_code
+	exitcode=$?
+	echo -n "$node_type_code"
+	exit $exitcode
 
 elif [ "$1" = "daemon" ]; then
 	# Detect what we are running on - Write $tmpdir/wifidetect file with os, device wireless chipset and driver info
@@ -7431,6 +7600,7 @@ elif [ "$1" = "daemon" ]; then
 			echo "del_list dhcp.$auto_mesh_network.ra_flags='other-config'" | uci batch 2> /dev/null
 			echo "add_list dhcp.$auto_mesh_network.ra_flags='managed-config'" | uci batch 2> /dev/null
 			echo "add_list dhcp.$auto_mesh_network.ra_flags='other-config'" | uci batch 2> /dev/null
+			echo "del_list dhcp.$auto_mesh_network.ra_dns=''" | uci batch 2> /dev/null
 			echo "add_list dhcp.$auto_mesh_network.ra_dns='$portal_ula'" | uci batch 2> /dev/null
 			echo "set network.$auto_mesh_network.proto='static'" | uci batch
 
@@ -7493,6 +7663,8 @@ elif [ "$1" = "daemon" ]; then
 
 		echo "set network.lan.ip6privacy='0'" | uci batch
 		echo "set dhcp.lan.ra_lifetime='3600'" | uci batch
+		echo "set dhcp.lan.ra_mininterval='20'" | uci batch
+		echo "set dhcp.lan.ra_maxinterval='60'" | uci batch
 
 		# Before restarting the network, check if CPE mode is requested
 		if [ "$portal_detect" -eq 3 ] && [ "$commit_all" -eq 0 ]; then
@@ -7570,8 +7742,10 @@ elif [ "$1" = "daemon" ]; then
 				echo "set dhcp.lan.dhcpv6='relay'" | uci batch
 				echo "set dhcp.lan.ndp='relay'" | uci batch
 				echo "set dhcp.lan.ra_slaac='1'" | uci batch
-				echo "set dhcp.lan.ra_default='1'" | uci batch
-				echo "set dhcp.lan.ra_default_lifetime='1800'" | uci batch
+				echo "set dhcp.lan.ra_default='2'" | uci batch
+				echo "set dhcp.lan.ra_lifetime='3600'" | uci batch
+				echo "set dhcp.lan.ra_mininterval='20'" | uci batch
+				echo "set dhcp.lan.ra_maxinterval='60'" | uci batch
 
 			elif [ "$cpe_mode" = "prefix_delegation" ]; then
 				# Prefix delegation mode - compatible with everything but available prefixes may get exhausted
@@ -7589,9 +7763,10 @@ elif [ "$1" = "daemon" ]; then
 				echo "set dhcp.lan.dhcpv6='server'" | uci batch
 				echo "set dhcp.lan.ra='server'" | uci batch
 				echo "set dhcp.lan.ra_slaac='1'" | uci batch
-				echo "set dhcp.lan.ra_default='1'" | uci batch
-				echo "set dhcp.lan.ra_default_lifetime='1800'" | uci batch
-				echo "set dhcp.lan.ndp='server'" | uci batch
+				echo "set dhcp.lan.ra_default='2'" | uci batch
+				echo "set dhcp.lan.ra_lifetime='3600'" | uci batch
+				echo "set dhcp.lan.ra_mininterval='20'" | uci batch
+				echo "set dhcp.lan.ra_maxinterval='60'" | uci batch
 
 				if [ "$wanzoneindex" -le "$zones" ]; then
 					echo "set firewall.@zone[$wanzoneindex].masq6='0'" | uci batch
@@ -7624,9 +7799,10 @@ elif [ "$1" = "daemon" ]; then
 				echo "set dhcp.lan.dhcpv6='server'" | uci batch
 				echo "set dhcp.lan.ra='server'" | uci batch
 				echo "set dhcp.lan.ra_slaac='1'" | uci batch
-				echo "set dhcp.lan.ra_default='1'" | uci batch
-				echo "set dhcp.lan.ra_default_lifetime='1800'" | uci batch
-				echo "set dhcp.lan.ndp='server'" | uci batch
+				echo "set dhcp.lan.ra_default='2'" | uci batch
+				echo "set dhcp.lan.ra_lifetime='3600'" | uci batch
+				echo "set dhcp.lan.ra_mininterval='20'" | uci batch
+				echo "set dhcp.lan.ra_maxinterval='60'" | uci batch
 
 			else
 				debugtype="err"
@@ -7839,7 +8015,7 @@ elif [ "$1" = "daemon" ]; then
 
 			if [ "$auto_config" -ne 0 ] || [ -e "$tmpdir/auto_config_test" ]; then
 
-				if [ "$portal_detect" -ne 0 ] || [ "$portal_detect" -ne 4 ]; then
+				if [ "$portal_detect" -ne 0 ] || [ "$portal_detect" -ne 4 ] || [ "$portal_detect" -ne 5 ]; then
 					check_portal
 
 				elif [ "$portal_detect" -eq 0 ] || [ "$portal_detect" -eq 4 ]; then
@@ -7854,70 +8030,68 @@ elif [ "$1" = "daemon" ]; then
 
 						uci set mesh11sd.mesh_params.mesh_connected_to_as='1'
 
-###						if [ -z "$authoritative" ] || [ "$authoritative" -eq 0 ]; then
-							debugtype="notice"
-							syslogmessage="Portal detection is disabled, forcing portal mode"
-							write_to_syslog
+						debugtype="notice"
+						syslogmessage="Portal detection is disabled, forcing portal mode"
+						write_to_syslog
 
-							if [ -f "/var/run/udhcpc-$device.pid" ]; then
-								kill $(cat /var/run/udhcpc-$device.pid)
+						if [ -f "/var/run/udhcpc-$device.pid" ]; then
+							kill $(cat /var/run/udhcpc-$device.pid)
+						fi
+
+						if [ "$portal_detect" -eq 0 ]; then
+							echo "set dhcp.$auto_mesh_network.dhcpv4='server'" | uci batch
+							echo "set dhcp.$auto_mesh_network.dhcpv6='server'" | uci batch
+							echo "set dhcp.$auto_mesh_network.ignore='0'" | uci batch
+							restore_ipv4
+
+							uci set dhcp.@dnsmasq[0].authoritative='1'
+							echo "set dhcp.$auto_mesh_network.ra_default='2'" | uci batch
+							echo "set dhcp.$auto_mesh_network.ra='server'" | uci batch
+							uci set dhcp.@dnsmasq[0].logfacility='-'
+							uci set dhcp.@dnsmasq[0].quietdhcp='1'
+
+							if [ "$vtunnel" = "configured" ]; then
+								uci set dhcp.vtunlan.dhcpv4='server'
+								uci set dhcp.vtunlan.dhcpv6='server'
+								uci set dhcp.vtunlan.ra='server'
+								uci set dhcp.vtunlan.ignore='0'
 							fi
 
-							if [ "$portal_detect" -eq 0 ]; then
-								echo "set dhcp.$auto_mesh_network.dhcpv4='server'" | uci batch
-								echo "set dhcp.$auto_mesh_network.dhcpv6='server'" | uci batch
-								echo "set dhcp.$auto_mesh_network.ignore='0'" | uci batch
-								restore_ipv4
+						else
+							echo "set dhcp.$auto_mesh_network.dhcpv4='disabled'" | uci batch
+							echo "set dhcp.$auto_mesh_network.dhcpv6='disabled'" | uci batch
+							echo "set dhcp.$auto_mesh_network.ignore='1'" | uci batch
+							restore_ipv4
 
-								uci set dhcp.@dnsmasq[0].authoritative='1'
-								echo "set dhcp.$auto_mesh_network.ra_default='2'" | uci batch
-								echo "set dhcp.$auto_mesh_network.ra='server'" | uci batch
-								uci set dhcp.@dnsmasq[0].logfacility='-'
-								uci set dhcp.@dnsmasq[0].quietdhcp='1'
+							uci set dhcp.@dnsmasq[0].authoritative='1'
+							echo "set dhcp.$auto_mesh_network.ra_default='2'" | uci batch
+							echo "set dhcp.$auto_mesh_network.ra='disabled'" | uci batch
+							uci set dhcp.@dnsmasq[0].logfacility='-'
+							uci set dhcp.@dnsmasq[0].quietdhcp='1'
 
-								if [ "$vtunnel" = "configured" ]; then
-									uci set dhcp.vtunlan.dhcpv4='server'
-									uci set dhcp.vtunlan.dhcpv6='server'
-									uci set dhcp.vtunlan.ra='server'
-									uci set dhcp.vtunlan.ignore='0'
-								fi
-
-							else
-								echo "set dhcp.$auto_mesh_network.dhcpv4='disabled'" | uci batch
-								echo "set dhcp.$auto_mesh_network.dhcpv6='disabled'" | uci batch
-								echo "set dhcp.$auto_mesh_network.ignore='1'" | uci batch
-								restore_ipv4
-
-								uci set dhcp.@dnsmasq[0].authoritative='1'
-								echo "set dhcp.$auto_mesh_network.ra_default='2'" | uci batch
-								echo "set dhcp.$auto_mesh_network.ra='disabled'" | uci batch
-								uci set dhcp.@dnsmasq[0].logfacility='-'
-								uci set dhcp.@dnsmasq[0].quietdhcp='1'
-
-								if [ "$vtunnel" = "configured" ]; then
-									uci set dhcp.vtunlan.dhcpv4='disabled'
-									uci set dhcp.vtunlan.dhcpv6='disabled'
-									uci set dhcp.vtunlan.ra='disabled'
-									uci set dhcp.vtunlan.ignore='1'
-									echo "del_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
-									echo "del_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
-									echo "add_list dhcp.vtunlan.ra_flags='none'" | uci batch
-									echo "del_list dhcp.vtunlan.ra_dns='$portal_ula'" | uci batch 2> /dev/null
-									uci set dhcp.@dnsmasq[0].rebind_protection='0'
-								fi
-
+							if [ "$vtunnel" = "configured" ]; then
+								uci set dhcp.vtunlan.dhcpv4='disabled'
+								uci set dhcp.vtunlan.dhcpv6='disabled'
+								uci set dhcp.vtunlan.ra='disabled'
+								uci set dhcp.vtunlan.ignore='1'
+								echo "del_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
+								echo "del_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
+								echo "add_list dhcp.vtunlan.ra_flags='none'" | uci batch
+								echo "del_list dhcp.vtunlan.ra_dns='$portal_ula_vtun'" | uci batch 2> /dev/null
+								uci set dhcp.@dnsmasq[0].rebind_protection='0'
 							fi
 
-							if [ "$mesh_gate_only" -eq 0 ]; then
-								mesh_hwmp_rootmode="4"
-							else
-								mesh_hwmp_rootmode="0"
-							fi
+						fi
 
-							/sbin/service dnsmasq restart
-							/sbin/service odhcpd restart
-							restart_mesh
-###						fi
+						if [ "$mesh_gate_only" -eq 0 ]; then
+							mesh_hwmp_rootmode="4"
+						else
+							mesh_hwmp_rootmode="0"
+						fi
+
+						/sbin/service dnsmasq restart
+						/sbin/service odhcpd restart
+						restart_mesh
 					fi
 
 				elif [ "$portal_detect" -eq 3 ] && [ "$commit_all" -eq 0 ]; then
@@ -7991,6 +8165,7 @@ elif [ "$1" = "daemon" ]; then
 
 			if [ "$portal_detect" -eq 3 ]; then
 				check_dns_server
+				check_channel_now=0
 				check_channel
 			fi
 
@@ -8011,6 +8186,7 @@ elif [ "$1" = "daemon" ]; then
 
 		check_mesh_mtu
 		check_mesh_active_led # sets heartbeatflag = 1 when mesh is active
+		check_mesh_hwmp_rootmode
 
 		if [ "$heartbeatflag" -eq 1 ] && [ "$commit_all" -eq 0 ] && [ "$auto_config" -eq 2 ]; then
 			/usr/sbin/mesh11sd commit_all commit silent &
@@ -8025,8 +8201,24 @@ elif [ "$1" = "daemon" ]; then
 			fi
 		fi
 
-		if [ "$portal_detect" -eq 4 ]; then
+		if [ "$portal_detect" -eq 4 ] || [ "$portal_detect" -eq 5 ]; then
 			manage_fallback_ula_route
+		fi
+
+		accept_ra=$(cat /proc/sys/net/ipv6/conf/$device/accept_ra)
+
+		if [ "$detected_state" = "portal" ] && [ "$portal_detect" -ne 4 ] && [ "$accept_ra" -ne 0 ]; then
+			echo 0 > /proc/sys/net/ipv6/conf/$device/accept_ra
+		elif [ "$portal_detect" -eq 4 ] && [ "$accept_ra" -ne 2 ]; then
+			echo 2 > /proc/sys/net/ipv6/conf/$device/accept_ra
+		elif [ "$detected_state" = "peer" ] && [ "$accept_ra" -ne 2 ]; then
+			echo 2 > /proc/sys/net/ipv6/conf/$device/accept_ra
+		fi
+
+		get_portal_type
+
+		if [ "$portal_type" = "MBP" ] && [ ! -z "$portal_mac" ] && [ ! -z "$portal_ipv4" ] && [ ! -z "$mrp_default_ipv4_gw" ]; then
+			/sbin/service network restart
 		fi
 
 		log_info "Checkinterval [$checkinterval]"
