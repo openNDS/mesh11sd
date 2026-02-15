@@ -1,4 +1,34 @@
 mesh11sd (6.2.0)
+  * Add - more LuCi custom commands [bluewavenet]
+  * Add - refactor channel scanning for faster convergence [bluewavenet]
+  * Add - calculate checksum and add to status and apmomd outputs [bluewavenet]
+  * Add - debug message for scanned channel number in check_channel() [bluewavenet]
+  * Add - improved wording wrt LuCi on html status page [bluewavenet]
+  * Add - get_node_type_code() and cli call for it [bluewavenet]
+  * Add - apmond user_agent verification [bluewavenet]
+  * Fix - typo on warning message for UNKNOWN portal type [bluewavenet]
+  * Add - mesh11sd version to get_system_stats_json() [bluewavenet]
+  * Fix - remove scope link and prevent duplicate route creation [bluewavenet]
+  * Add - change default channel_tracking_checkinterval [bluewavenet]
+  * Add - refactored portal_watchdog() [bluewavenet]
+  * Fix - OpenWrt default wireless now disabled in wifi-iface section [bluewavenet]
+  * Fix - detect ath11k and workaround beacon_int bug [bluewavenet]
+  * Fix - typo in manage_fallback_ula_route() [bluewavenet]
+  * Fix - get_portal_type for CPE peers [bluewavenet]
+  * Add - get_portal_type cli call to read current value in $tmpdir file [bluewavenet]
+  * Add - get_portal_type function and cli command [bluewavenet]
+  * Fix - set accept_ra correctly for MBP, MRP and peers [bluewavenet]
+  * Add - network restart fallback on peers if portal changes from MRP to MBP [bluewavenet]
+  * Fix - potential errormessage from write_log() when called by apmond cgi script [bluewavenet]
+  * Fix - vtun_enable, stuck at 0 if option exists in config [bluewavenet]
+  * Add - lan ula_subnet aka subprefix id replacing default of 0 [bluewavenet]
+  * Add - vtunlan ula_subnet aka subprefix id replacing default of 0 [bluewavenet]
+  * Fix - empty list entry in dhcp config ra_dns [bluewavenet]
+  * Fix - make default channel_tracking_checkinterval much shorter for faster tracking [bluewavenet]
+  * Fix - auto config for portal detect 5 [bluewavenet]
+  * Fix - ula prefix subnet mask [bluewavenet]
+  * Add - check_mesh_hwmp_rootmode ensuring portal set to 4 [bluewavenet]
+  * Fix - format of Host ULA in status page [bluewavenet]
   * Add - change link to README.md to master [bluewavenet]
   * Add - Luci warning to luci_cgi status page [bluewavenet]
   * Add - active_nodecount cli command [bluewavenet]
@@ -63,7 +93,7 @@ mesh11sd (6.2.0)
   * Fix - mute debug message when mesh_leechmode config is null [bluewavenet]
   * Fix - mute some cosmetic hostapd debug messages [bluewavenet]
 
- -- Rob White <dot@blue-wave.net>  Tue, 20 Jan 2026 22:04:07 +0000
+ -- Rob White <dot@blue-wave.net>  Tue, 15 Feb 2026 11:35:07 +0000
 
 mesh11sd (5.1.3)
 
