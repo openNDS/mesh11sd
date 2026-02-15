@@ -43,13 +43,13 @@ Mesh11sd is also particularly useful for simplifying the rollout of a multi node
     ***Such a node will be a Mesh Routed Portal (MRP)***  
     If the upstream link is not connected, dhcp will be disabled and the meshnode will function as a layer 2 bridge on the mesh network.  
     ***Such a node will be a Mesh Peer (MPE)***
- 3. **Mesh Bridge Portal Mode (MBP)** Configures a bridged portal (ie **NO** ipv4 routing) and supports tunnelling of a VXLAN trunk over the mesh backhaul (Optional).
- 4. **Trunk Peer Mode (TPM)** providing ethernet downstream VLAN support (via the VXLAN tunnel) from connections to remote peers (Optional).
- 5. **Customer Premises Equipment Mode (CPE)** (AKA Client Premises Equipment Mode), providing a routed peer with an upstream Internet connection via the mesh backhaul (Optional). Ideal for WISP or Community Network use cases.
- 6. **Opportunistic Wireless Encryption (OWE)**, with OWE Transition. It provides encryption for open Wi-Fi networks without requiring user authentication, enhancing security for public or guest networks (Default).
- 7. **Portal-Node to Peer-Group Mode**, enabling, for example, "guest" networking over mesh backhaul without the need for setting up a VLAN (Default).
- 8. **Access Point Monitoring** (AKA Mesh Gate Monitoring). Incorporates the code and functionality of the apmond package. A centralised Access Point usage database is created, enabling access point statistics, such as client connections, client data volumes etc., to be viewed on the Mesh Portal in json format (Default).
- 9. **Mesh Node Mobility Level**, supports three dimensional relative velocities (3dRV) in excess of 1.5 metres per second where conditions allow. Enables mesh_hwmp_rts for on air collision avoidance, enables transmit queue and aql_threshold to minimise latency, enables rapid path convergence.
+ 4. **Mesh Bridge Portal Mode (MBP)** Configures a bridged portal (ie **NO** ipv4 routing) and supports tunnelling of a VXLAN trunk over the mesh backhaul (Optional).
+ 5. **Trunk Peer Mode (TPM)** providing ethernet downstream VLAN support (via the VXLAN tunnel) from connections to remote peers (Optional).
+ 6. **Customer Premises Equipment Mode (CPE)** (AKA Client Premises Equipment Mode), providing a routed peer with an upstream Internet connection via the mesh backhaul (Optional). Ideal for WISP or Community Network use cases.
+ 7. **Opportunistic Wireless Encryption (OWE)**, with OWE Transition. It provides encryption for open Wi-Fi networks without requiring user authentication, enhancing security for public or guest networks (Default).
+ 8. **Portal-Node to Peer-Group Mode**, enabling, for example, "guest" networking over mesh backhaul without the need for setting up a VLAN (Default).
+ 9. **Access Point Monitoring** (AKA Mesh Gate Monitoring). Incorporates the code and functionality of the apmond package. A centralised Access Point usage database is created, enabling access point statistics, such as client connections, client data volumes etc., to be viewed on the Mesh Portal in json format (Default).
+ 10. **Mesh Node Mobility Level**, supports three dimensional relative velocities (3dRV) in excess of 1.5 metres per second where conditions allow. Enables mesh_hwmp_rts for on air collision avoidance, enables transmit queue and aql_threshold to minimise latency, enables rapid path convergence.
 
 ## 4. Getting Started:
 To get started, you will need at least two mesh capable devices to use as meshnodes. These meshnodes should have:
@@ -59,6 +59,11 @@ To get started, you will need at least two mesh capable devices to use as meshno
  3. At least one mesh compatible radio.
 
 If you are not sure one or more devices you want to use as meshnodes are compatible with a mesh, then you can do a Confidence Test.
+
+### Important! ###
+Think carefully what you want to achieve!  
+If you are new to mesh networks, the simplest way to get started is to use auto detect mode on every node of your new mesh.  
+See "Major Features" above. 
 
 ### Confidence Testing
 
