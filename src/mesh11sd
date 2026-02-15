@@ -13,8 +13,8 @@
 # mesh11sd daemon
 #
 
-last_version="6.1.0~be7a"
-version="6.2.0~be7a"
+last_version="6.2.0~be7a"
+version="6.2.0"
 checksum=$(sha256sum /usr/sbin/mesh11sd | awk '{printf "%s", $1}')
 fixup1=0
 failcount=0
