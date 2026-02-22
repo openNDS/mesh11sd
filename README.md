@@ -30,10 +30,23 @@ Mesh11sd is an OpenWrt package that autonomously manages all aspects of an 802.1
 
 The package acts as a service daemon, continuously and dynamically configuring network parameters across multiple mesh nodes. It can be likened to a distributed virtual system composed of all the nodes within a mesh working in unison.
 
+Sections of cabled backhaul are fully supported and by default are given priority over wireless backhaul links.
+
 From version 6.x.x onwards, enhanced mesh routing protocols are used to support meshnode mobility.  
 Several mobility levels are possible, the most basic supporting three dimensional intra-mesh relative velocities (3dRV) of up to ~1.5 meters per second.
 
 Mesh11sd is also particularly useful for simplifying the rollout of a multi node network, reducing or even eliminating manual configuration, and improving network reliability.
+
+### Does Mesh11sd have any dependencies?
+
+For ***full*** functionality, the following additional packages are required:
+
+  1. wpad-mbedtls
+  2. luci-ssl
+  3. luci-app-commands
+  4. ip-full
+  5. kmod-nft-bridge
+  6. vxlan
 
 ## 3. Major Features:
  1. **Auto configuration** of 802.11s mesh backhaul
@@ -50,6 +63,7 @@ Mesh11sd is also particularly useful for simplifying the rollout of a multi node
  8. **Portal-Node to Peer-Group Mode**, enabling, for example, "guest" networking over mesh backhaul without the need for setting up a VLAN (Default).
  9. **Access Point Monitoring** (AKA Mesh Gate Monitoring). Incorporates the code and functionality of the apmond package. A centralised Access Point usage database is created, enabling access point statistics, such as client connections, client data volumes etc., to be viewed on the Mesh Portal in json format (Default).
  10. **Mesh Node Mobility Level**, supports three dimensional relative velocities (3dRV) in excess of 1.5 metres per second where conditions allow. Enables mesh_hwmp_rts for on air collision avoidance, enables transmit queue and aql_threshold to minimise latency, enables rapid path convergence.
+ 11. **Autonomous support of cabled backhaul segments.** Where present, cabled segments will, by default, be given priority over wireless segments.
 
 ## 4. Getting Started:
 To get started, you will need at least two mesh capable devices to use as meshnodes. These meshnodes should have:
