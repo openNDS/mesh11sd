@@ -1697,34 +1697,19 @@ manage_fallback_ula_route() {
 	fi
 
 	# --------------------------------------------------------------------
-	# Part 3: Sticky on-link route (only on peers in auto-detect modes)
+	# Part 3: Sticky on-link route (on all nodes)
 	# --------------------------------------------------------------------
-	if [ "$detected_state" = "peer" ] && \
-	   [ "$portal_detect" -ne 0 ] && [ "$portal_detect" -ne 4 ] && \
-	   [ -n "$device" ]; then
 
-		if ! ip -6 route show "$ula_base:$ula_subnet::/64" 2>/dev/null | grep -q "dev[[:space:]]\+$device.*proto static.*metric 512.*onlink"; then
-			log_info "Adding sticky fallback on-link route $ula_base:$ula_subnet::/64 dev $device (peer auto-detect mode)"
+	if ! ip -6 route show "$ula_base:$ula_subnet::/64" 2>/dev/null | grep -q "dev[[:space:]]\+$device.*proto static.*metric 512.*onlink"; then
+		log_info "Adding sticky fallback on-link route $ula_base:$ula_subnet::/64 dev $device (peer auto-detect mode)"
 
-			ip_error=$(ip -6 route add "$ula_base:$ula_subnet::/64" dev "$device" onlink metric 512 proto static 2>&1)
+		ip_error=$(ip -6 route add "$ula_base:$ula_subnet::/64" dev "$device" onlink metric 512 proto static 2>&1)
 
-			if [ $? -eq 0 ]; then
-				log_notice "Sticky fallback on-link route added on $device"
-			else
-				log_error "Failed to add fallback route on $device"
-				log_debug "ip error: $ip_error"
-			fi
-		fi
-	fi
-
-	# --------------------------------------------------------------------
-	# Cleanup: only for route when no longer a peer or bridge state lost
-	# --------------------------------------------------------------------
-	if [ "$detected_state" != "peer" ] || [ -z "$device" ] || [ ! -f "$tmpdir/devicemac" ]; then
-		if [ -n "$ula_prefix" ] && [ -n "$device" ] && \
-		   ip -6 route show "$ula_base:$ula_subnet::/64" 2>/dev/null | grep -q "dev[[:space:]]\+$device.*proto static"; then
-			log_info "Removing fallback route $ula_base:$ula_subnet::/64 on $device (no longer required)"
-			ip -6 route del "$ula_base:$ula_subnet::/64" dev "$device" 2>/dev/null
+		if [ $? -eq 0 ]; then
+			log_notice "Sticky fallback on-link route added on $device"
+		else
+			log_error "Failed to add fallback route on $device"
+			log_debug "ip error: $ip_error"
 		fi
 	fi
 
@@ -2274,7 +2259,7 @@ check_portal() {
 					echo "del_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
 					echo "del_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
 					echo "add_list dhcp.vtunlan.ra_flags='none'" | uci batch
-					echo "del_list dhcp.vtunlan.ra_dns='$portal_ula_vtun'" | uci batch 2> /dev/null
+					echo "del dhcp.vtunlan.ra_dns" | uci batch 2> /dev/null
 					uci set dhcp.@dnsmasq[0].rebind_protection='0'
 				fi
 
@@ -4003,7 +3988,7 @@ check_vtunnel() {
 					echo "del_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
 					echo "del_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
 					echo "add_list dhcp.vtunlan.ra_flags='none'" | uci batch
-					echo "del_list dhcp.vtunlan.ra_dns='$portal_ula_vtun'" | uci batch 2> /dev/null
+					echo "del dhcp.vtunlan.ra_dns" | uci batch 2> /dev/null
 					uci set dhcp.@dnsmasq[0].rebind_protection='0'
 					/sbin/service dnsmasq restart
 					/sbin/service odhcpd restart
@@ -4637,7 +4622,8 @@ send_ap_data() {
 				chunkstatus="spider"
 			fi
 
-			send_status=$(wget $spider -6 -O - -U "apmond;$hostname;$ap_macaddr;$chunkstatus;$strindex" --no-check-certificate https://[$portal_ula]/cgi-bin/apmon.cgi)
+			wgetcmd="$spider -6 -O - -U \"apmond;$hostname;$ap_macaddr;$chunkstatus;$strindex\" --no-check-certificate https://[$portal_ula]/cgi-bin/apmon.cgi"
+			send_status=$(wget $wgetcmd)
 			retcode=$?
 			send_status=$(echo "$send_status" | awk '{printf "%s", $1}')
 			mute=0
@@ -4647,7 +4633,7 @@ send_ap_data() {
 
 			if [ "$apmon_verbose_debug_enable" -eq 1 ]; then
 				debugtype="debug"
-				syslogmessage="apmond - send_status [ $send_status ]"
+				syslogmessage="apmond - request [ $wgetcmd ], send_status [ $send_status ]"
 				write_to_syslog
 			fi
 
@@ -7838,6 +7824,16 @@ elif [ "$1" = "daemon" ]; then
 				syslogmessage="Invalid cpe_mode - ipv6 probably not working"
 				write_to_syslog
 			fi
+
+			uci set dhcp.wan.ignore='1'
+			uci set dhcp.wan.dhcpv4='disabled'
+			uci set dhcp.wan.dhcpv6='disabled'
+			uci set dhcp.wan.ra='disabled'
+			uci del dhcp.wan.ra_dns
+			uci del dhcp.wan.ra_flags
+			uci add_list dhcp.wan.ra_flags='none'
+
+
 		fi
 
 		br_tun=$(brctl show | grep "br-tun" | awk '{printf "%s", $1}')
@@ -8102,7 +8098,7 @@ elif [ "$1" = "daemon" ]; then
 								echo "del_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
 								echo "del_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
 								echo "add_list dhcp.vtunlan.ra_flags='none'" | uci batch
-								echo "del_list dhcp.vtunlan.ra_dns='$portal_ula_vtun'" | uci batch 2> /dev/null
+								echo "del dhcp.vtunlan.ra_dns" | uci batch 2> /dev/null
 								uci set dhcp.@dnsmasq[0].rebind_protection='0'
 							fi
 
