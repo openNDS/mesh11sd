@@ -4597,12 +4597,19 @@ send_ap_data() {
 	hexencoded_len=$((${#hexencoded}))
 
 	# If no data, Spider to force NDP update
+
 	if [ "$hexencoded_len" -eq 0 ]; then
 		spider="-s"
 	else
 		spider=""
 	fi
 
+	# A spider request should return just two bytes ie /r/n
+	# but uhttpd sends HTTP response headers as well
+	# So wget baulks and returns code 4
+	# Fixed by sending an empty chunk instead
+	# This is done by setting spider=""
+	spider=""
 	mute=0
 	debugtype="debug"
 	syslogmessage="apmond sending chunked data"
