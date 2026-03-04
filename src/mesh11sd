@@ -4200,20 +4200,27 @@ is_hex() {
 
 write_node_data() {
 	node_id="$1"
+	mute=0
+	log_debug "apmond - Node id string: [ $node_id ]"
 
 	if [ -z "$node_id" ]; then
 		mute=0
-		log_warning "Empty node node hostname - rejecting attempted apmond server access"
+		log_warning "apmond - Empty node_id - rejecting attempted apmond server access"
 		return 1
 	fi
 
 	data_raw="$2"
 
 	node_type=$(echo "$node_id" | awk -F ";" '{printf "%s", $1}')
+	mute=0
+
+	if [ "$apmon_verbose_debug_enable" -eq 1 ]; then
+		log_debug "apmond - node type [ $node_type ]"
+	fi
 
 	if [ -z "$node_type" ]; then
 		mute=0
-		log_warning "Empty node type - rejecting attempted apmond server access"
+		log_warning "apmond - Empty node type - rejecting attempted apmond server access"
 		return 1
 	fi
 
@@ -4223,7 +4230,7 @@ write_node_data() {
 
 		if [ -z "$node_hostname" ]; then
 			mute=0
-			log_warning "Empty node node hostname - rejecting attempted apmond server access"
+			log_warning "apmond - Empty node node hostname - rejecting attempted apmond server access"
 			return 1
 		fi
 
@@ -4233,18 +4240,22 @@ write_node_data() {
 			strindex=$(echo "$node_id" | awk -F ";" '{printf "%s", $5}')
 		else
 			mute=0
-			log_warning "Bad node node hostname - rejecting attempted apmond server access"
+			log_warning "apmond - Bad node node hostname - rejecting attempted apmond server access"
 			return 1
 		fi
 
 		if [ -z "$node_mac" ] || [ -z "$chunkstatus" ] || [ -z "$strindex" ]; then
 			mute=0
-			log_warning "Invalid parameters - rejecting attempted apmond server access"
+			log_warning "apmond - Invalid parameters - rejecting attempted apmond server access"
 			return 1
 		fi
+
+		mute=0
+		log_debug "apmond - node type validated for [ $node_hostname ]"
+
 	else
 		mute=0
-		log_warning "Invalid node type - rejecting attempted apmond server access"
+		log_warning "apmond - Invalid node type - rejecting attempted apmond server access"
 		return 1
 	fi
 
@@ -4608,12 +4619,10 @@ send_ap_data() {
 	# but uhttpd sends HTTP response headers as well
 	# So wget baulks and returns code 4
 	# Fixed by sending an empty chunk instead
-	# This is done by setting spider=""
-	spider=""
+
 	mute=0
 	debugtype="debug"
-	syslogmessage="apmond sending chunked data"
-	write_to_syslog
+	log_info "apmond connecting to portal"
 
 	get_portal_ula
 
@@ -4629,19 +4638,16 @@ send_ap_data() {
 				chunkstatus="spider"
 			fi
 
-			wgetcmd="$spider -6 -O - -U \"apmond;$hostname;$ap_macaddr;$chunkstatus;$strindex\" --no-check-certificate https://[$portal_ula]/cgi-bin/apmon.cgi"
-			send_status=$(wget $wgetcmd)
+			user_agent="apmond;$hostname;$ap_macaddr;$chunkstatus;$strindex"
+			wgetcmd="-6 -O - -U $user_agent --no-check-certificate https://[$portal_ula]/cgi-bin/apmon.cgi"
+			send_status=$(wget -6 -O - -U "apmond;$hostname;$ap_macaddr;$chunkstatus;$strindex" --no-check-certificate https://[$portal_ula]/cgi-bin/apmon.cgi)
 			retcode=$?
 			send_status=$(echo "$send_status" | awk '{printf "%s", $1}')
 			mute=0
-			debugtype="debug"
-			syslogmessage="apmond - send_ap_data - chunkstatus [ $chunkstatus ], chunksize [ $chunksize ], return code [ $retcode ]"
-			write_to_syslog
+			log_debug "apmond - send_ap_data - chunkstatus [ $chunkstatus ], chunksize [ $chunksize ], return code [ $retcode ]"
 
 			if [ "$apmon_verbose_debug_enable" -eq 1 ]; then
-				debugtype="debug"
-				syslogmessage="apmond - request [ $wgetcmd ], send_status [ $send_status ]"
-				write_to_syslog
+				log_debug "apmond - request [ $wgetcmd ], send_status [ $send_status ]"
 			fi
 
 			break
@@ -4656,16 +4662,11 @@ send_ap_data() {
 		retcode=$?
 		send_status=$(echo "$send_status" | awk '{printf "%s", $1}')
 		mute=0
-		debugtype="debug"
-		syslogmessage="apmond - send_ap_data - chunkstatus [ $chunkstatus ], chunksize [ $chunksize ], return code [ $retcode ], send_status [ $send_status ], sent [ $strindex ] "
-		write_to_syslog
+		log_debug "apmond - send_ap_data - chunkstatus [ $chunkstatus ], chunksize [ $chunksize ], return code [ $retcode ], send_status [ $send_status ], sent [ $strindex ] "
 
 		if [ "$apmon_verbose_debug_enable" -eq 1 ]; then
-			debugtype="debug"
-			syslogmessage="apmond - send_command [ wget -6 -O - -U \"apmond;$hostname;$ap_macaddr;$chunkstatus;$strindex\" --no-check-certificate https://[$portal_ula]/cgi-bin/apmon.cgi?\"$chunk\" ]"
-			write_to_syslog
-			syslogmessage="apmond - send_status [ $send_status ]"
-			write_to_syslog
+			log_debug "apmond - send_command [ wget -6 -O - -U \"apmond;$hostname;$ap_macaddr;$chunkstatus;$strindex\" --no-check-certificate https://[$portal_ula]/cgi-bin/apmon.cgi?\"$chunk\" ]"
+			log_debug "apmond - send_status [ $send_status ]"
 		fi
 
 		if [ "$send_status" = "nack" ]; then
@@ -4680,8 +4681,7 @@ send_ap_data() {
 	debugtype="debug"
 
 	if [ "$send_status" = "nack" ]; then
-		syslogmessage="apmond return code [ $retcode ], send_status [ $send_status ], data rejected by portal"
-		write_to_syslog
+		log_error "apmond return code [ $retcode ], send_status [ $send_status ], data rejected by portal"
 	fi
 
 	return "$retcode"
