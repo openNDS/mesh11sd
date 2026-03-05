@@ -1,3 +1,11 @@
+mesh11sd (6.2.1)
+  * Add - enhanced apmond verbose debug messages [bluewavenet]
+  * Fix - apmond return code 4 from spider request. Send empty chunk instead [bluewavenet]
+  * Fix - sticky onlink route and remove unneeded cleanup [bluewavenet]
+  * Add - mbp_dhcp_lan_defaults() function and call it where required [bluewavenet]
+
+ -- Rob White <dot@blue-wave.net>  Thu, 05 Mar 2026 13:44:44 +0000
+
 mesh11sd (6.2.0)
   * Add - more LuCi custom commands [bluewavenet]
   * Add - refactor channel scanning for faster convergence [bluewavenet]
