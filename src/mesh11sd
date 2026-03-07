@@ -3461,6 +3461,16 @@ block_bridge_loops() {
 
 	local bridgelist=$(brctl show | awk 'NF==4 {printf "%s ", $1}')
 
+	# Qualcomm Atheros AR7400 (and similar) PowerLine Communication (PLC aka HomePlug AV) chips send discovery frames using a Qualcomm defined proprietary mac address.
+	# These chips are inside many consumer powerline Ethernet adapters (TP-Link, D-Link COVR, Devolo, etc.).
+	# These discovery frames are not recognised by the Linux kernel and end up being forwarded to everything.
+	# HWMP temporarily adds the discovery mac to the mpath mac-routing table, appearing as a Phantom node.
+	# Phantoms can occur due to numerous other reasons, for example incomplete HWMP updates caused by a rebooting node.
+	# We will always delete Phantoms to prevent both temporary or permanent mac-routing black holes.
+	# But it might be better to drop AR7400 PLC discovery frames as they are received, preventing any propagation occuring before being deleted.
+
+	local powerline_dicovery_mac="00:b0:52:00:00:01"
+
 	for device in $bridgelist; do
 		local devicemac=$(ip link show dev "$device" | grep "link/ether" | awk '{printf "%s", $2}')
 		local mac_changed=0
@@ -3476,6 +3486,7 @@ block_bridge_loops() {
 
 			if [ "$rulecount" -lt 2 ]; then
 				rule_status=$(nft add rule bridge mesh11s mesh_PRE meta iifname { "\"$br_iface\"" } ether saddr "\"$devicemac\"" counter drop 2> /dev/null; echo -n $?)
+				rule_status=$(nft add rule bridge mesh11s mesh_PRE meta iifname { "\"$br_iface\"" } ether saddr "\"$powerline_dicovery_mac\"" counter drop 2> /dev/null; echo -n $?)
 				rule_status=$(nft add rule bridge mesh11s mesh_PRE meta iifname { "\"$br_iface\"" } counter accept 2> /dev/null; echo -n $?)
 			fi
 		done
