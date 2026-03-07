@@ -1,4 +1,5 @@
 mesh11sd (6.2.1)
+  * Add - nfs rule to drop PowerLine discovery packets [bluewavenet]
   * Add - enhanced apmond verbose debug messages [bluewavenet]
   * Fix - apmond return code 4 from spider request. Send empty chunk instead [bluewavenet]
   * Fix - sticky onlink route and remove unneeded cleanup [bluewavenet]
