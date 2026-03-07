@@ -1,47 +1,44 @@
 # SPDX-License-Identifier: GPL-2.0-only
 #
-# This is free software, licensed under the GNU General Public License v2.
-# See /LICENSE for more information.
-# Copyright (C) 2022-2023 BlueWave Projects and Services  <licence@blue-wave.net>
+# Copyright (C) 2022 - 2026 BlueWave Projects and Services  <licence@blue-wave.net>
 #
 
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=mesh11sd
-PKG_VERSION:=3.1.1
+PKG_VERSION:=6.2.1
 PKG_RELEASE:=1
 
 PKG_MAINTAINER:=Rob White <rob@blue-wave.net>
-PKG_LICENSE:=GPL-2.0-or-later
+PKG_LICENSE:=GPL-2.0-only
 PKG_LICENSE_FILES:=LICENSE
 
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
 PKG_SOURCE_URL:=https://codeload.github.com/opennds/mesh11sd/tar.gz/v$(PKG_VERSION)?
 PKG_HASH:=#shasum -a 256 of tar.gz of source files goes here
-PKG_BUILD_DIR:=$(BUILD_DIR)/mesh11sd-$(PKG_VERSION)
 
 include $(INCLUDE_DIR)/package.mk
 
 define Package/mesh11sd
-  SUBMENU:=Captive Portals
+  SUBMENU:=Mesh
   SECTION:=net
   CATEGORY:=Network
-  TITLE:=Dynamic 802.11s Mesh Configuration Daemon
+  TITLE:=Dynamic 802.11s Mesh Management Daemon
   PKGARCH:=all
   URL:=https://github.com/opennds/mesh11sd
 endef
 
 define Package/mesh11sd/description
-  Mesh11sd is a dynamic parameter configuration daemon for 802.11s mesh networks.
-  It was originally designed to leverage 802.11s mesh networking at Captive Portal venues.
-  This is the open source version and it enables easy and automated mesh network operation with multiple mesh nodes.
-  It allows all mesh parameters supported by the wireless driver to be set in the uci config file.
-  Settings take effect immediately without having to restart the wireless network.
-  Default settings give rapid and reliable layer 2 mesh convergence.
-  Without mesh11sd, many mesh parameters cannot be set in the uci wireless config file as the mesh interface must be up before the parameters can be set.
-  Some of those that are supported, would fail to be implemented when the network is (re)started resulting in errors or dropped nodes.
-  The mesh11sd daemon dynamically checks configured parameters and sets them as required.
-  This version does not require a Captive Portal to be running.
+  Mesh11sd autonomously manages all aspects of an 802.11s mesh network.
+  It acts as a service daemon.
+  Mesh parameters are dynamically set across all nodes.
+  Point to multi-point vxlan tunneling is provided by default.
+  Custom vlan trunking over the vxlan tunnel is fully supported.
+  Cabled sections of backhaul are fully supported.
+  Access Point usage data is collected in a central database.
+  A command line interface is provided for many functions.
+  An optional Customer/Client Premises Equipment (CPE) mode is provided
+  CPE mode greatly simplifies rollout of community WISP projects.
 endef
 
 define Package/mesh11sd/install
@@ -51,11 +48,6 @@ define Package/mesh11sd/install
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/src/mesh11sd $(1)/usr/sbin
 	$(INSTALL_CONF) $(PKG_BUILD_DIR)/linux_openwrt/mesh11sd/files/etc/config/mesh11sd $(1)/etc/config/
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/linux_openwrt/mesh11sd/files/etc/init.d/mesh11sd $(1)/etc/init.d/
-endef
-
-define Package/mesh11sd/postrm
-#!/bin/sh
-uci revert wireless
 endef
 
 define Package/mesh11sd/conffiles
