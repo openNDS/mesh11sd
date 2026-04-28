@@ -2729,6 +2729,7 @@ auto_config() {
 		debugtype="err"
 		syslogmessage="Unable to autoconfigure. Please install ath10k NON ct drivers for mesh support"
 		write_to_syslog
+		sleep 5
 		exit 1
 	fi
 
@@ -3026,6 +3027,7 @@ auto_config() {
 			debugtype="err"
 			syslogmessage="Unable to autoconfigure. Please install package wpad-mbedtls, wpad-wolfssl, wpad-openssl or an equivalent mesh only version"
 			write_to_syslog
+			sleep 5
 			exit 1
 		fi
 
