@@ -2983,6 +2983,7 @@ auto_config() {
 				fi
 
 				for ap in $aplist; do
+					log_debug "Checking encryption type for [ $ap ]"
 					radio=$(uci get "$ap.device" 2> /dev/null)
 					. "$tmpdir/radios/$radio"
 
