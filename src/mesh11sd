@@ -2591,7 +2591,7 @@ all_nodes_rssi_update() {
 				if [ ! -z "$wiphys" ]; then
 
 					for wiphy in $wiphys; do
-						mesh_capable=$(iw phy $wiphy info | grep -A 15 "Supported interface modes:" | grep -w "mesh point")
+						mesh_capable=$(iw phy "$wiphy" info | grep -A 15 "Supported interface modes:" | grep -w "mesh point")
 
 						if [ -z "$mesh_capable" ]; then
 							continue
@@ -2676,7 +2676,7 @@ get_wiphys() {
 		radioindex=${wiphy:3:10}
 		band=$(echo "get wireless.radio$radioindex.band" | uci batch)
 		mesh_capable=$(iw phy "$wiphy" info | grep -w -q  "mesh point"; echo -n "$?")
-		total_ifaces=$(iw phy $wiphy info | grep -w "total <=" | awk -F"," '{print $1}' | awk '{print $3}')
+		total_ifaces=$(iw phy "$wiphy" info | grep -w "total <=" | awk -F"," '{print $1}' | awk '{print $3}')
 
 		echo "mesh_capable=$mesh_capable; total_ifaces=$total_ifaces; radioindex=$radioindex; band=$band" > "$tmpdir/radios/radio$radioindex"
 
@@ -2775,7 +2775,7 @@ auto_config() {
 
 			if [ ! -z "$wiphys" ]; then
 				for wiphy in $wiphys; do
-					mesh_capable=$(iw phy $wiphy info | grep -A 15 "Supported interface modes:" | grep -w "mesh point")
+					mesh_capable=$(iw phy "$wiphy" info | grep -A 15 "Supported interface modes:" | grep -w "mesh point")
 
 					if [ -z "$mesh_capable" ]; then
 						continue
@@ -3245,11 +3245,11 @@ mobility_settings() {
 		# RTS/CTS (Request to Send/Clear to Send) is a MAC-layer mechanism to reduce collisions, but in 802.11s,
 		# it’s typically controlled at the PHY/MAC layer via general 802.11 parameters (e.g., rts_threshold) rather than HWMP-specific settings.
 		# The mac80211 mesh stack does not provide a dedicated HWMP-level RTS/CTS toggle like mesh_hwmp_rts.
-		iw phy $phy set rts $rts # Sets the frame size above which RTS/CTS is used.
+		iw phy "$phy" set rts $rts # Sets the frame size above which RTS/CTS is used.
 
 		# TXQ settings
-		iw phy $phy set txq limit $limit # Caps the number of packets in the queue.
-		iw phy $phy set txq quantum $quantum # Sets the Deficit Round Robin (DRR) scheduler quantum (bytes), balancing fairness for mesh traffic.
+		iw phy "$phy" set txq limit $limit # Caps the number of packets in the queue.
+		iw phy "$phy" set txq quantum $quantum # Sets the Deficit Round Robin (DRR) scheduler quantum (bytes), balancing fairness for mesh traffic.
 
 		# AQL settings - Airtime Queue Limit in microseconds
 		echo 1 > /sys/kernel/debug/ieee80211/$phy/aql_enable
@@ -5167,7 +5167,7 @@ get_valid_channels() {
 }
 
 get_valid_channels_by_phyindex() {
-	valid_channels=$(iw phy phy$phyindex channels | grep "*" | awk -F "[" '{printf "%s\n", $2'} | awk -F "]" '$2==" " {printf "%s%s", $1, $2}')
+	valid_channels=$(iw phy "phy$phyindex" channels | grep "*" | awk -F "[" '{printf "%s\n", $2'} | awk -F "]" '$2==" " {printf "%s%s", $1, $2}')
 }
 
 
