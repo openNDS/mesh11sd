@@ -2676,8 +2676,8 @@ get_wiphys() {
 		radioindex=${wiphy:3:10}
 		band=$(echo "get wireless.radio$radioindex.band" | uci batch)
 		mesh_capable=$(iw phy "$wiphy" info | grep -w -q  "mesh point"; echo -n "$?")
-		total_ifaces=$(iw phy "$wiphy" info | grep -w "total <=" | awk -F"," '{print $1}' | awk '{print $3}')
-
+		total_ifaces=$(iw phy "$wiphy" info | grep -w "total <=" | awk -F"," '{print $1}' | awk 'NR==1 {print $3}')
+		log_debug "Max number of VIFs [ $total_ifaces ]"
 		echo "mesh_capable=$mesh_capable; total_ifaces=$total_ifaces; radioindex=$radioindex; band=$band" > "$tmpdir/radios/radio$radioindex"
 
 		if [ $mesh_capable -gt 0 ]; then
@@ -2690,7 +2690,7 @@ get_wiphys() {
 
 			if [ "$vtun_gate_encryption" -eq 0 ] && [ "$mesh_gate_encryption" -eq 0 ]; then
 				debugtype="info"
-				syslogmessage="WARNING - phy [ $wiphy ] only supports [ $total_ifaces ] interfaces - possibly some or maybe all configured wireless APs will be missing."
+				syslogmessage="WARNING - phy [ $wiphy ] only supports [ $total_ifaces ] VIFs - possibly some or maybe all configured wireless APs will be missing."
 				write_to_syslog
 			fi
 		fi
