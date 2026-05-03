@@ -13,8 +13,8 @@
 # mesh11sd daemon
 #
 
-last_version="6.2.1~be7a"
-version="6.2.1"
+last_version="6.2.1"
+version="6.2.2~be7a"
 
 checksum=$(sha256sum /usr/sbin/mesh11sd | awk '{printf "%s", $1}')
 fixup1=0
@@ -2670,19 +2670,38 @@ ndp_scan_peer() {
 get_wiphys() {
 	# get list of physical wireless interfaces and reverse the list order
 	wiphys=$(iw list | grep -w "Wiphy" | awk -F "Wiphy " '{printf "%s ", $2}' | awk '{ for (i = NF; i > 0; i = i - 1) printf("%s ", $i) }')
+	radios=$(uci show wireless 2>/dev/null | grep "wifi-device" | awk -F"=" '{print $1}' | awk -F "." '{printf "%s ", $2}'); echo "$radios"
 	mkdir -p "$tmpdir/radios"
+	mkdir -p "$tmpdir/wiphys"
 
 	for wiphy in $wiphys; do
-		radioindex=${wiphy:3:10}
-		band=$(echo "get wireless.radio$radioindex.band" | uci batch)
 		mesh_capable=$(iw phy "$wiphy" info | grep -w -q  "mesh point"; echo -n "$?")
 		total_ifaces=$(iw phy "$wiphy" info | grep -w "total <=" | awk -F"," '{print $1}' | awk 'NR==1 {print $3}')
-		log_debug "Max number of VIFs [ $total_ifaces ]"
-		echo "mesh_capable=$mesh_capable; total_ifaces=$total_ifaces; radioindex=$radioindex; band=$band" > "$tmpdir/radios/radio$radioindex"
+
+		if [ -z "$total_ifaces" ]; then
+			total_ifaces=1
+			log_debug "Interface combinations are not supported on wiphy [ $wiphy ]"
+		fi
+
+		log_debug "Max number of VIFs on [ $wiphy ] is [ $total_ifaces ]"
+
+		iw_output=$(iw phy "$wiphy")
+		multi_band=$(echo "$iw_output" | sed -n '/Supported wiphy radios/,/Globally valid interface combinations/{
+			/Supported wiphy radios/d
+			/Globally valid interface combinations/q
+			p
+		}')
+
+		if [ ! -z "$multi_band" ];then
+			# this is a multi band capable wiphy
+			log_debug "wiphy [ $wiphy ] is multi band capable"
+		fi
+
+		echo "wiphy=$wiphy; mesh_capable=$mesh_capable; total_ifaces=$total_ifaces" > "$tmpdir/wiphys/$wiphy"
 
 		if [ $mesh_capable -gt 0 ]; then
 			debugtype="info"
-			syslogmessage="WARNING - phy [ $wiphy ] does not support mesh interfaces."
+			syslogmessage="WARNING - radios on wiphy [ $wiphy ] do not support mesh interfaces."
 			write_to_syslog
 		fi
 
@@ -2690,10 +2709,15 @@ get_wiphys() {
 
 			if [ "$vtun_gate_encryption" -eq 0 ] && [ "$mesh_gate_encryption" -eq 0 ]; then
 				debugtype="info"
-				syslogmessage="WARNING - phy [ $wiphy ] only supports [ $total_ifaces ] VIFs - possibly some or maybe all configured wireless APs will be missing."
+				syslogmessage="WARNING - wiphy [ $wiphy ] only supports [ $total_ifaces ] VIFs - possibly some or maybe all configured wireless APs will be missing."
 				write_to_syslog
 			fi
 		fi
+	done
+
+	for radio in $radios; do
+		band=$(echo "get wireless.$radio.band" | uci batch)
+		echo "radio=$radio; band=$band" > "$tmpdir/radios/$radio"
 	done
 }
 
@@ -2986,6 +3010,7 @@ auto_config() {
 				for ap in $aplist; do
 					log_debug "Checking encryption type for [ $ap ]"
 					radio=$(uci get "$ap.device" 2> /dev/null)
+					log_debug "radio is [ $radio ]"
 					. "$tmpdir/radios/$radio"
 
 					is_vx=$(echo "$ap" | grep -c "vxradio")
@@ -2998,6 +3023,8 @@ auto_config() {
 						echo "set $ap.encryption='$vx_encryption_type'" | uci batch
 						echo "set $ap.key='$vtun_gate_key'" | uci batch
 					fi
+
+					log_debug "encryption type [ $encryption_type ], vx_encryption_type [ $vx_encryption_type ]"
 
 					if [ "$encryption_type" = "none" ] || [ "$vx_encryption_type" = "none" ]; then
 
@@ -3038,13 +3065,14 @@ auto_config() {
 
 owe_transition() {
 	local enc_type=$(uci get $ap.encryption)
+	log_debug "requested enc_type for [ $ap ] is [ $enc_type ]"
 
 	if [ "$enc_type" = "none" ]; then
 		section_ap=$(uci show "$ap")
 		section_list=$(echo "$section_ap" | awk '{printf "%s ", $1}')
 
 		radio_index=$(echo "$section_ap" | grep "radio" | awk -F "'" '{printf "%s", $2}' | awk -F "radio" '{printf "%i", $2}')
-
+		log_debug "transition count [ $transition_count ], radio_index is [ $radio_index ]"
 		echo "set $ap.ifname='open$transition_count-$radio_index'" | uci batch
 		echo "set $ap.owe_transition_ifname='owe$transition_count-$radio_index'" | uci batch
 
