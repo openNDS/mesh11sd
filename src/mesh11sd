@@ -433,6 +433,18 @@ get_current_setup() {
 	write_to_syslog
 
 	#####
+	mesh_multi_interfaces=$(uci get mesh11sd.setup.mesh_multi_interfaces 2> /dev/null)
+
+	if [ -z "$mesh_multi_interfaces" ] || [ "$mesh_multi_interfaces" != "enabled" ]; then
+		mesh_multi_interfaces="disabled"
+	fi
+
+	syslogmessage="option mesh_multi_interfaces [ $mesh_multi_interfaces ]"
+	debugtype="info"
+	mute="$mutestate"
+	write_to_syslog
+
+	#####
 	country=$(uci get mesh11sd.setup.country 2> /dev/null)
 
 	if [ ! -z "$country" ]; then
@@ -2588,19 +2600,13 @@ all_nodes_rssi_update() {
 
 				get_wiphys
 
-				if [ ! -z "$wiphys" ]; then
+				if [ ! -z "$radios" ]; then
 
-					for wiphy in $wiphys; do
-						mesh_capable=$(iw phy "$wiphy" info | grep -A 15 "Supported interface modes:" | grep -w "mesh point")
+					for radio in $radios; do
+						radioindex=$(echo "$radio" | awk -F "radio" '{printf "%s", $2}')
+						radioindex=$(printf "%x" $radioindex)
 
-						if [ -z "$mesh_capable" ]; then
-							continue
-						fi
-
-						phyindex=$(echo "$wiphy" | awk -F "phy" '{printf "%s", $2}')
-						phyindex=$(printf "%x" $phyindex)
-
-						echo "set wireless.m11s$phyindex.mesh_rssi_threshold='$mesh_rssi_threshold'" | uci batch
+						echo "set wireless.m11s$radioindex.mesh_rssi_threshold='$mesh_rssi_threshold'" | uci batch
 					done
 				fi
 
@@ -2667,10 +2673,21 @@ ndp_scan_peer() {
 	fi
 }
 
+get_wiphy_by_ifname() {
+	if [ -z "$1" ]; then
+		return 1
+	fi
+
+	dev_info=$(iw dev "$1" info 2>/dev/null)
+	exitcode=$?
+	echo "$dev_info" | grep -w "wiphy" | awk '{printf "%s", $2}'
+	return $exitcode
+}
+
 get_wiphys() {
 	# get list of physical wireless interfaces and reverse the list order
 	wiphys=$(iw list | grep -w "Wiphy" | awk -F "Wiphy " '{printf "%s ", $2}' | awk '{ for (i = NF; i > 0; i = i - 1) printf("%s ", $i) }')
-	radios=$(uci show wireless 2>/dev/null | grep "wifi-device" | awk -F"=" '{print $1}' | awk -F "." '{printf "%s ", $2}'); echo "$radios"
+	radios=$(uci show wireless 2>/dev/null | grep "wifi-device" | awk -F"=" '{print $1}' | awk -F "." '{printf "%s ", $2}')
 	mkdir -p "$tmpdir/radios"
 	mkdir -p "$tmpdir/wiphys"
 
@@ -2806,131 +2823,140 @@ auto_config() {
 						continue
 					fi
 
-					# Prerequisites met so we can autoconfigure
 					phyindex=$(echo "$wiphy" | awk -F "phy" '{printf "%s", $2}')
-
 					phyindex=$(printf "%x" $phyindex)
 
 					if [ ! -z "$mesh_phy_index" ] && [ "$phyindex" != "$mesh_phy_index" ]; then
-						syslogmessage="option mesh_phy_index [ $mesh_phy_index ] does not match phyindex [ $phyindex ] - skipping this phy"
+						syslogmessage="option mesh_phy_index [ $mesh_phy_index ] does not match phyindex [ $phyindex ] - skipping this wiphy"
 						debugtype="info"
 						mute="$mutestate"
 						write_to_syslog
 						continue
 					fi
 
-					mesh_ifname="$mesh_basename""$phyindex"
 
-
-					echo "set wireless.m11s$phyindex=wifi-iface" | uci batch
-					echo "set wireless.m11s$phyindex.device='radio$phyindex'" | uci batch
-					echo "set wireless.m11s$phyindex.mode='mesh'" | uci batch
-					echo "set wireless.m11s$phyindex.encryption='sae'" | uci batch
-					echo "set wireless.m11s$phyindex.mesh_id='$auto_mesh_id'" | uci batch
-					echo "set wireless.m11s$phyindex.key='$auto_mesh_key'" | uci batch
-					echo "set wireless.m11s$phyindex.network='$auto_mesh_network'" | uci batch
-					echo "set wireless.m11s$phyindex.ifname='$mesh_ifname'" | uci batch
-					echo "set wireless.m11s$phyindex.mesh_rssi_threshold='$mesh_rssi_threshold'" | uci batch
-					echo "set wireless.m11s$phyindex.dtim_period='$mesh_dtim_period'" | uci batch
-					echo "set wireless.radio$phyindex.disabled='0'" | uci batch
-					echo "set wireless.radio$phyindex.beacon_int='$mesh_beacon_interval'" | uci batch
-					echo "set wireless.radio$phyindex.log_level='3'" | uci batch
-
-					ucicountry=$(uci get wireless.radio$phyindex.country 2> /dev/null | awk '{printf "%s", $1}')
-
-					if [ -z "$country" ] && [ -z "$ucicountry" ]; then
-						echo "set wireless.radio$phyindex.country='$dfs_etsi'" | uci batch
-						syslogmessage="WARNING - country code - interoperability with other mesh nodes would be compromised or fail altogether if not set, so setting to safe default...."
-						debugtype="warn"
-						write_to_syslog
-						syslogmessage="Country code defaulting to [ DFS-ETSI ]...."
-						debugtype="warn"
-						write_to_syslog
-						country="$dfs_etsi"
-					fi
-
-					if [ ! -z "$country" ]; then
-						echo "set wireless.radio$phyindex.country='$country'" | uci batch
-					fi
-
-					band=$(uci get wireless.radio$phyindex.band 2> /dev/null | awk '{printf "%s", $1}')
-
-					if [ "$auto_mesh_band" = "2g40" ]; then
-						mesh_band="2g"
-					else
-						mesh_band=$auto_mesh_band
-					fi
-
-					if [ "$band" = "$mesh_band" ] && [ "$meshifenabled" -eq 0 ]; then
-						echo "set wireless.m11s$phyindex.disabled='0'" | uci batch
-						meshifenabled=1
-
-						if [ ! -f "$tmpdir/active_mesh_ifname" ]; then
-							echo "active_mesh_ifname=\"$mesh_basename$phyindex\"" > "$tmpdir/active_mesh_ifname"
+					# Scan radios for this wiphy
+					for radio in $radios; do
+echo "$(date) iteration:" >> /tmp/scanradios
+						radiowiphy=$(radiophy "$radio")
+echo "$(date) wiphy=$wiphy! radio=$radio! radiowiphy=$radiowiphy!" >> /tmp/scanradios
+						if [ "$radiowiphy" != "$wiphy" ]; then
+							continue
 						fi
-					else
-						echo "set wireless.m11s$phyindex.disabled='1'" | uci batch
-					fi
 
-					if [ "$band" = "2g" ]; then
-						get_portal_state
+						radioindex=$(echo "$radio" | awk -F "radio" '{printf "%s", $2}')
+						radioindex=$(printf "%x" $radioindex)
+
+						mesh_ifname="$mesh_basename""r$radioindex""p$phyindex"
+echo "$(date) wiphy=$wiphy! phyindex=$phyindex! radioindex=$radioindex! section=wireless.m11s$radioindex! mesh_ifname=$mesh_ifname!" >> /tmp/scanradios
+
+						echo "set wireless.m11s$radioindex=wifi-iface" | uci batch
+						echo "set wireless.m11s$radioindex.device='radio$radioindex'" | uci batch
+						echo "set wireless.m11s$radioindex.mode='mesh'" | uci batch
+						echo "set wireless.m11s$radioindex.encryption='sae'" | uci batch
+						echo "set wireless.m11s$radioindex.mesh_id='$auto_mesh_id'" | uci batch
+						echo "set wireless.m11s$radioindex.key='$auto_mesh_key'" | uci batch
+						echo "set wireless.m11s$radioindex.network='$auto_mesh_network'" | uci batch
+						echo "set wireless.m11s$radioindex.ifname='$mesh_ifname'" | uci batch
+						echo "set wireless.m11s$radioindex.mesh_rssi_threshold='$mesh_rssi_threshold'" | uci batch
+						echo "set wireless.m11s$radioindex.dtim_period='$mesh_dtim_period'" | uci batch
+						echo "set wireless.radio$radioindex.disabled='0'" | uci batch
+						echo "set wireless.radio$radioindex.beacon_int='$mesh_beacon_interval'" | uci batch
+						echo "set wireless.radio$radioindex.log_level='3'" | uci batch
+
+						ucicountry=$(uci get wireless.radio$radioindex.country 2> /dev/null | awk '{printf "%s", $1}')
+
+						if [ -z "$country" ] && [ -z "$ucicountry" ]; then
+							echo "set wireless.radio$radioindex.country='$dfs_etsi'" | uci batch
+							syslogmessage="WARNING - country code - not set, so setting to safe default...."
+							debugtype="warn"
+							write_to_syslog
+							syslogmessage="Country code defaulting to [ DFS-ETSI ]...."
+							debugtype="warn"
+							write_to_syslog
+							country="$dfs_etsi"
+						fi
+
+						if [ ! -z "$country" ]; then
+							echo "set wireless.radio$radioindex.country='$country'" | uci batch
+						fi
+
+						band=$(uci get wireless.radio$radioindex.band 2> /dev/null | awk '{printf "%s", $1}')
 
 						if [ "$auto_mesh_band" = "2g40" ]; then
-							originalhtmode=$(echo "get wireless.radio$phyindex.htmode" | uci batch)
-							he_mode=$(echo "$originalhtmode" | grep -q "HE"; echo -n "$?")
-
-							if [ "$he_mode" -eq 0 ]; then
-								htmode="HE40"
-							else
-								htmode="HT40"
-							fi
-
-							if [ ! -z "$country" ]; then
-								echo "set wireless.radio$phyindex.noscan='1'" | uci batch
-								echo "set wireless.radio$phyindex.htmode='$htmode'" | uci batch
-							else
-								echo "set wireless.radio$phyindex.noscan='0'" | uci batch
-								echo "set wireless.radio$phyindex.htmode='$originalhtmode'" | uci batch
-							fi
-
+							mesh_band="2g"
+						else
+							mesh_band=$auto_mesh_band
 						fi
 
-						if [ "$portal_channel" = "auto" ] && [ "$band" = "2g" ]; then
+						if [ "$band" = "$mesh_band" ] && [ "$meshifenabled" -eq 0 ]; then
+							echo "set wireless.m11s$radioindex.disabled='0'" | uci batch
 
-							for i in $(seq 9 1 64); do
-								#Generate a channel, choosing start point of sequence away from end eg "9"
-								chan=$((0x$(printf "$devicemac" | sha256sum | awk '{printf "%s", $1}' | tail -c$i | head -c1)))
+							if [ "$mesh_multi_interfaces" = "disabled" ]; then
+								meshifenabled=1
+							fi
+
+							if [ ! -f "$tmpdir/active_mesh_ifname" ]; then
+								echo "active_mesh_ifname=\"$mesh_ifname\"" > "$tmpdir/active_mesh_ifname"
+							fi
+						else
+							echo "set wireless.m11s$radioindex.disabled='1'" | uci batch
+						fi
+
+						if [ "$band" = "2g" ]; then
+							get_portal_state
+
+							if [ "$auto_mesh_band" = "2g40" ]; then
+								originalhtmode=$(echo "get wireless.$radio.htmode" | uci batch)
+								htmode=$(echo -n "$originalhtmode" | tr "20" "40")
+
+								if [ ! -z "$country" ]; then
+									echo "set wireless.radio$radioindex.noscan='1'" | uci batch
+									echo "set wireless.radio$radioindex.htmode='$htmode'" | uci batch
+								else
+									echo "set wireless.radio$radioindex.noscan='0'" | uci batch
+									echo "set wireless.radio$radioindex.htmode='$originalhtmode'" | uci batch
+								fi
+
+							fi
+
+							if [ "$portal_channel" = "auto" ] && [ "$band" = "2g" ]; then
+
+								for i in $(seq 9 1 64); do
+									#Generate a channel, choosing start point of sequence away from end eg "9"
+									chan=$((0x$(printf "$devicemac" | sha256sum | awk '{printf "%s", $1}' | tail -c$i | head -c1)))
+
+									#Check for max
+									if [ "$chan" -gt 13 ]; then
+										continue
+									fi
+
+									#Check for min
+									if [ "$chan" -le 0 ]; then
+										continue
+									fi
+
+									echo "set wireless.radio$radioindex.channel='$chan'" | uci batch
+									break
+								done
+
+							elif [ "$portal_channel" != "auto" ] && [ "$portal_channel" != "default" ] && [ "$band" = "2g" ]; then
+								chan="$portal_channel"
 
 								#Check for max
 								if [ "$chan" -gt 13 ]; then
-									continue
+									chan=13
 								fi
 
 								#Check for min
 								if [ "$chan" -le 0 ]; then
-									continue
+									chan=1
 								fi
 
-								echo "set wireless.radio$phyindex.channel='$chan'" | uci batch
-								break
-							done
-
-						elif [ "$portal_channel" != "auto" ] && [ "$portal_channel" != "default" ] && [ "$band" = "2g" ]; then
-							chan="$portal_channel"
-
-							#Check for max
-							if [ "$chan" -gt 13 ]; then
-								chan=13
+								echo "set wireless.radio$radioindex.channel='$chan'" | uci batch
 							fi
-
-							#Check for min
-							if [ "$chan" -le 0 ]; then
-								chan=1
-							fi
-
-							echo "set wireless.radio$phyindex.channel='$chan'" | uci batch
 						fi
-					fi
+					done
 				done
 
 				# get list of access points
@@ -2943,13 +2969,17 @@ auto_config() {
 
 				for ap in $aplist; do
 					radio=$(uci get "$ap.device" 2> /dev/null)
+					wiphy=$(radiophy "$radio")
+					phyindex=$(echo "$wiphy" | awk -F "phy" '{printf "%s", $2}')
+					phyindex=$(printf "%x" $phyindex)
 					radioindex=$(echo "$radio" | awk -F "radio" '{printf "%s", $2}')
+					radioindex=$(printf "%x" $radioindex)
 					band=$(uci get "wireless.$radio.band" 2> /dev/null)
 					ssid=$(uci get "$ap.ssid" 2> /dev/null | awk '{printf "%s", $1}')
 					ifname=$(uci get "$ap.ifname" 2> /dev/null | awk '{printf "%s", $1}')
 
 					if [ -z "$ifname" ]; then
-						ifname="phy$radioindex-ap$ifindex"
+						ifname="$wiphy-ap$ifindex"
 						ifindex=$((ifindex+1))
 						echo "set $ap.ifname='$ifname'" | uci batch
 					fi
@@ -2959,7 +2989,7 @@ auto_config() {
 					fi
 
 					if [ "$ssid_suffix_enable" -eq 1 ]; then
-						echo "set $ap.ssid='$ssid-$band-$suffix'" | uci batch
+						echo "set $ap.ssid='$ssid-$band-$suffix-r$radioindex-p$phyindex'" | uci batch
 					else
 						echo "set $ap.ssid='$ssid'" | uci batch
 					fi
@@ -3038,6 +3068,8 @@ auto_config() {
 					fi
 				done
 
+				mesh_gate_state
+				restart_mesh
 				debugtype="debug"
 				syslogmessage="auto config complete...."
 				write_to_syslog
@@ -3180,7 +3212,7 @@ sys_setup() {
 }
 
 default_settings() {
-	echo "del wireless.radio$phyindex.beacon_int" | uci batch 2>/dev/null
+	echo "del wireless.$radio.beacon_int" | uci batch 2>/dev/null
 	echo "del mesh11sd.mesh_params.mesh_fwding" | uci batch 2>/dev/null
 	echo "del mesh11sd.mesh_params.mesh_hwmp_rann_interval" | uci batch 2>/dev/null
 	echo "del mesh11sd.mesh_params.mesh_hwmp_preq_min_interval" | uci batch 2>/dev/null
@@ -3193,8 +3225,13 @@ mobility_settings() {
 	. $tmpdir/active_mesh_ifname
 	stanza=$(uci show wireless | grep ".ifname='$active_mesh_ifname'" | awk -F "." '{printf "%s.%s", $1, $2}')
 	radio=$(uci get "$stanza.device")
-	phyindex="$(echo "$radio" | awk -F "radio" '{printf "%s", $2}')"
-	phy="phy$phyindex"
+	radioindex=$(echo "$radio" | awk -F "phy" '{printf "%s", $2}')
+	radioindex=$(printf "%x" $radioindex)
+
+	phy=$(radiophy "$radio")
+	phyindex=$(echo "$phy" | awk -F "phy" '{printf "%s", $2}')
+	phyindex=$(printf "%x" $phyindex)
+
 	mesh_node_mobility_level=$(uci get mesh11sd.setup.mesh_node_mobility_level 2>/dev/null)
 
 	if [ -z "$mesh_node_mobility_level" ]; then
@@ -3268,6 +3305,15 @@ mobility_settings() {
 		write_to_syslog
 	fi
 
+	get_wiphys
+
+	if [ ! -z "$multi_band" ]; then
+		beacon_int=100
+		debugtype="info"
+		syslogmessage="Qualcomm ath11k detected, beacon interval override to [ $beacon_int ms ] (workaround for MLO bug). Mesh mobility may be suboptimal."
+		write_to_syslog
+	fi
+
 	echo "mesh_node_mobility_level=\"$mesh_node_mobility_level\"; rootmode=\"$rootmode\"; beacon_int=\"$beacon_int\"; dtim_period=\"$dtim_period\"; \
 		rts=\"$rts\"; limit=\"$limit\"; quantum=\"$quantum\"; aql_threshold=\"$aql_threshold\"" > "$tmpdir/mesh_mobility"
 
@@ -3299,12 +3345,12 @@ mobility_settings() {
 		# Beacons carry information used to update link quality metrics, which feed into the Airtime Link Metric (ALM) calculation.
 		# A shorter beacon interval increases the frequency of link quality updates, allowing the ALM to reflect changes in the mobile environment more quickly.
 		# However, it also increases control overhead.
-		echo "set wireless.radio$phyindex.beacon_int='$beacon_int'" | uci batch
+		echo "set wireless.$radio.beacon_int='$beacon_int'" | uci batch
 
 		# DTIM (Discovery Timeout) Period: Total timeout for path discovery attempts.
 		# Set as a number of Beacon Intervals before a path discovery attempts are repeated.
 		# The default is 2 beacon intervals.
-		echo "set wireless.m11s$phyindex.dtim_period='$dtim_period'" | uci batch
+		echo "set wireless.m11s$radioindex.dtim_period='$dtim_period'" | uci batch
 
 		# Mesh Parameter config options
 		echo "set mesh11sd.mesh_params.mesh_fwding='$mesh_fwding'" | uci batch
@@ -5995,6 +6041,58 @@ mbp_dhcp_lan_defaults() {
 	fi
 }
 
+# ================================================================
+# radiophy() - Map UCI radio section to actual phy name
+# Works even when radios are disabled
+# ================================================================
+
+radiophy() {
+	local input="$1"
+
+	# Accept formats like: radio0, wireless.radio0, or wireless.radio0=...
+	if echo "$input" | grep -q '^wireless\.'; then
+		local section="$input"
+	else
+		local section="wireless.${input}"
+	fi
+
+	local path phy
+
+	path=$(uci -q get "${section}.path" 2>/dev/null)
+	phy=$(uci -q get "${section}.phy" 2>/dev/null)
+
+	# If phy is already set in UCI, return it
+	if [ -n "$phy" ]; then
+		echo "$phy"
+		return
+	fi
+
+	# Otherwise try to find phy by path
+	for p in /sys/class/ieee80211/phy*; do
+		[ -d "$p" ] || continue
+		local phyname=$(basename "$p")
+		local phy_path=$(readlink -f "$p/device" 2>/dev/null || echo "")
+
+		if [ -n "$path" ] && echo "$phy_path" | grep -qF "$path"; then
+			echo "$phyname"
+			return
+		fi
+	done
+
+	# Final fallback: search uevent
+	if [ -n "$path" ]; then
+		for p in /sys/class/ieee80211/phy*; do
+			[ -d "$p" ] || continue
+			if grep -q "$path" "$p/device/uevent" 2>/dev/null; then
+				echo "$(basename "$p")"
+				return
+			fi
+		done
+	fi
+
+	return 1
+}
+
 ##############
 # Start point
 ##############
@@ -6376,6 +6474,7 @@ elif [ "$1" = "status" ]; then
 		echo "    \"mesh_phy_index\":\"$mesh_phy_index\","
 	fi
 
+	echo "    \"mesh_multi_interfaces\":\"$mesh_multi_interfaces\","
 	echo "    \"auto_mesh_id\":\"$auto_mesh_id\","
 	echo "    \"mesh_gate_enable\":\"$mesh_gate_enable\","
 
@@ -7540,6 +7639,26 @@ elif [ "$1" = "get_node_type_code" ]; then
 	echo -n "$node_type_code"
 	exit $exitcode
 
+elif [ "$1" = "get_wiphys" ]; then
+	get_wiphys
+	echo "wiphys: $wiphys"
+	echo "radios: $radios"
+	exit 0
+
+elif [ "$1" = "get_wiphy_by_ifname" ]; then
+	get_wiphy_by_ifname "$2"
+	exitcode=$?
+	exit $exitcode
+
+elif [ "$1" = "probe_interface_mac" ]; then
+	probe_interface_mac
+	echo "$dsa_mesh_maclist"
+	exit 0
+
+elif [ "$1" = "radiophy" ]; then
+	radiophy $2
+	exit $?
+
 elif [ "$1" = "daemon" ]; then
 	# Detect what we are running on - Write $tmpdir/wifidetect file with os, device wireless chipset and driver info
 	# vars Sdriver, $chipset labelmac and others are set
@@ -7987,7 +8106,7 @@ elif [ "$1" = "daemon" ]; then
 				# set mesh mac address for this meshconfig
 				refresh_bridgemac
 				. $tmpdir/devicemac
-				get_wiphys
+				get_wiphys #sets $wiphys and $radios
 
 				#### The mesh interface MUST have a unique mac address ie not duplicated from another interface.
 				# We will set it ip as a locally administered version of the bridge mac for facilitating connect/copy functionality
@@ -7995,18 +8114,18 @@ elif [ "$1" = "daemon" ]; then
 
 				if [ "$macfixup" -eq 0 ] && [ "$auto_config" -gt 0 ] && [ "$commit_all" -eq 0 ]; then
 
-					for wiphy in $wiphys; do
+					for radio in $radios; do
 						ucimeshconfig=$(uci get $meshconfig.macaddr 2> /dev/null)
 						convert_to_la "$devicemac"
 
 						if [ -z "$ucimeshconfig" ] && [ "$commit_all" -eq 0 ]; then
 							# No mac address fixup, so add one
-							phyindex=$(echo "$wiphy" | awk -F "phy" '{printf "%s", $2}')
-							phyindex=$(printf "%x" $phyindex)
-							mesh_ifname="$mesh_basename""$phyindex"
+							radioindex=$(echo "$radio" | awk -F "radio" '{printf "%s", $2}')
+							radioindex=$(printf "%x" $radioindex)
+							mesh_ifname="$mesh_basename""$radioindex"
 							index=$(($index + 1))
 							make_indexed_mac "$mac_la" "$index"
-							echo "set wireless.m11s$phyindex.macaddr='$mac_indexed'" | uci batch
+							echo "set wireless.m11s$radioindex.macaddr='$mac_indexed'" | uci batch
 							debugtype="notice"
 							syslogmessage="Setting mac address of mesh interface $mesh_ifname to [ $mac_indexed ]"
 							write_to_syslog
