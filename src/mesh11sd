@@ -1491,7 +1491,7 @@ mesh_gate_state() {
 	aplist=$(uci show wireless | grep "mode='ap'" | awk -F "." '{printf "%s ", $2}')
 	vxlist=$(uci show wireless | grep "vtunlan" | awk -F "." '{printf "%s ", $2}')
 	meshdev=$(uci show wireless | grep "$active_mesh_ifname" | awk -F "." '{printf "%s.%s", $1, $2 }')
-	mesh_device=$(echo "get $meshdev.device" | uci batch 2>/dev/null); echo "$mesh_device"
+	mesh_device=$(echo "get $meshdev.device" | uci batch 2>/dev/null)
 
 	for gate in $aplist; do
 		gate_device=$(echo "get wireless.$gate.device" | uci batch 2>/dev/null)
@@ -2685,6 +2685,7 @@ get_wiphy_by_ifname() {
 }
 
 get_wiphys() {
+	local radio
 	# get list of physical wireless interfaces and reverse the list order
 	wiphys=$(iw list | grep -w "Wiphy" | awk -F "Wiphy " '{printf "%s ", $2}' | awk '{ for (i = NF; i > 0; i = i - 1) printf("%s ", $i) }')
 	radios=$(uci show wireless 2>/dev/null | grep "wifi-device" | awk -F"=" '{print $1}' | awk -F "." '{printf "%s ", $2}')
@@ -2702,7 +2703,7 @@ get_wiphys() {
 
 		log_debug "Max number of VIFs on [ $wiphy ] is [ $total_ifaces ]"
 
-		iw_output=$(iw phy "$wiphy")
+		iw_output=$(iw phy "$wiphy" "info")
 		multi_band=$(echo "$iw_output" | sed -n '/Supported wiphy radios/,/Globally valid interface combinations/{
 			/Supported wiphy radios/d
 			/Globally valid interface combinations/q
@@ -2815,6 +2816,11 @@ auto_config() {
 			. $tmpdir/devicemac
 			get_wiphys
 
+			# Enable all radios at device level
+			for radio in $radios; do
+				echo "set wireless.$radio.disabled='0'" | uci batch
+			done
+
 			if [ ! -z "$wiphys" ]; then
 				for wiphy in $wiphys; do
 					mesh_capable=$(iw phy "$wiphy" info | grep -A 15 "Supported interface modes:" | grep -w "mesh point")
@@ -2837,9 +2843,8 @@ auto_config() {
 
 					# Scan radios for this wiphy
 					for radio in $radios; do
-echo "$(date) iteration:" >> /tmp/scanradios
 						radiowiphy=$(radiophy "$radio")
-echo "$(date) wiphy=$wiphy! radio=$radio! radiowiphy=$radiowiphy!" >> /tmp/scanradios
+
 						if [ "$radiowiphy" != "$wiphy" ]; then
 							continue
 						fi
@@ -2848,7 +2853,6 @@ echo "$(date) wiphy=$wiphy! radio=$radio! radiowiphy=$radiowiphy!" >> /tmp/scanr
 						radioindex=$(printf "%x" $radioindex)
 
 						mesh_ifname="$mesh_basename""r$radioindex""p$phyindex"
-echo "$(date) wiphy=$wiphy! phyindex=$phyindex! radioindex=$radioindex! section=wireless.m11s$radioindex! mesh_ifname=$mesh_ifname!" >> /tmp/scanradios
 
 						echo "set wireless.m11s$radioindex=wifi-iface" | uci batch
 						echo "set wireless.m11s$radioindex.device='radio$radioindex'" | uci batch
@@ -2983,7 +2987,7 @@ echo "$(date) wiphy=$wiphy! phyindex=$phyindex! radioindex=$radioindex! section=
 						ifindex=$((ifindex+1))
 						echo "set $ap.ifname='$ifname'" | uci batch
 					fi
-
+echo "radio=$radio! wiphy=$wiphy! phyindex=$phyindex! radioindex=$radioindex! ifname=$ifname!" >> /tmp/ifnames
 					if [ "$ssid" != "$vtun_base_ssid" ] && [ ! -z "$mesh_gate_base_ssid" ]; then
 						ssid="$mesh_gate_base_ssid"
 					fi
@@ -3225,14 +3229,12 @@ mobility_settings() {
 	. $tmpdir/active_mesh_ifname
 	stanza=$(uci show wireless | grep ".ifname='$active_mesh_ifname'" | awk -F "." '{printf "%s.%s", $1, $2}')
 	radio=$(uci get "$stanza.device")
-	radioindex=$(echo "$radio" | awk -F "phy" '{printf "%s", $2}')
+	radioindex=$(echo "$radio" | awk -F "radio" '{printf "%s", $2}')
 	radioindex=$(printf "%x" $radioindex)
 
 	phy=$(radiophy "$radio")
 	phyindex=$(echo "$phy" | awk -F "phy" '{printf "%s", $2}')
 	phyindex=$(printf "%x" $phyindex)
-
-	mesh_node_mobility_level=$(uci get mesh11sd.setup.mesh_node_mobility_level 2>/dev/null)
 
 	if [ -z "$mesh_node_mobility_level" ]; then
 		mesh_node_mobility_level=1
@@ -3305,12 +3307,17 @@ mobility_settings() {
 		write_to_syslog
 	fi
 
-	get_wiphys
+	iw_output=$(iw phy "$phy" "info")
+	multi_band=$(echo "$iw_output" | sed -n '/Supported wiphy radios/,/Globally valid interface combinations/{
+		/Supported wiphy radios/d
+		/Globally valid interface combinations/q
+		p
+	}')
 
 	if [ ! -z "$multi_band" ]; then
 		beacon_int=100
 		debugtype="info"
-		syslogmessage="Qualcomm ath11k detected, beacon interval override to [ $beacon_int ms ] (workaround for MLO bug). Mesh mobility may be suboptimal."
+		syslogmessage="Multi band wiphy detected, beacon interval override to [ $beacon_int ms ] (workaround for MLO bug). Mesh mobility may be suboptimal."
 		write_to_syslog
 	fi
 
@@ -3456,7 +3463,7 @@ check_path_changes() {
 								if [ "$mesh_path_stabilisation" -eq 1 ] && [ "$detected_state" != "portal" ] ; then
 
 									debugtype="debug"
-									syslogmessage="Station [ $peermac ] has an incrementing path change count, consider its location or adjust txpower and/or rssi_threshold ....."
+									syslogmessage="Station [ $peermac ] has an incrementing path change count, adjust its location, txpower or rssi_threshold ....."
 									write_to_syslog
 									syslogmessage=" ..... or, if not already enabled, consider enabling mesh_leechmode on this node"
 									write_to_syslog
@@ -6042,53 +6049,65 @@ mbp_dhcp_lan_defaults() {
 }
 
 # ================================================================
-# radiophy() - Map UCI radio section to actual phy name
-# Works even when radios are disabled
+# radiophy() v15 - Clean and reliable final version
 # ================================================================
 
 radiophy() {
 	local input="$1"
 
-	# Accept formats like: radio0, wireless.radio0, or wireless.radio0=...
+	# Normalize section name
 	if echo "$input" | grep -q '^wireless\.'; then
 		local section="$input"
 	else
 		local section="wireless.${input}"
 	fi
 
+	# Check if section exists
+	uci -q get "${section}" >/dev/null 2>&1 || return 1
+
 	local path phy
 
-	path=$(uci -q get "${section}.path" 2>/dev/null)
 	phy=$(uci -q get "${section}.phy" 2>/dev/null)
+	path=$(uci -q get "${section}.path" 2>/dev/null)
+echo "$(date) section=$section! path=$path!" >> /tmp/radiophy
+	[ -n "$phy" ] && { echo "$phy"; return 0; }
+	[ -z "$path" ] && return 1
 
-	# If phy is already set in UCI, return it
-	if [ -n "$phy" ]; then
-		echo "$phy"
-		return
-	fi
-
-	# Otherwise try to find phy by path
-	for p in /sys/class/ieee80211/phy*; do
-		[ -d "$p" ] || continue
-		local phyname=$(basename "$p")
-		local phy_path=$(readlink -f "$p/device" 2>/dev/null || echo "")
-
-		if [ -n "$path" ] && echo "$phy_path" | grep -qF "$path"; then
-			echo "$phyname"
-			return
-		fi
-	done
-
-	# Final fallback: search uevent
-	if [ -n "$path" ]; then
+	# Priority 1: MT6000-style +N suffix
+	if echo "$path" | grep -q '+'; then
+		local suffix="${path##*+}"
 		for p in /sys/class/ieee80211/phy*; do
+echo "$(date) path=$path! suffix=$suffix! p=$p!" >> /tmp/radiophy
 			[ -d "$p" ] || continue
-			if grep -q "$path" "$p/device/uevent" 2>/dev/null; then
+			if [ "$(cat "$p/index" 2>/dev/null)" = "$suffix" ]; then
 				echo "$(basename "$p")"
-				return
+				return 0
 			fi
 		done
 	fi
+
+	# Priority 2: Exact path match
+	for p in /sys/class/ieee80211/phy*; do
+echo "$(date) path=$path! p=$p!" >> /tmp/radiophy
+		[ -d "$p" ] || continue
+		local phyname=$(basename "$p")
+echo "$(date) phyname=$phyname! p=$p!" >> /tmp/radiophy
+		if grep -qF "$path" "$p/device/uevent" 2>/dev/null; then
+			echo "$phyname"
+			return 0
+		fi
+	done
+
+	# Priority 3: Base path fallback
+	local base="${path%+*}"
+	for p in /sys/class/ieee80211/phy*; do
+		[ -d "$p" ] || continue
+		local phyname=$(basename "$p")
+		if grep -qF "$base" "$p/device/uevent" 2>/dev/null; then
+			echo "$phyname"
+			return 0
+		fi
+	done
 
 	return 1
 }
