@@ -6049,9 +6049,8 @@ mbp_dhcp_lan_defaults() {
 }
 
 # ================================================================
-# radiophy() v15 - Clean and reliable final version
+# radiophy() Get the phy of a radio
 # ================================================================
-
 radiophy() {
 	local input="$1"
 
@@ -6069,47 +6068,45 @@ radiophy() {
 
 	phy=$(uci -q get "${section}.phy" 2>/dev/null)
 	path=$(uci -q get "${section}.path" 2>/dev/null)
-echo "$(date) section=$section! path=$path!" >> /tmp/radiophy
+
 	[ -n "$phy" ] && { echo "$phy"; return 0; }
 	[ -z "$path" ] && return 1
 
-	# Priority 1: MT6000-style +N suffix
-	if echo "$path" | grep -q '+'; then
-		local suffix="${path##*+}"
-		for p in /sys/class/ieee80211/phy*; do
-echo "$(date) path=$path! suffix=$suffix! p=$p!" >> /tmp/radiophy
-			[ -d "$p" ] || continue
-			if [ "$(cat "$p/index" 2>/dev/null)" = "$suffix" ]; then
-				echo "$(basename "$p")"
-				return 0
-			fi
-		done
+	# Remove +N suffix for base path
+	local base_path="${path%+*}"
+	local suffix="${path##*+}"
+	[ -z "$suffix" ] && suffix="0"
+
+	# Build full sysfs path
+	local fullpath
+	if [ "${base_path:0:9}" = "platform/" ]; then
+		fullpath="/sys/devices/${base_path}"
+	else
+		fullpath="/sys/devices/platform/${base_path}"
 	fi
 
-	# Priority 2: Exact path match
-	for p in /sys/class/ieee80211/phy*; do
-echo "$(date) path=$path! p=$p!" >> /tmp/radiophy
-		[ -d "$p" ] || continue
-		local phyname=$(basename "$p")
-echo "$(date) phyname=$phyname! p=$p!" >> /tmp/radiophy
-		if grep -qF "$path" "$p/device/uevent" 2>/dev/null; then
-			echo "$phyname"
-			return 0
-		fi
-	done
+	# Check if hardware is present
+	[ -d "$fullpath" ] || return 1
 
-	# Priority 3: Base path fallback
-	local base="${path%+*}"
-	for p in /sys/class/ieee80211/phy*; do
-		[ -d "$p" ] || continue
-		local phyname=$(basename "$p")
-		if grep -qF "$base" "$p/device/uevent" 2>/dev/null; then
-			echo "$phyname"
-			return 0
-		fi
-	done
+	# Look for phy directory
+	local phy_dir="${fullpath}/ieee80211"
+	[ -d "$phy_dir" ] || return 1
 
-	return 1
+	# If only one phy, return it
+	if [ "$(ls "$phy_dir" | grep -c '^phy')" -eq 1 ]; then
+		ls "$phy_dir" | grep '^phy'
+		return 0
+	fi
+
+	# Multiple phys → use suffix
+	if [ -d "${phy_dir}/phy${suffix}" ]; then
+		echo "phy${suffix}"
+		return 0
+	fi
+
+	# Fallback: return first phy
+	ls "$phy_dir" | grep '^phy' | head -n1
+	return 0
 }
 
 ##############
