@@ -1729,6 +1729,32 @@ manage_fallback_ula_route() {
 	return 0
 }
 
+is_channel_valid() {
+	local band_to_check="$1"
+	local channel_to_check="$2"
+
+	if [ -z "$band_to_check" ] || [ -z "$channel_to_check" ]; then
+		return 1
+	fi
+
+	get_valid_channels	#returned in $valid_channels
+
+	case $band_to_check in
+		"2g")	start_chan="1"; end_chan="13";;
+		"5g")	start_chan="36"; end_chan="177";;
+		"6g")	start_chan="1"; end_chan="233";;
+		"60g")	start_chan="1"; end_chan="8";;
+		*)	return 1;;
+	esac
+
+	if [ "$channel_to_check" -ge "$start_chan" ] && [ "$channel_to_check" -le "$end_chan" ]; then
+		valid_channel=$(echo "$valid_channels" | grep -wq "$channel_to_check"; echo $?)
+		return "$valid_channel"
+	else
+		return 1
+	fi
+}
+
 scan_channel() {
 	debugtype="debug"
 	syslogmessage="Entering scan channel...."
@@ -1741,50 +1767,46 @@ scan_channel() {
 		if [ ! -z "$meshconfigs" ]; then
 
 			for meshconfig in $meshconfigs; do
-				ifname=$(uci get $meshconfig.ifname)
-				our_channel=$(iw dev $ifname info 2> /dev/null | grep -w "channel" | awk -F " " '{printf "%s", $2}')
+				mesh_if_disabled=$(uci get $meshconfig.disabled)
 
-				if [ -z "$our_channel" ]; then
+				if [ "$mesh_if_disabled" -eq 1 ]; then
 					continue
 				fi
 
-				log_info "Current channel [ $our_channel ]"
-				mesh_id=$(uci get $meshconfig.mesh_id)
-				scanned_channels=$(iw dev $ifname scan 2> /dev/null | grep -F -w -B 20 "MESH ID: $mesh_id" | awk -F "primary channel: " '$2 != "" {printf "%s ",$2}')
-
-				if [ ! -z "$our_channel" ] && [ "$our_channel" -le 14 ]; then
-					band="2g"
-				else
-					band=""
-				fi
-
-				if [ ! -z "$our_channel" ] && [ ! -z "$scanned_channels" ]; then
-
-					for channel in $scanned_channels; do
-
-						if [ "$channel" -gt 14 ] && [ "$band" = "2g" ]; then
-							continue
-						fi
-
-						if [ "$channel" -eq "$our_channel" ]; then
-							continue
-						else
-							device=$(uci get $meshconfig.device)
-							echo "set wireless.$device.channel='$channel'" | uci batch
-
-							debugtype="notice"
-							syslogmessage="Tracking [ $meshconfig, $device, $ifname ] from channel [ $our_channel ] to [ $channel ]"
-							write_to_syslog
-							restart_mesh
-							cctimestamp=""
-							return 0
-						fi
-					done
-				fi
-
-				ucibatch=""
+				ifname=$(uci get $meshconfig.ifname)
+				radio=$(uci get $meshconfig.device)
+				band=$(uci get wireless.$radio.band)
+				our_channel=$(uci get wireless.$radio.channel)
 			done
 
+			log_info "Current channel [ $our_channel ]"
+			mesh_id=$(uci get $meshconfig.mesh_id)
+			scanned_channels=$(iw dev $ifname scan 2> /dev/null | grep -F -w -B 20 "MESH ID: $mesh_id" | awk -F "primary channel: " '$2 != "" {printf "%s ",$2}')
+
+			if [ ! -z "$our_channel" ] && [ ! -z "$scanned_channels" ]; then
+
+				for channel in $scanned_channels; do
+
+					if [ "$channel" -eq "$our_channel" ]; then
+						continue
+					else
+						is_channel_valid "$band" "$channel"
+
+						if [ "$?" -eq 1 ]; then
+							continue
+						fi
+
+						echo "set wireless.$radio.channel='$channel'" | uci batch
+
+						debugtype="notice"
+						syslogmessage="Tracking [ $meshconfig, $device, $ifname ] from channel [ $our_channel ] to [ $channel ]"
+						write_to_syslog
+						restart_mesh
+						cctimestamp=""
+						return 0
+					fi
+				done
+			fi
 		fi
 	fi
 }
@@ -2987,7 +3009,7 @@ auto_config() {
 						ifindex=$((ifindex+1))
 						echo "set $ap.ifname='$ifname'" | uci batch
 					fi
-echo "radio=$radio! wiphy=$wiphy! phyindex=$phyindex! radioindex=$radioindex! ifname=$ifname!" >> /tmp/ifnames
+
 					if [ "$ssid" != "$vtun_base_ssid" ] && [ ! -z "$mesh_gate_base_ssid" ]; then
 						ssid="$mesh_gate_base_ssid"
 					fi
@@ -7674,6 +7696,20 @@ elif [ "$1" = "probe_interface_mac" ]; then
 elif [ "$1" = "radiophy" ]; then
 	radiophy $2
 	exit $?
+
+elif [ "$1" = "is_channel_valid" ]; then
+	band="$2"
+	channel="$3"
+	is_channel_valid "$band" "$channel"
+	is_valid="$?"
+
+	if [ "$is_valid" -eq 0 ]; then
+		echo "valid"
+	else
+		echo "invalid"
+	fi
+
+	exit "$is_valid"
 
 elif [ "$1" = "daemon" ]; then
 	# Detect what we are running on - Write $tmpdir/wifidetect file with os, device wireless chipset and driver info
