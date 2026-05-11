@@ -184,7 +184,7 @@ get_current_setup() {
 	debuglevel=$(uci get mesh11sd.setup.debuglevel 2> /dev/null | awk '{printf "%i", $1}')
 
 	if [ -z "$debuglevel" ]; then
-		debuglevel=1
+		debuglevel=3
 	fi
 
 	syslogmessage="Reading configuration"
