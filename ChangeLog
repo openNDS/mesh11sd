@@ -1,3 +1,17 @@
+mesh11sd (7.0.0)
+  * Fix - set default debuglevel to 3 [bluewavenet]
+  * Fix - 5GHz scan channel fail on multi-band wiphys [bluewavenet]
+  * Add - Refactored radiophy() function, returns wiphy for a given radio [bluewavenet]
+  * Add - refactoring for multi-radio wiphys [bluewavenet]
+  * Add - refactor to support multi band wiphys [bluewavenet]
+  * Fix - get_wiphys() for multi radio wiphys [bluewavenet]
+  * Fix - retrieval of max total interfaces what phy is multi band [bluewavenet]
+  * Fix - add a short delay before exiting when unable to auto configure [bluewavenet]
+  * Fix - add some debug messages when scanning aplist [bluewavenet]
+  * Fix - ensure string arguments sent to iw are double quoted [bluewavenet]
+
+ -- Rob White <dot@blue-wave.net>  Mon, 11 May 2026 08:58:16 +0000
+
 mesh11sd (6.2.1)
   * Add - nfs rule to drop PowerLine discovery packets [bluewavenet]
   * Add - enhanced apmond verbose debug messages [bluewavenet]
