@@ -59,11 +59,12 @@ For ***full*** functionality, the following additional packages are required:
  4. **Mesh Bridge Portal Mode (MBP)** Configures a bridged portal (ie **NO** ipv4 routing) and supports tunnelling of a VXLAN trunk over the mesh backhaul (Optional).
  5. **Trunk Peer Mode (TPM)** providing ethernet downstream VLAN support (via the VXLAN tunnel) from connections to remote peers (Optional).
  6. **Customer Premises Equipment Mode (CPE)** (AKA Client Premises Equipment Mode), providing a routed peer with an upstream Internet connection via the mesh backhaul (Optional). Ideal for WISP or Community Network use cases.
- 7. **Opportunistic Wireless Encryption (OWE)**, with OWE Transition. It provides encryption for open Wi-Fi networks without requiring user authentication, enhancing security for public or guest networks (Default).
+ 7. **Opportunistic Wireless Encryption (OWE)** (Default), with optional OWE Transition. It provides encryption for open Wi-Fi networks without requiring user authentication, enhancing security for public or guest networks. Traditional encryption methods can optionally be set in the Mesh11sd config.
  8. **Portal-Node to Peer-Group Mode**, enabling, for example, "guest" networking over mesh backhaul without the need for setting up a VLAN (Default).
  9. **Access Point Monitoring** (AKA Mesh Gate Monitoring). Incorporates the code and functionality of the apmond package. A centralised Access Point usage database is created, enabling access point statistics, such as client connections, client data volumes etc., to be viewed on the Mesh Portal in json format (Default).
  10. **Mesh Node Mobility Level**, supports three dimensional relative velocities (3dRV) in excess of 1.5 metres per second where conditions allow. Enables mesh_hwmp_rts for on air collision avoidance, enables transmit queue and aql_threshold to minimise latency, enables rapid path convergence.
  11. **Autonomous support of cabled backhaul segments.** Where present, cabled segments will, by default, be given priority over wireless segments.
+ 12. **Integrates OpenNDS (open Network Demarcation Service)**, detecting the presence of OpenNDS and taking control of it as required, particularly as the node type can dynamically change from portal to peer, and router to bridge, depending on upstream connections 
 
 ## 4. Getting Started:
 To get started, you will need at least two mesh capable devices to use as meshnodes. These meshnodes should have:
