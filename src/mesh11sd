@@ -3015,7 +3015,7 @@ auto_config() {
 					fi
 
 					if [ "$ssid_suffix_enable" -eq 1 ]; then
-						echo "set $ap.ssid='$ssid-$band-$suffix-r$radioindex-p$phyindex'" | uci batch
+						echo "set $ap.ssid='$ssid-$band-$suffix-r$radioindex""p$phyindex'" | uci batch
 					else
 						echo "set $ap.ssid='$ssid'" | uci batch
 					fi
@@ -6804,6 +6804,10 @@ elif [ "$1" = "connect" ]; then
 		. $tmpdir/devicemac
 	fi
 
+	if [ -f "$tmpdir/active_mesh_ifname" ]; then
+		. $tmpdir/active_mesh_ifname
+	fi
+
 	if [ "$auto_config" -eq 0 ] || [ -z "$detected_state" ]; then
 		echo "======================================================================"
 		echo "Unable to connect -  enable auto_config to connect to other meshnodes"
@@ -6862,9 +6866,9 @@ elif [ "$1" = "connect" ]; then
 
 				if [ "$pingreturn" -eq 0 ]; then
 					if [ -n "$node_ula" ]; then
-						echo "$ndpmacf [ ipaddress: $ip6addr] [ web_ui: https://[$node_ula] ]"
+						echo "$ndpmacf [ ipaddress: $ip6addr ] [ web_ui: https://[$node_ula] ]"
 					else
-						echo "$ndpmacf [ ipaddress: $ip6addr]"
+						echo "$ndpmacf [ ipaddress: $ip6addr ]"
 					fi
 				fi
 
