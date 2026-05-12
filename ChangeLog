@@ -1,4 +1,5 @@
 mesh11sd (7.0.0)
+  * Fix - shorten ssid suffix string [bluewavenet]
   * Fix - set default debuglevel to 3 [bluewavenet]
   * Fix - 5GHz scan channel fail on multi-band wiphys [bluewavenet]
   * Add - Refactored radiophy() function, returns wiphy for a given radio [bluewavenet]
