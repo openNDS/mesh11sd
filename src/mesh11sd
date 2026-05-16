@@ -6454,7 +6454,7 @@ elif [ "$1" = "auto_config" ]; then
 		if [ "$reply" = "yes" ]; then
 
 			if [ -e "$tmpdir/auto_config_test" ]; then
-				rm "$tmpdir/auto_config_test 2> /dev/null"
+				rm "$tmpdir/auto_config_test" 2> /dev/null
 			fi
 
 			changes=$(uci changes mesh11sd)
