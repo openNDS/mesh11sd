@@ -5156,11 +5156,11 @@ set_iface_path_cost() {
 	local current_path_cost=""
 
 	if [ "$path_cost" -gt 0 ] && [ "$path_cost" -lt 65535 ]; then
-		# Make sure STP is on
+		# Make sure STP is off
 		stpstatus=$(cat "/sys/class/net/$device/bridge/stp_state")
 
-		if [ -z "$stpstatus" ] || [ "$stpstatus" -eq 0 ]; then
-			echo "1" > "/sys/class/net/$device/bridge/stp_state"
+		if [ -z "$stpstatus" ] || [ "$stpstatus" -eq 1 ]; then
+			echo "0" > "/sys/class/net/$device/bridge/stp_state"
 		fi
 
 		br_ifaces=$(brctl showstp "$device" | grep -B 1 -w "port id" | grep "(" | awk '{printf "%s ", $1}')
