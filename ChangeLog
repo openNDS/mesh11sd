@@ -1,4 +1,6 @@
 mesh11sd (7.0.0)
+  * Fix - cabled segment getting blocked so turn off stp and rely on nftables rules [bluewavenet]
+  * Add - numerous debugging messages [bluewavenet]
   * Fix - `auto_config disable` does not delete `auto_config_test` file [khoohaoyit]
   * Fix - shorten ssid suffix string [bluewavenet]
   * Fix - set default debuglevel to 3 [bluewavenet]
@@ -12,7 +14,7 @@ mesh11sd (7.0.0)
   * Fix - add some debug messages when scanning aplist [bluewavenet]
   * Fix - ensure string arguments sent to iw are double quoted [bluewavenet]
 
- -- Rob White <dot@blue-wave.net>  Mon, 11 May 2026 08:58:16 +0000
+ -- Rob White <dot@blue-wave.net>  Mon, 18 May 2026 08:54:08 +0000
 
 mesh11sd (6.2.1)
   * Add - nfs rule to drop PowerLine discovery packets [bluewavenet]
