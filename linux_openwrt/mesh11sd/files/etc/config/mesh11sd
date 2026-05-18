@@ -137,10 +137,10 @@ config mesh11sd 'setup'
 	###########################################################################################
 	# mesh_path_cost (optional)
 	#
-	# sets the STP cost of the mesh network
-	# Default: 10
+	# sets the Interface cost of the mesh network
+	# Default: 65525
 	# Can be set to any value from 0 to 65534
-	# Setting to 0 disables STP
+	# Setting to 0 disables path cost setting
 	#
 	# Example:
 	#option mesh_path_cost '100'
@@ -404,10 +404,10 @@ config mesh11sd 'setup'
 	#
 	# Note: All vtun options require the ip-full and vxlan packages to be installed, otherwise the options will be ignored
 	#
-	# sets the STP cost of the vxtunnel network
+	# sets the Interface cost of the vxtunnel network
 	# Default: 10
 	# Can be set to any value from 0 to 65534
-	# Setting to 0 disables STP
+	# Setting to 0 disables path cost setting
 	#
 	# Example:
 	#option vtun_path_cost '100'
