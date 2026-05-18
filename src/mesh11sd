@@ -2909,11 +2909,15 @@ auto_config() {
 
 						band=$(uci get wireless.radio$radioindex.band 2> /dev/null | awk '{printf "%s", $1}')
 
+						log_debug "wireless.radio$radioindex.band [ $band ]"
+
 						if [ "$auto_mesh_band" = "2g40" ]; then
 							mesh_band="2g"
 						else
 							mesh_band=$auto_mesh_band
 						fi
+
+						log_debug "mesh_band [ $mesh_band ]"
 
 						if [ "$band" = "$mesh_band" ] && [ "$meshifenabled" -eq 0 ]; then
 							echo "set wireless.m11s$radioindex.disabled='0'" | uci batch
@@ -2990,6 +2994,8 @@ auto_config() {
 
 				#Add ssid and suffix
 				suffix=$(echo $devicemac | awk -F":" '{printf "%s%s", $5, $6}')
+
+				log_debug "aplist [ $aplist ], suffix [ $suffix ]"
 
 				ifindex=0
 
@@ -5150,11 +5156,11 @@ set_iface_path_cost() {
 	local current_path_cost=""
 
 	if [ "$path_cost" -gt 0 ] && [ "$path_cost" -lt 65535 ]; then
-		# Make sure STP is on
+		# Make sure STP is off
 		stpstatus=$(cat "/sys/class/net/$device/bridge/stp_state")
 
-		if [ -z "$stpstatus" ] || [ "$stpstatus" -eq 0 ]; then
-			echo "1" > "/sys/class/net/$device/bridge/stp_state"
+		if [ -z "$stpstatus" ] || [ "$stpstatus" -eq 1 ]; then
+			echo "0" > "/sys/class/net/$device/bridge/stp_state"
 		fi
 
 		br_ifaces=$(brctl showstp "$device" | grep -B 1 -w "port id" | grep "(" | awk '{printf "%s ", $1}')
@@ -5999,6 +6005,7 @@ log_info() {
 }
 
 log_debug() {
+	mute=0
 	syslogmessage="$1"
 	debugtype="debug"
 	write_to_syslog
@@ -7716,6 +7723,7 @@ elif [ "$1" = "is_channel_valid" ]; then
 	exit "$is_valid"
 
 elif [ "$1" = "daemon" ]; then
+	mute=0
 	# Detect what we are running on - Write $tmpdir/wifidetect file with os, device wireless chipset and driver info
 	# vars Sdriver, $chipset labelmac and others are set
 	outputfile="/$tmpdir/wifidetect"
@@ -8097,26 +8105,39 @@ elif [ "$1" = "daemon" ]; then
 	ucinamecheck=0
 
 	check_config_params
+	mute="$muteorg"
 
+	log_debug "Initial setup [ system ]"
 	sys_setup
 
+	log_debug "Initial setup [ apmond_cgi ]"
 	setup_apmon_cgi
 
+	log_debug "Initial setup [ refresh_bridgemac ]"
 	refresh_bridgemac
 
+	log_debug "Initial setup [ luci_add_custom ]"
 	luci_add_custom
 
 	get_portal_ula
+	log_debug "portal ula [ $portal_ula ], link to portal [ $link_to_portal ]"
 
 	# Start the main loop
+	log_notice "Starting daemon service..."
+
 	while true; do
 		meshindex=0
 		meshconfigs=""
-		debuglevel=$(uci get mesh11sd.setup.debuglevel 2> /dev/null)
+		debuglevelconfig=$(uci get mesh11sd.setup.debuglevel 2> /dev/null)
+
+		if [ ! -z "$debuglevelconfig" ]; then
+			debuglevel="$debuglevelconfig"
+		fi
 
 		if [ "$enabled" = 1 ]; then
 			#get list of mesh configs
 			meshconfigs=$(uci show wireless 2> /dev/null | grep "mode='mesh'" | awk -F ".mode='mesh'" '{printf "%s ", $1}')
+			log_debug "meshconfigs [ $meshconfigs ]"
 
 			if [ -z "$meshconfigs" ]; then
 				# no mesh configuration yet
@@ -8127,6 +8148,7 @@ elif [ "$1" = "daemon" ]; then
 				############# Autoconfig
 
 				if [ "$auto_config" -ne 0 ] || [ -e "$tmpdir/auto_config_test" ]; then
+					log_debug "Starting auto configure process"
 					auto_config
 				else
 					debugtype="err"
@@ -8178,7 +8200,7 @@ elif [ "$1" = "daemon" ]; then
 							# No mac address fixup, so add one
 							radioindex=$(echo "$radio" | awk -F "radio" '{printf "%s", $2}')
 							radioindex=$(printf "%x" $radioindex)
-							mesh_ifname="$mesh_basename""$radioindex"
+							mesh_ifname=$(uci get "wireless.m11s$radioindex.ifname")
 							index=$(($index + 1))
 							make_indexed_mac "$mac_la" "$index"
 							echo "set wireless.m11s$radioindex.macaddr='$mac_indexed'" | uci batch
