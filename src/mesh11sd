@@ -3597,9 +3597,22 @@ block_bridge_loops() {
 			rulecount=$(nft -a list table bridge mesh11s 2> /dev/null | grep -w -c "$br_iface" | awk '{printf "%s", $1}')
 
 			if [ "$rulecount" -lt 2 ]; then
-				rule_status=$(nft add rule bridge mesh11s mesh_PRE meta iifname { "\"$br_iface\"" } ether saddr "\"$devicemac\"" counter drop 2> /dev/null; echo -n $?)
-				rule_status=$(nft add rule bridge mesh11s mesh_PRE meta iifname { "\"$br_iface\"" } ether saddr "\"$powerline_dicovery_mac\"" counter drop 2> /dev/null; echo -n $?)
-				rule_status=$(nft add rule bridge mesh11s mesh_PRE meta iifname { "\"$br_iface\"" } counter accept 2> /dev/null; echo -n $?)
+				rule_status=$(nft add rule bridge mesh11s mesh_PRE \
+					meta iifname { "\"$br_iface\"" } \
+					ether saddr "\"$devicemac\"" \
+					counter log prefix \"MESH-LOOP-OWN-$br_iface: \" drop \
+					2> /dev/null; echo -n $?)
+
+				rule_status=$(nft add rule bridge mesh11s mesh_PRE \
+					meta iifname { "\"$br_iface\"" } \
+					ether saddr "\"$powerline_dicovery_mac\"" \
+					counter log prefix \"MESH-LOOP-PLC-$br_iface: \" drop \
+					2> /dev/null; echo -n $?)
+
+				rule_status=$(nft add rule bridge mesh11s mesh_PRE \
+					meta iifname { "\"$br_iface\"" } \
+					counter accept \
+					2> /dev/null; echo -n $?)
 			fi
 		done
 	done
@@ -4018,6 +4031,13 @@ check_vtunnel() {
 			echo "set network.vtunlan.device='br-tun$tun_id'" | uci batch
 			echo "set network.vtunlan.ipaddr='$vtun_ip'" | uci batch
 			echo "set network.vtunlan.netmask='$vtun_mask'" | uci batch
+
+			convert_to_la "$devicemac"
+			index=$(($index + 1))
+			make_indexed_mac "$mac_la" "$index"
+			vtunbridgemac="$mac_indexed"
+
+			echo "set network.vtunlan.macaddr='$vtunbridgemac'" | uci batch
 			echo "set network.vtunlan.proto='$proto'" | uci batch
 			uci set network.vtunlan.ip6assign='64'
 			echo "set network.vtunlan.ip6hint='$ula_vxsubnet'" | uci batch
@@ -6138,6 +6158,145 @@ radiophy() {
 	return 0
 }
 
+# =============================================================================
+# move_ethernet_to_vxlan_bridge()
+# Move physical Ethernet ports to VXLAN bridge if needed.
+# Safe to call repeatedly (after auto_config + end of main loop).
+# =============================================================================
+move_ethernet_to_vxlan_bridge() {
+
+    # Skip in CPE mode
+    if [ "$portal_detect" -eq 3 ]; then
+        return 0
+    fi
+
+log_debug "vtun_enable=$vtun_enable! tun_id=$tun_id!"
+
+    # Only proceed if VXLAN is enabled and the bridge actually exists
+    if [ "$vtun_enable" -ne 1 ] || [ -z "$tun_id" ] || [ "$tun_id" -eq 0 ]; then
+        return 0
+    fi
+
+    local vxlan_bridge="br-tun$tun_id"
+    local main_bridge="br-$auto_mesh_network"
+log_debug "vxlan_bridge=$vxlan_bridge! main_bridge=$main_bridge!"
+    # Check if VXLAN bridge exists
+    if ! brctl show "$vxlan_bridge" >/dev/null 2>&1; then
+        return 0
+    fi
+
+    local lan_ports=$(brctl show "$main_bridge" 2>/dev/null | awk 'NR>1 {print $1}')
+    local moved_count=0
+log_debug "lan_ports=$lan_ports! moved_count=$moved_count!"
+    for port in $lan_ports; do
+log_debug "first, port=$port!"
+        case "$port" in
+            m-11s-*|phy*|vxradio*|vxlan*|br-*)
+                continue
+                ;;
+        esac
+log_debug "second, port=$port!"
+        case "$port" in
+            lan*|eth*|usb*|enx*)
+                if brctl show "$main_bridge" 2>/dev/null | grep -q "$port"; then
+                    log_debug "Moving $port from $main_bridge → $vxlan_bridge"
+                    brctl delif "$main_bridge" "$port" 2>/dev/null || true
+                    brctl addif "$vxlan_bridge" "$port" 2>/dev/null || true
+                    ip link set "$port" up 2>/dev/null || true
+                    moved_count=$((moved_count + 1))
+                fi
+                ;;
+        esac
+    done
+
+    if [ $moved_count -gt 0 ]; then
+        log_notice "Moved $moved_count Ethernet port(s) to VXLAN bridge ($vxlan_bridge)"
+    fi
+
+    ip link set "$vxlan_bridge" up 2>/dev/null || true
+}
+
+# =============================================================================
+# move_ethernet_back_to_main_bridge()
+# Revert Ethernet ports back to the main mesh bridge
+# =============================================================================
+move_ethernet_back_to_main_bridge() {
+
+    local vxlan_bridge="br-tun$tun_id"
+    local main_bridge="br-$auto_mesh_network"
+
+    # Safety check - only revert if VXLAN bridge exists
+    if ! brctl show "$vxlan_bridge" >/dev/null 2>&1; then
+        log_info "VXLAN bridge $vxlan_bridge does not exist → nothing to revert"
+        return 0
+    fi
+
+    log_info "Moving Ethernet ports back from $vxlan_bridge to $main_bridge"
+
+    local tun_ports=$(brctl show "$vxlan_bridge" 2>/dev/null | awk 'NR>1 {print $1}')
+
+    for port in $tun_ports; do
+        case "$port" in
+            m-11s-*|phy*|vxradio*|vxlan*|br-*)
+                continue
+                ;;
+        esac
+
+        case "$port" in
+            lan*|eth*|usb*|enx*)
+                if brctl show "$vxlan_bridge" 2>/dev/null | grep -q "^${port}[[:space:]]"; then
+                    log_debug "Removing $port from $vxlan_bridge"
+                    brctl delif "$vxlan_bridge" "$port" 2>/dev/null || true
+                fi
+
+                if ! brctl show "$main_bridge" 2>/dev/null | grep -q "^${port}[[:space:]]"; then
+                    log_debug "Adding $port back to $main_bridge"
+                    brctl addif "$main_bridge" "$port" 2>/dev/null || true
+                fi
+
+                ip link set "$port" up 2>/dev/null || true
+                ;;
+        esac
+    done
+
+    ip link set "$main_bridge" up 2>/dev/null || true
+
+    log_notice "Ethernet ports moved back to main bridge ($main_bridge)"
+}
+
+get_indexed_mac() {
+	refresh_bridgemac
+
+	if [ -f "$tmpdir/last_mac_indexed" ]; then
+		. $tmpdir/last_mac_indexed
+	else
+		if [ -f "/etc/factory_mac" ]; then
+			. /etc/factory_mac
+		else
+			refresh_bridgemac
+			factory_mac="$devicemac"
+		fi
+		convert_to_la "$factory_mac"
+		last_mac_indexed="$mac_la"
+	fi
+
+	increment_mac_octet "$last_mac_indexed"
+	# $mac_indexed now contains the indexed mac
+}
+
+increment_mac_octet() {
+	local mac="$1"
+	local inc="${2:-1}"		# default +1
+
+	IFS=: read -r o1 o2 o3 o4 o5 o6 <<- EOF
+	$mac
+	EOF
+
+	local new=$(( (0x$o4 + inc) % 256 ))
+	mac_indexed=$(printf '%s:%s:%s:%02x:%s:%s\n' "$o1" "$o2" "$o3" "$new" "$o5" "$o6")
+	echo "last_mac_indexed=$mac_indexed" > $tmpdir/last_mac_indexed
+}
+
 ##############
 # Start point
 ##############
@@ -7487,6 +7646,11 @@ elif [ "$1" = "set_ula_prefix" ]; then
 	echo -n "$ula_prefix"
 	exit $retval
 
+elif [ "$1" = "get_indexed_mac" ]; then
+	get_indexed_mac
+	echo -n "$mac_indexed"
+	exit 0
+
 elif [ "$1" = "str_to_hex" ]; then
 	str_to_hex "$2"
 
@@ -7730,6 +7894,9 @@ elif [ "$1" = "daemon" ]; then
 	wifi_chipset_detect
 	installver="legacy"
 
+	# Destroy our nft table if it exists
+	nft destroy table bridge mesh11s
+
 	if [ -f "/etc/factory_mac" ]; then
 		. /etc/factory_mac
 
@@ -7743,6 +7910,10 @@ elif [ "$1" = "daemon" ]; then
 
 	if [ ! -f "/etc/factory_mac" ]; then
 		echo "factory_mac=\"$factory_mac\"; installver=\"$version\"" > /etc/factory_mac
+	fi
+
+	if [ -f "$tmpdir/last_mac_indexed" ]; then
+		rm $tmpdir/last_mac_indexed
 	fi
 
 	# Fix dropbear - make sure reboot terminates ssh session before closing wireless
@@ -8427,7 +8598,6 @@ elif [ "$1" = "daemon" ]; then
 			check_vtunnel
 			check_gate
 			check_mesh_gate_only
-			block_bridge_loops
 			check_dadfailed
 			check_path_changes
 
@@ -8489,6 +8659,9 @@ elif [ "$1" = "daemon" ]; then
 			/sbin/service network restart
 		fi
 
+		move_ethernet_to_vxlan_bridge
+		block_bridge_loops
+#		echo "index=$index" > $tmpdir/index
 		log_info "Checkinterval [$checkinterval]"
 
 		sleep $checkinterval
