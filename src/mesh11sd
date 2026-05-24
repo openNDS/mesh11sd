@@ -790,13 +790,29 @@ get_current_setup() {
 		vtun_path_cost=$(uci get mesh11sd.setup.vtun_path_cost 2> /dev/null)
 
 		if [ -z "$vtun_path_cost" ]; then
-			vtun_path_cost="10"
+			vtun_path_cost="65525"
 		fi
 
 		syslogmessage="option vtun_path_cost [ $vtun_path_cost ]"
 		debugtype="info"
 		mute="$mutestate"
 		write_to_syslog
+
+		#####
+		vtun_isolate=$(uci get mesh11sd.setup.vtun_isolate 2> /dev/null)
+
+		if [ ! -z "$vtun_isolate" ] && [ "$vtun_isolate" -gt 1 ]; then
+			vtun_isolate="1"
+		else
+			vtun_isolate="0"
+		fi
+
+
+		syslogmessage="option vtun_isolate [ $vtun_isolate ]"
+		debugtype="info"
+		mute="$mutestate"
+		write_to_syslog
+
 
 	else
 		vtun_enable=0
@@ -2095,8 +2111,12 @@ portal_watchdog() {
 			write_to_watchdog_nonvolatile_log
 			network_restart=3
 			/sbin/service network restart
+			move_ethernet_to_vxlan_bridge
+			set_bridge_mac_addresses
+
 			wait_for_mesh
 			dhcp4_renew
+		fi
 
 		if [ "$link_to_portal" -ne 0 ] && [ "$network_restart" -eq 3 ]; then
 			# restarting the network did not work so:
@@ -2125,9 +2145,8 @@ portal_watchdog() {
 		failcount=0
 		network_restart=0
 	fi
-fi
 
-if [ "$detected_state" = "portal" ]; then
+	if [ "$detected_state" = "portal" ]; then
 		ipv4statusdev=$(ip -4 addr show "$device" 2> /dev/null | grep -q "inet"; echo $?)
 
 		if [ "$vtun_enable" -eq 1 ]; then
@@ -2138,6 +2157,9 @@ if [ "$detected_state" = "portal" ]; then
 
 		if [ "$ipv4statusdev" -eq 1 ] || [ "$ipv4statustun" -eq 1 ]; then
 			/sbin/service network restart
+			move_ethernet_to_vxlan_bridge
+			set_bridge_mac_addresses
+
 		fi
 	fi
 }
@@ -2509,22 +2531,6 @@ convert_from_la() {
 	mac_from_la="$octet:$p2:$p3:$p4:$p5:$p6"
 }
 
-make_indexed_mac() {
-	local mac_to_convert="$1"
-	local index="$2"
-	eval $(echo "$mac_to_convert" | awk -F":" '{printf "p1=%s p2=%s p3=%s p4=%s p5=%s p6=%s", $1 ,$2, $3, $4, $5, $6}')
-	indexed_octet=$(printf '%x\n' "$(( 0x$index + 0x$p4 ))")
-	local len=${#indexed_octet}
-	indexed_octet=${indexed_octet:$(($len-2)):2}
-
-	if [ "$len" -eq 1 ]; then
-		indexed_octet="0$indexed_octet"
-	fi
-
-	mac_indexed="$p1:$p2:$p3:$indexed_octet:$p5:$p6"
-}
-
-
 wait_for_mesh() {
 	fixup1=1
 	get_mesh_iflist
@@ -2689,10 +2695,9 @@ ccpy_setup() {
 
 ndp_scan_peer() {
 	# NDP - Send linklocal multicast ip6-allrouters
-	if [ -f "$tmpdir/devicemac" ]; then
-		. $tmpdir/devicemac
-		response=$(ping -q -c 8 "ff02::2%""$device" &>/dev/null &)
-	fi
+	br_dev="br-$auto_mesh_network"
+
+	response=$(ping -q -c 8 "ff02::2%""$br_dev" &>/dev/null &)
 }
 
 get_wiphy_by_ifname() {
@@ -2993,7 +2998,8 @@ auto_config() {
 				aplist=$(uci show wireless 2> /dev/null | grep "='ap'" | awk -F "." '{printf "%s.%s ", $1, $2}')
 
 				#Add ssid and suffix
-				suffix=$(echo $devicemac | awk -F":" '{printf "%s%s", $5, $6}')
+				. /etc/factory_mac
+				suffix=$(echo $factory_mac | awk -F":" '{printf "%s%s", $5, $6}')
 
 				log_debug "aplist [ $aplist ], suffix [ $suffix ]"
 
@@ -3644,11 +3650,11 @@ check_rule_status() {
 check_if_peer() {
 	ispeer=1
 	eval $(echo "$ndpmac" | awk -F":" '{printf "p1=%s p2=%s p3=%s p4=%s p5=%s p6=%s", $1 ,$2, $3, $4, $5, $6}')
-	local ndpmacid="$p2-$p3-$p5-$p6"
+	local ndpmacid="$p2-$p3-$p5"
 
 	for peermac in $peerlist; do
 		eval $(echo "$peermac" | awk -F":" '{printf "p1=%s p2=%s p3=%s p4=%s p5=%s p6=%s", $1 ,$2, $3, $4, $5, $6}')
-		local peermacid="$p2-$p3-$p5-$p6"
+		local peermacid="$p2-$p3-$p5"
 
 		if [ "$peermacid" = "$ndpmacid" ]; then
 			ispeer=0
@@ -3984,12 +3990,16 @@ check_vtunnel() {
 					uci set firewall.vxlan_fwd.src='vtunlan'
 					uci set firewall.vxlan_fwd.dest='wan'
 
+					if [ "$vtun_isolate" -eq 0 ]; then 
+						uci set firewall.lan_tun=forwarding
+						uci set firewall.lan_tun.src='vtunlan'
+						uci set firewall.lan_tun.dest='lan'
+					fi
+
 					vtunnel="configured"
 					/sbin/service network reload
 					/sbin/service firewall restart
-					convert_to_la "$devicemac"
-					index=$(($index + 1))
-					make_indexed_mac "$mac_la" "$index"
+					get_indexed_mac
 					vxmac_indexed="$mac_indexed"
 					link_local_addr=$(ip addr show "$device" | grep "inet6 fe80" | awk '{printf "%s", $2}' | awk -F "/" '{printf "%s", $1}')
 
@@ -4031,13 +4041,6 @@ check_vtunnel() {
 			echo "set network.vtunlan.device='br-tun$tun_id'" | uci batch
 			echo "set network.vtunlan.ipaddr='$vtun_ip'" | uci batch
 			echo "set network.vtunlan.netmask='$vtun_mask'" | uci batch
-
-			convert_to_la "$devicemac"
-			index=$(($index + 1))
-			make_indexed_mac "$mac_la" "$index"
-			vtunbridgemac="$mac_indexed"
-
-			echo "set network.vtunlan.macaddr='$vtunbridgemac'" | uci batch
 			echo "set network.vtunlan.proto='$proto'" | uci batch
 			uci set network.vtunlan.ip6assign='64'
 			echo "set network.vtunlan.ip6hint='$ula_vxsubnet'" | uci batch
@@ -4060,10 +4063,7 @@ check_vtunnel() {
 			/sbin/service network restart
 			wait_for_interface "$device"
 			vtunnel="configured"
-
-			convert_to_la "$devicemac"
-			index=$(($index + 1))
-			make_indexed_mac "$mac_la" "$index"
+			get_indexed_mac
 			vxmac_indexed="$mac_indexed"
 			link_local_addr="$(ip addr show "$device" | grep "inet6 fe80" | awk '{printf "%s", $2}' | awk -F "/" '{printf "%s", $1}')"
 
@@ -4093,10 +4093,6 @@ check_vtunnel() {
 
 		elif [ "$vxlan_status" -eq 1 ] && [ "$commit_all" -eq 1 ]; then
 			. $tmpdir/devicemac
-			convert_to_la "$devicemac"
-			index=$(($index + 1))
-			make_indexed_mac "$mac_la" "$index"
-			vxmac_indexed="$mac_indexed"
 			link_local_addr=$(ip addr show "$device" | grep "inet6 fe80" | awk '{printf "%s", $2}' | awk -F "/" '{printf "%s", $1}')
 
 			if [ -z "$link_local_addr"]; then
@@ -4144,6 +4140,9 @@ check_vtunnel() {
 		set_iface_path_cost "$vtun_path_cost" "$device" "vxlan$tun_id"
 		. $tmpdir/devicemac
 	fi
+
+	move_ethernet_to_vxlan_bridge
+	set_bridge_mac_addresses
 }
 
 check_dadfailed() {
@@ -5174,13 +5173,25 @@ set_iface_path_cost() {
 	local iface="$3"
 	local other_path_cost=$(( 65535 - $path_cost))
 	local current_path_cost=""
+	local mesh_bridge="br-$auto_mesh_network"
+	local vxlan_bridge="br-tun$tun_id"
+	local stpstate=0
+	local stpstate_enabled=1
+	local stpstate_disabled=0
 
 	if [ "$path_cost" -gt 0 ] && [ "$path_cost" -lt 65535 ]; then
-		# Make sure STP is off
+		# Make sure STP is off on the mesh bridge but on on the vxlan bridge
 		stpstatus=$(cat "/sys/class/net/$device/bridge/stp_state")
 
-		if [ -z "$stpstatus" ] || [ "$stpstatus" -eq 1 ]; then
-			echo "0" > "/sys/class/net/$device/bridge/stp_state"
+		if [ "$device" = "$mesh_bridge" ]; then
+			stpstate=$stpstate_disabled
+		elif [ "$device" = "$vxlan_bridge" ]; then
+			#stpstate=stpstate_enabled
+			stpstate=$stpstate_disabled #Force to disabled
+		fi
+
+		if [ -z "$stpstatus" ] || [ "$stpstatus" -ne "$stpstate" ]; then
+			echo "$stpstate" > "/sys/class/net/$device/bridge/stp_state"
 		fi
 
 		br_ifaces=$(brctl showstp "$device" | grep -B 1 -w "port id" | grep "(" | awk '{printf "%s ", $1}')
@@ -6159,61 +6170,91 @@ radiophy() {
 }
 
 # =============================================================================
+# set_bridge_mac_addresses()
+# Ensure br-lan and br-tun$X have different MAC addresses
+# =============================================================================
+set_bridge_mac_addresses() {
+
+	local main_bridge="br-$auto_mesh_network"
+	local vxlan_bridge="br-tun$tun_id"
+
+	# Skip if VXLAN is not active
+	if [ "$vtun_enable" -ne 1 ] || [ -z "$tun_id" ] || [ "$tun_id" -eq 0 ]; then
+		return 0
+	fi
+
+	# Set VXLAN bridge a locally administered MAC (flip the universal/local bit)
+	if [ -f "$tmpdir/vxlan_mac" ]; then
+		. $tmpdir/vxlan_mac
+	else
+		get_indexed_mac
+		vxlan_mac="$mac_indexed"
+		echo "vxlan_mac=\"$vxlan_mac\"" > $tmpdir/vxlan_mac
+	fi
+
+	current_mac=$(ip link show "$vxlan_bridge" | grep -o 'link/ether [^ ]*' | awk '{print $2}')
+
+	if [ "$current_mac" != "$vxlan_mac" ]; then
+		log_debug "Setting $vxlan_bridge MAC to $vxlan_mac"
+		ip link set "$vxlan_bridge" address "$vxlan_mac" 2>/dev/null || true
+	fi
+}
+
+# =============================================================================
 # move_ethernet_to_vxlan_bridge()
 # Move physical Ethernet ports to VXLAN bridge if needed.
 # Safe to call repeatedly (after auto_config + end of main loop).
 # =============================================================================
 move_ethernet_to_vxlan_bridge() {
 
-    # Skip in CPE mode
-    if [ "$portal_detect" -eq 3 ]; then
-        return 0
-    fi
+	# Skip in CPE mode
+	if [ "$portal_detect" -eq 3 ]; then
+		return 0
+	fi
 
-log_debug "vtun_enable=$vtun_enable! tun_id=$tun_id!"
+	# Only proceed if VXLAN is enabled and the bridge actually exists
+	if [ "$vtun_enable" -ne 1 ] || [ -z "$tun_id" ] || [ "$tun_id" -eq 0 ]; then
+		return 0
+	fi
 
-    # Only proceed if VXLAN is enabled and the bridge actually exists
-    if [ "$vtun_enable" -ne 1 ] || [ -z "$tun_id" ] || [ "$tun_id" -eq 0 ]; then
-        return 0
-    fi
+	local vxlan_bridge="br-tun$tun_id"
+	local main_bridge="br-$auto_mesh_network"
+	log_debug "vxlan_bridge [ $vxlan_bridge ], mesh_bridge [ $main_bridge ]"
 
-    local vxlan_bridge="br-tun$tun_id"
-    local main_bridge="br-$auto_mesh_network"
-log_debug "vxlan_bridge=$vxlan_bridge! main_bridge=$main_bridge!"
-    # Check if VXLAN bridge exists
-    if ! brctl show "$vxlan_bridge" >/dev/null 2>&1; then
-        return 0
-    fi
+	# Check if VXLAN bridge exists
+	if ! brctl show "$vxlan_bridge" >/dev/null 2>&1; then
+		return 0
+	fi
 
-    local lan_ports=$(brctl show "$main_bridge" 2>/dev/null | awk 'NR>1 {print $1}')
-    local moved_count=0
-log_debug "lan_ports=$lan_ports! moved_count=$moved_count!"
-    for port in $lan_ports; do
-log_debug "first, port=$port!"
-        case "$port" in
-            m-11s-*|phy*|vxradio*|vxlan*|br-*)
-                continue
-                ;;
-        esac
-log_debug "second, port=$port!"
-        case "$port" in
-            lan*|eth*|usb*|enx*)
-                if brctl show "$main_bridge" 2>/dev/null | grep -q "$port"; then
-                    log_debug "Moving $port from $main_bridge → $vxlan_bridge"
-                    brctl delif "$main_bridge" "$port" 2>/dev/null || true
-                    brctl addif "$vxlan_bridge" "$port" 2>/dev/null || true
-                    ip link set "$port" up 2>/dev/null || true
-                    moved_count=$((moved_count + 1))
-                fi
-                ;;
-        esac
-    done
+	local lan_ports=$(brctl show "$main_bridge" 2>/dev/null | awk 'NR>1 {print $1}')
+	local moved_count=0
 
-    if [ $moved_count -gt 0 ]; then
-        log_notice "Moved $moved_count Ethernet port(s) to VXLAN bridge ($vxlan_bridge)"
-    fi
+	for port in $lan_ports; do
 
-    ip link set "$vxlan_bridge" up 2>/dev/null || true
+		case "$port" in
+			m-11s-*|phy*|vxradio*|vxlan*|br-*)
+			continue
+			;;
+		esac
+
+		case "$port" in
+			lan*|eth*|usb*|enx*)
+				if brctl show "$main_bridge" 2>/dev/null | grep -q "$port"; then
+					log_debug "Moving $port from $main_bridge → $vxlan_bridge"
+					brctl delif "$main_bridge" "$port" 2>/dev/null || true
+					brctl addif "$vxlan_bridge" "$port" 2>/dev/null || true
+					ip link set "$port" up 2>/dev/null || true
+					moved_count=$((moved_count + 1))
+				fi
+			;;
+		esac
+	done
+
+	if [ $moved_count -gt 0 ]; then
+		log_notice "Moved $moved_count Ethernet port(s) to VXLAN bridge ($vxlan_bridge)"
+	fi
+
+	ip link set "$vxlan_bridge" up 2>/dev/null || true
 }
 
 # =============================================================================
@@ -6722,6 +6763,7 @@ elif [ "$1" = "status" ]; then
 		echo "    \"vtun_gate_encryption\":\"$vtun_gate_encryption\","
 		echo "    \"vtun_base_ssid\":\"$vtun_base_ssid\","
 		echo "    \"vtun_path_cost\":\"$vtun_path_cost\","
+		echo "    \"vtun_isolate\":\"$vtun_isolate\","
 	fi
 
 
@@ -6961,6 +7003,7 @@ elif [ "$1" = "status" ]; then
 elif [ "$1" = "connect" ]; then
 	mute=$mutestate
 	firstloop=0
+	vxlan_status=$(ip link show vxlan$tun_id &> /dev/null; echo $?)
 
 	if [ -f "$tmpdir/is_portal" ]; then
 		. $tmpdir/is_portal
@@ -7005,8 +7048,6 @@ elif [ "$1" = "connect" ]; then
 		for connectto in $connectlist; do
 			linklocal="${connectto%,*}"
 			ndpmac="${connectto##*,}"
-			nodeid=$(echo "$ndpmac" | awk -F ":" '{printf "%s%s", $5. $6}')
-
 			check_if_peer
 
 			if [ "$ispeer" -ne 0 ]; then
@@ -7028,11 +7069,11 @@ elif [ "$1" = "connect" ]; then
 				# Construct final clean 8-segment ULA for this peer
 				node_ula="$ula_base:$ula_subnet:$eui64_formatted"
 
-				pingreturn=$(ping6 -q -c 1 -W 1 -I $device $ip6addr &>/dev/null; echo $?)
+				pingreturn=$(ping6 -q -c 1 -W 1 -I $br_dev $ip6addr &>/dev/null; echo $?)
 
 				if [ "$pingreturn" -eq 0 ]; then
 					if [ -n "$node_ula" ]; then
-						echo "$ndpmacf [ ipaddress: $ip6addr ] [ web_ui: https://[$node_ula] ]"
+						echo "$ndpmacf [ ipaddress: $node_ula ] [ web_ui: https://[$node_ula] ]"
 					else
 						echo "$ndpmacf [ ipaddress: $ip6addr ]"
 					fi
@@ -7916,6 +7957,10 @@ elif [ "$1" = "daemon" ]; then
 		rm $tmpdir/last_mac_indexed
 	fi
 
+	if [ -f "$tmpdir/vxlan_mac" ]; then
+		rm $tmpdir/vxlan_mac
+	fi
+
 	# Fix dropbear - make sure reboot terminates ssh session before closing wireless
 	fix_dropbear
 
@@ -8139,7 +8184,8 @@ elif [ "$1" = "daemon" ]; then
 				write_to_syslog
 			fi
 
-			suffix=$(echo $bridge_mac | awk -F":" '{printf "%s%s", $5, $6}')
+			. /etc/factory_mac
+			suffix=$(echo $factory_mac | awk -F":" '{printf "%s%s", $5, $6}')
 
 			if [ "$cpe_mode" = "relay" ]; then
 				## Relay Mode - May fail with some versions of Android, Android turns off its interface after ~60 seconds - because Google
@@ -8247,6 +8293,9 @@ elif [ "$1" = "daemon" ]; then
 		fi
 
 		/sbin/service network restart
+		move_ethernet_to_vxlan_bridge
+		set_bridge_mac_addresses
+
 		/sbin/service dnsmasq restart
 		/sbin/service firewall restart
 		sleep 5
@@ -8365,15 +8414,13 @@ elif [ "$1" = "daemon" ]; then
 
 					for radio in $radios; do
 						ucimeshconfig=$(uci get $meshconfig.macaddr 2> /dev/null)
-						convert_to_la "$devicemac"
 
 						if [ -z "$ucimeshconfig" ] && [ "$commit_all" -eq 0 ]; then
 							# No mac address fixup, so add one
 							radioindex=$(echo "$radio" | awk -F "radio" '{printf "%s", $2}')
 							radioindex=$(printf "%x" $radioindex)
 							mesh_ifname=$(uci get "wireless.m11s$radioindex.ifname")
-							index=$(($index + 1))
-							make_indexed_mac "$mac_la" "$index"
+							get_indexed_mac
 							echo "set wireless.m11s$radioindex.macaddr='$mac_indexed'" | uci batch
 							debugtype="notice"
 							syslogmessage="Setting mac address of mesh interface $mesh_ifname to [ $mac_indexed ]"
@@ -8385,15 +8432,12 @@ elif [ "$1" = "daemon" ]; then
 					# do the same for ap interfaces, indexing the la mac
 					aplist=$(uci show wireless | grep "mode='ap'" | awk -F "." '{printf "%s ", $2}')
 
-					convert_to_la "$devicemac"
-
 					for ap in $aplist; do
 
 						uciapconfig=$(uci get wireless.$ap.macaddr 2> /dev/null)
 
 						if [ -z "$uciapconfig" ] && [ "$commit_all" -eq 0 ]; then
-							index=$(($index + 1))
-							make_indexed_mac "$mac_la" "$index"
+							get_indexed_mac
 							echo "set wireless.$ap.macaddr=$mac_indexed" | uci batch
 						fi
 					done
@@ -8596,6 +8640,7 @@ elif [ "$1" = "daemon" ]; then
 
 			# check if the vtunnel is needed and if it is, is it configured
 			check_vtunnel
+
 			check_gate
 			check_mesh_gate_only
 			check_dadfailed
@@ -8660,8 +8705,8 @@ elif [ "$1" = "daemon" ]; then
 		fi
 
 		move_ethernet_to_vxlan_bridge
+		set_bridge_mac_addresses
 		block_bridge_loops
-#		echo "index=$index" > $tmpdir/index
 		log_info "Checkinterval [$checkinterval]"
 
 		sleep $checkinterval
