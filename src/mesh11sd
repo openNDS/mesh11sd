@@ -954,7 +954,7 @@ get_current_setup() {
 	gateway_proxy_arp=$(uci get mesh11sd.setup.gateway_proxy_arp 2> /dev/null)
 
 	if [ -z "$gateway_proxy_arp" ]; then
-		gateway_proxy_arp="1"
+		gateway_proxy_arp="0"
 	fi
 
 	if [ "$gateway_proxy_arp" -ne 0 ]; then
@@ -1168,6 +1168,18 @@ get_current_setup() {
 	fi
 
 	syslogmessage="option odhcpd_log_level [ $odhcpd_log_level ]"
+	debugtype="info"
+	mute="$mutestate"
+	write_to_syslog
+
+	#####
+	move_ethernet_to_vxlan_bridge=$(uci get mesh11sd.setup.move_ethernet_to_vxlan_bridge 2> /dev/null)
+
+	if [ -z "$move_ethernet_to_vxlan_bridge" ]; then
+		move_ethernet_to_vxlan_bridge="0"
+	fi
+
+	syslogmessage="option move_ethernet_to_vxlan_bridge [ $move_ethernet_to_vxlan_bridge ]"
 	debugtype="info"
 	mute="$mutestate"
 	write_to_syslog
@@ -3227,7 +3239,7 @@ sys_setup() {
 	echo 1 > /proc/sys/net/ipv4/conf/$device/arp_notify
 	echo 0 > /proc/sys/net/ipv4/conf/all/proxy_arp
 	echo 0 > /proc/sys/net/ipv4/conf/default/proxy_arp
-	echo 1 > /proc/sys/net/ipv4/conf/$device/proxy_arp
+	echo 0 > /proc/sys/net/ipv4/conf/$device/proxy_arp
 	echo 0 > /proc/sys/net/ipv4/conf/all/proxy_arp_pvlan
 	echo 0 > /proc/sys/net/ipv4/conf/default/proxy_arp_pvlan
 	echo 0 > /proc/sys/net/ipv4/conf/$device/proxy_arp_pvlan
@@ -3241,9 +3253,9 @@ sys_setup() {
 	echo 1 > /proc/sys/net/ipv6/conf/all/forwarding
 	echo 1 > /proc/sys/net/ipv6/conf/default/forwarding
 	echo 1 > /proc/sys/net/ipv6/conf/$device/forwarding
-	echo 1 > /proc/sys/net/ipv6/conf/all/proxy_ndp
-	echo 1 > /proc/sys/net/ipv6/conf/default/proxy_ndp
-	echo 1 > /proc/sys/net/ipv6/conf/$device/proxy_ndp
+	echo 0 > /proc/sys/net/ipv6/conf/all/proxy_ndp
+	echo 0 > /proc/sys/net/ipv6/conf/default/proxy_ndp
+	echo 0 > /proc/sys/net/ipv6/conf/$device/proxy_ndp
 	echo 5 > /proc/sys/net/ipv6/conf/all/router_solicitations
 	echo 5 > /proc/sys/net/ipv6/conf/default/router_solicitations
 	echo 5 > /proc/sys/net/ipv6/conf/$device/router_solicitations
@@ -4079,7 +4091,7 @@ check_vtunnel() {
 				network_zone="$auto_mesh_network"
 			fi
 
-			echo 1 > /proc/sys/net/ipv4/conf/$device/proxy_arp
+###			echo 1 > /proc/sys/net/ipv4/conf/$device/proxy_arp
 			/sbin/service dnsmasq reload
 
 			vxiflist=$(uci show wireless | grep "network='$network_zone'" | awk -F "." '{printf "%s.%s ", $1, $2}')
@@ -4101,7 +4113,7 @@ check_vtunnel() {
 			vxlan_if="created"
 
 			device="br-tun$tun_id"
-			echo 1 > /proc/sys/net/ipv4/conf/$device/proxy_arp
+###			echo 1 > /proc/sys/net/ipv4/conf/$device/proxy_arp
 
 			vxiflist=$(uci show wireless | grep "network='vtunlan'" | awk -F "." '{printf "%s.%s ", $1, $2}')
 
@@ -6196,6 +6208,10 @@ set_bridge_mac_addresses() {
 # =============================================================================
 move_ethernet_to_vxlan_bridge() {
 
+	if [ "$move_ethernet_to_vxlan_bridge" -eq 0 ]; then
+		return 0
+	fi
+
 	# Skip in CPE mode
 	if [ "$portal_detect" -eq 3 ]; then
 		return 0
@@ -6208,6 +6224,7 @@ move_ethernet_to_vxlan_bridge() {
 
 	local vxlan_bridge="br-tun$tun_id"
 	local main_bridge="br-$auto_mesh_network"
+
 	log_debug "vxlan_bridge [ $vxlan_bridge ], mesh_bridge [ $main_bridge ]"
 
 	# Check if VXLAN bridge exists
@@ -6215,17 +6232,18 @@ move_ethernet_to_vxlan_bridge() {
 		return 0
 	fi
 
-	local lan_ports=$(brctl show "$main_bridge" 2>/dev/null | awk 'NR>1 {print $1}')
+	local lan_ports=$(brctl show "$main_bridge" 2>/dev/null | awk 'NR>1 {print $NF}')
 	local moved_count=0
 
 	for port in $lan_ports; do
-
+		# Skip virtual / mesh / wireless interfaces
 		case "$port" in
 			m-11s-*|phy*|vxradio*|vxlan*|br-*)
-			continue
-			;;
+				continue
+				;;
 		esac
 
+		# Only move Ethernet-type ports
 		case "$port" in
 			lan*|eth*|usb*|enx*)
 				if brctl show "$main_bridge" 2>/dev/null | grep -q "$port"; then
@@ -6235,7 +6253,7 @@ move_ethernet_to_vxlan_bridge() {
 					ip link set "$port" up 2>/dev/null || true
 					moved_count=$((moved_count + 1))
 				fi
-			;;
+				;;
 		esac
 	done
 
@@ -6244,54 +6262,6 @@ move_ethernet_to_vxlan_bridge() {
 	fi
 
 	ip link set "$vxlan_bridge" up 2>/dev/null || true
-}
-
-# =============================================================================
-# move_ethernet_back_to_main_bridge()
-# Revert Ethernet ports back to the main mesh bridge
-# =============================================================================
-move_ethernet_back_to_main_bridge() {
-
-    local vxlan_bridge="br-tun$tun_id"
-    local main_bridge="br-$auto_mesh_network"
-
-    # Safety check - only revert if VXLAN bridge exists
-    if ! brctl show "$vxlan_bridge" >/dev/null 2>&1; then
-        log_info "VXLAN bridge $vxlan_bridge does not exist → nothing to revert"
-        return 0
-    fi
-
-    log_info "Moving Ethernet ports back from $vxlan_bridge to $main_bridge"
-
-    local tun_ports=$(brctl show "$vxlan_bridge" 2>/dev/null | awk 'NR>1 {print $1}')
-
-    for port in $tun_ports; do
-        case "$port" in
-            m-11s-*|phy*|vxradio*|vxlan*|br-*)
-                continue
-                ;;
-        esac
-
-        case "$port" in
-            lan*|eth*|usb*|enx*)
-                if brctl show "$vxlan_bridge" 2>/dev/null | grep -q "^${port}[[:space:]]"; then
-                    log_debug "Removing $port from $vxlan_bridge"
-                    brctl delif "$vxlan_bridge" "$port" 2>/dev/null || true
-                fi
-
-                if ! brctl show "$main_bridge" 2>/dev/null | grep -q "^${port}[[:space:]]"; then
-                    log_debug "Adding $port back to $main_bridge"
-                    brctl addif "$main_bridge" "$port" 2>/dev/null || true
-                fi
-
-                ip link set "$port" up 2>/dev/null || true
-                ;;
-        esac
-    done
-
-    ip link set "$main_bridge" up 2>/dev/null || true
-
-    log_notice "Ethernet ports moved back to main bridge ($main_bridge)"
 }
 
 get_indexed_mac() {
@@ -6808,6 +6778,7 @@ elif [ "$1" = "status" ]; then
 		echo "    \"vtun_base_ssid\":\"$vtun_base_ssid\","
 		echo "    \"vtun_path_cost\":\"$vtun_path_cost\","
 		echo "    \"vtun_isolate\":\"$vtun_isolate\","
+		echo "    \"move_ethernet_to_vxlan_bridge\":\"$move_ethernet_to_vxlan_bridge\","
 	fi
 
 
