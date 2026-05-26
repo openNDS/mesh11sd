@@ -3999,7 +3999,7 @@ check_vtunnel() {
 					vtunnel="configured"
 					/sbin/service network reload
 					/sbin/service firewall restart
-					get_indexed_mac
+					get_indexed_mac "vxlan$tun_id"
 					vxmac_indexed="$mac_indexed"
 					link_local_addr=$(ip addr show "$device" | grep "inet6 fe80" | awk '{printf "%s", $2}' | awk -F "/" '{printf "%s", $1}')
 
@@ -4063,8 +4063,6 @@ check_vtunnel() {
 			/sbin/service network restart
 			wait_for_interface "$device"
 			vtunnel="configured"
-			get_indexed_mac
-			vxmac_indexed="$mac_indexed"
 			link_local_addr="$(ip addr show "$device" | grep "inet6 fe80" | awk '{printf "%s", $2}' | awk -F "/" '{printf "%s", $1}')"
 
 			if [ -z "$link_local_addr" ]; then
@@ -5335,19 +5333,10 @@ write_debug() {
 
 wifi_chipset_detect() {
 	# Attempt to get the label mac
-	ifaces="wan eth1 eth0"
+	labelmac=$(get_factory_mac)
 
-	for iface in $ifaces; do
-		labelmac=$(cat /sys/class/net/$iface/address 2>/dev/null)
-
-		if [ -z "$labelmac" ]; then
-			continue
-		else
-			write_debug "labelmac"
-			labelmac="@$labelmac"
-			break
-		fi
-	done
+	write_debug "labelmac"
+	labelmac="@$labelmac"
 
 	. /etc/openwrt_release 2>/dev/null
 	echo "{" > "$outputfile"
@@ -6187,7 +6176,7 @@ set_bridge_mac_addresses() {
 	if [ -f "$tmpdir/vxlan_mac" ]; then
 		. $tmpdir/vxlan_mac
 	else
-		get_indexed_mac
+		get_indexed_mac "$vxlan_bridge"
 		vxlan_mac="$mac_indexed"
 		echo "vxlan_mac=\"$vxlan_mac\"" > $tmpdir/vxlan_mac
 	fi
@@ -6306,28 +6295,41 @@ move_ethernet_back_to_main_bridge() {
 }
 
 get_indexed_mac() {
-	refresh_bridgemac
+	local devname="$1"
 
 	if [ -f "$tmpdir/last_mac_indexed" ]; then
-		. $tmpdir/last_mac_indexed
+		. $tmpdir/last_mac_indexed	# base new mac on last_mac_indexed if it exists
 	else
 		if [ -f "/etc/factory_mac" ]; then
 			. /etc/factory_mac
 		else
-			refresh_bridgemac
-			factory_mac="$devicemac"
+			return 1
 		fi
-		convert_to_la "$factory_mac"
+		convert_to_la "$factory_mac"	# first time round so base on factory_mac
 		last_mac_indexed="$mac_la"
 	fi
 
-	increment_mac_octet "$last_mac_indexed"
+	increment_mac_octet "$last_mac_indexed" "$devname"	# increment the index octet
 	# $mac_indexed now contains the indexed mac
 }
 
 increment_mac_octet() {
 	local mac="$1"
-	local inc="${2:-1}"		# default +1
+	local devname="$2"
+	local inc="1"		# default +1
+
+	if [ -z "$devname" ]; then
+		return 1
+	fi
+
+	if [ -f "$tmpdir/maclist" ]; then
+		ifcount=$(grep -c "$devname" "$tmpdir/maclist")
+
+		if [ "$ifcount" -ne 0 ]; then
+			# abort - mac address already assigned
+			return 127
+		fi
+	fi
 
 	IFS=: read -r o1 o2 o3 o4 o5 o6 <<- EOF
 	$mac
@@ -6336,6 +6338,48 @@ increment_mac_octet() {
 	local new=$(( (0x$o4 + inc) % 256 ))
 	mac_indexed=$(printf '%s:%s:%s:%02x:%s:%s\n' "$o1" "$o2" "$o3" "$new" "$o5" "$o6")
 	echo "last_mac_indexed=$mac_indexed" > $tmpdir/last_mac_indexed
+	echo "$devname=$mac_indexed" >> $tmpdir/maclist
+}
+
+# =============================================================================
+# get_factory_mac()
+# Best effort to get the factory / label MAC address with logging
+# =============================================================================
+get_factory_mac() {
+	local mac=""
+
+	# 1. Preferred: Use the configured WAN device (best on GL.iNet and most routers)
+	local wan_device=$(uci -q get network.wan.device)
+	if [ -n "$wan_device" ]; then
+		mac=$(ip link show "$wan_device" 2>/dev/null | grep -o 'link/ether [^ ]*' | awk '{print $2}')
+		if [ -n "$mac" ]; then
+			log_info "Factory MAC obtained from network.wan.device ($wan_device): $mac"
+			echo "$mac"
+			return 0
+		fi
+	fi
+
+	# 2. Common fallback interfaces (in priority order)
+	for dev in eth1 eth0 lan0 lan1; do
+		mac=$(ip link show "$dev" 2>/dev/null | grep -o 'link/ether [^ ]*' | awk '{print $2}')
+		if [ -n "$mac" ]; then
+			log_info "Factory MAC obtained from fallback interface ($dev): $mac"
+			echo "$mac"
+			return 0
+		fi
+	done
+
+	# 3. Last resort: First Ethernet interface found
+	mac=$(ip -o link show type ether | head -n1 | awk -F': ' '{print $2}' | awk '{print $2}')
+	if [ -n "$mac" ]; then
+		log_info "Factory MAC obtained from first detected Ethernet interface: $mac"
+		echo "$mac"
+		return 0
+	fi
+
+	log_warning "Could not determine factory MAC address"
+	echo ""
+	return 1
 }
 
 ##############
@@ -7026,17 +7070,17 @@ elif [ "$1" = "connect" ]; then
 
 	nodeaddr=$(printf "%s" "$2" | tr "-" ":" | tr "[A-Z]" "[a-z]")
 
-	echo "==========================================================================="
+	echo "============================================================================================================================================================================="
 
 	echo " Connect a remote terminal session on a remote meshnode"
-	echo "    Usage: mesh11sd connect [remote_meshnode_macaddress]"
+	echo "    Usage: mesh11sd connect [Node ID]"
 	echo
 	wait_for_nodes
 	echo
 
 	if [ -z "$nodeaddr" ]; then
 		echo " If the node you are looking for is not in the list - re-run this command."
-		echo "===================================================================================================================="
+		echo "============================================================================================================================================================================="
 		echo " The following meshnodes are available for remote connection:"
 	fi
 
@@ -7055,6 +7099,12 @@ elif [ "$1" = "connect" ]; then
 			fi
 
 			ndpmacf=$(printf "%s" "$ndpmac" | tr ":" "-")
+			label_mac=$(iw dev "$active_mesh_ifname" mpp dump | grep "$ndpmac" | awk '{printf "%s", $2}')
+
+			if [ -z "$label_mac" ]; then
+				label_mac="    Not Known    "
+			fi
+
 			ip6addr=$(echo "$linklocal" | awk -F "%" '{printf "%s", $1}')
 
 			if [ -z "$nodeaddr" ]; then
@@ -7073,7 +7123,7 @@ elif [ "$1" = "connect" ]; then
 
 				if [ "$pingreturn" -eq 0 ]; then
 					if [ -n "$node_ula" ]; then
-						echo "$ndpmacf [ ipaddress: $node_ula ] [ web_ui: https://[$node_ula] ]"
+						echo "Node ID: $ndpmacf [ lable mac: $label_mac ] [ ULA: $node_ula ] [ web_ui: https://[$node_ula] ]"
 					else
 						echo "$ndpmacf [ ipaddress: $ip6addr ]"
 					fi
@@ -7094,7 +7144,7 @@ elif [ "$1" = "connect" ]; then
 		done
 	fi
 
-	echo "===================================================================================================================="
+	echo "============================================================================================================================================================================="
 	echo
 
 	exit 0
@@ -7688,9 +7738,10 @@ elif [ "$1" = "set_ula_prefix" ]; then
 	exit $retval
 
 elif [ "$1" = "get_indexed_mac" ]; then
-	get_indexed_mac
+	get_indexed_mac "$2"
+	retcode=$?
 	echo -n "$mac_indexed"
-	exit 0
+	exit $retcode
 
 elif [ "$1" = "str_to_hex" ]; then
 	str_to_hex "$2"
@@ -7913,6 +7964,11 @@ elif [ "$1" = "radiophy" ]; then
 	radiophy $2
 	exit $?
 
+elif [ "$1" = "get_factory_mac" ]; then
+	mute=0
+	get_factory_mac
+	exit $?
+
 elif [ "$1" = "is_channel_valid" ]; then
 	band="$2"
 	channel="$3"
@@ -7955,6 +8011,10 @@ elif [ "$1" = "daemon" ]; then
 
 	if [ -f "$tmpdir/last_mac_indexed" ]; then
 		rm $tmpdir/last_mac_indexed
+	fi
+
+	if [ -f "$tmpdir/maclist" ]; then
+		rm $tmpdir/maclist
 	fi
 
 	if [ -f "$tmpdir/vxlan_mac" ]; then
@@ -8406,11 +8466,12 @@ elif [ "$1" = "daemon" ]; then
 				. $tmpdir/devicemac
 				get_wiphys #sets $wiphys and $radios
 
-				#### The mesh interface MUST have a unique mac address ie not duplicated from another interface.
-				# We will set it ip as a locally administered version of the bridge mac for facilitating connect/copy functionality
+				#### The mesh interface MUST have a unique mac address on the mesh bridge.
+				# We will set it ip as the factory mac
 				# If manually configured, or after commit_all and changes have been made, let the user figure it out
 
-				if [ "$macfixup" -eq 0 ] && [ "$auto_config" -gt 0 ] && [ "$commit_all" -eq 0 ]; then
+				### if [ "$macfixup" -eq 0 ] && [ "$auto_config" -gt 0 ] && [ "$commit_all" -eq 0 ]; then # placeholder for commit_all checking
+				if [ true ]; then
 
 					for radio in $radios; do
 						ucimeshconfig=$(uci get $meshconfig.macaddr 2> /dev/null)
@@ -8420,11 +8481,9 @@ elif [ "$1" = "daemon" ]; then
 							radioindex=$(echo "$radio" | awk -F "radio" '{printf "%s", $2}')
 							radioindex=$(printf "%x" $radioindex)
 							mesh_ifname=$(uci get "wireless.m11s$radioindex.ifname")
-							get_indexed_mac
-							echo "set wireless.m11s$radioindex.macaddr='$mac_indexed'" | uci batch
-							debugtype="notice"
-							syslogmessage="Setting mac address of mesh interface $mesh_ifname to [ $mac_indexed ]"
-							write_to_syslog
+							. /etc/factory_mac
+							echo "set wireless.m11s$radioindex.macaddr='$factory_mac'" | uci batch
+							log_notice "Setting mac address of mesh interface $mesh_ifname to [ $factory_mac ]"
 							changed=1
 						fi
 					done
@@ -8437,8 +8496,10 @@ elif [ "$1" = "daemon" ]; then
 						uciapconfig=$(uci get wireless.$ap.macaddr 2> /dev/null)
 
 						if [ -z "$uciapconfig" ] && [ "$commit_all" -eq 0 ]; then
-							get_indexed_mac
+							ap_ifname=$(uci get "wireless.$ap.ifname")
+							get_indexed_mac "$ap_ifname"
 							echo "set wireless.$ap.macaddr=$mac_indexed" | uci batch
+							log_notice "Setting mac address of $ap_ifname to [ $mac_indexed ]"
 						fi
 					done
 
