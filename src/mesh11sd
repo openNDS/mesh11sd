@@ -6175,9 +6175,10 @@ radiophy() {
 # Ensure br-lan and br-tun$X have different MAC addresses
 # =============================================================================
 set_bridge_mac_addresses() {
-
+	log_debug "checking mac addresses"
 	local main_bridge="br-$auto_mesh_network"
 	local vxlan_bridge="br-tun$tun_id"
+	local briface=""
 
 	# Skip if VXLAN is not active
 	if [ "$vtun_enable" -ne 1 ] || [ -z "$tun_id" ] || [ "$tun_id" -eq 0 ]; then
@@ -6199,6 +6200,30 @@ set_bridge_mac_addresses() {
 		log_debug "Setting $vxlan_bridge MAC to $vxlan_mac"
 		ip link set "$vxlan_bridge" address "$vxlan_mac" 2>/dev/null || true
 	fi
+
+	# Set mac addresses of all bridge interfaces, all bridges.
+	local bridge_interfaces=$(brctl show 2>/dev/null | awk 'NR>1 {printf "%s ", $NF}')
+
+	if [ -f "$tmpdir/active_mesh_ifname" ]; then
+		. $tmpdir/active_mesh_ifname
+	fi
+
+	for briface in $bridge_interfaces; do
+
+		if [ "$briface" = "$active_mesh_ifname" ]; then
+			continue
+		fi
+
+		get_indexed_mac "$briface"
+
+		if [ "$?" -gt 0 ]; then
+			continue
+		fi
+
+		log_debug "Setting $briface MAC to $mac_indexed"
+
+		ip link set "$briface" address "$mac_indexed" 2>/dev/null || true
+	done
 }
 
 # =============================================================================
@@ -6280,7 +6305,8 @@ get_indexed_mac() {
 	fi
 
 	increment_mac_octet "$last_mac_indexed" "$devname"	# increment the index octet
-	# $mac_indexed now contains the indexed mac
+	# $mac_indexed now contains the indexed mac or return code 127 is set if already assigned
+	return $?
 }
 
 increment_mac_octet() {
