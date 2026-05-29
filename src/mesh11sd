@@ -6741,6 +6741,13 @@ elif [ "$1" = "status" ]; then
 	echo "    \"enabled\":\"$enabled\","
 	echo "    \"procd_status\":\"$procd_status\","
 	echo "    \"node_type\":\"$node_type_code\","
+
+	if [ -f "/etc/factory_mac" ]; then
+		. /etc/factory_mac
+		echo "    \"label_mac\":\"$factory_mac\","
+	fi
+
+	echo "    \"label_mac\":\"$factory_mac\","
 	echo "    \"portal_detect\":\"$portal_detect\","
 	echo "    \"portal_detect_threshold\":\"$portal_detect_threshold\","
 	echo "    \"portal_channel\":\"$portal_channel\","
