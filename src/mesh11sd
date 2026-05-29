@@ -5194,10 +5194,11 @@ set_iface_path_cost() {
 		stpstatus=$(cat "/sys/class/net/$device/bridge/stp_state")
 
 		if [ "$device" = "$mesh_bridge" ]; then
-			stpstate=$stpstate_disabled
+			stpstate=$stpstate_enabled #Force to enabled
+			#stpstate=$stpstate_disabled #Force to disabled
 		elif [ "$device" = "$vxlan_bridge" ]; then
-			#stpstate=stpstate_enabled
-			stpstate=$stpstate_disabled #Force to disabled
+			stpstate=$stpstate_enabled #Force to enabled
+			#stpstate=$stpstate_disabled #Force to disabled
 		fi
 
 		if [ -z "$stpstatus" ] || [ "$stpstatus" -ne "$stpstate" ]; then
