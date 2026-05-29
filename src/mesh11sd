@@ -3010,7 +3010,7 @@ auto_config() {
 				aplist=$(uci show wireless 2> /dev/null | grep "='ap'" | awk -F "." '{printf "%s.%s ", $1, $2}')
 
 				#Add ssid and suffix
-				. /etc/factory_mac
+				. $tmpdir/factory_mac
 				suffix=$(echo $factory_mac | awk -F":" '{printf "%s%s", $5, $6}')
 
 				log_debug "aplist [ $aplist ], suffix [ $suffix ]"
@@ -4738,7 +4738,7 @@ send_ap_data() {
 	fi
 
 	. $tmpdir/devicemac
-	. /etc/factory_mac
+	. $tmpdir/factory_mac
 
 	if [ "$portal_detect" -eq 3 ]; then
 		ap_macaddr="$factory_mac"
@@ -4918,8 +4918,8 @@ get_system_stats_json() {
 		fi
 	fi
 
-	if [ -f "/etc/factory_mac" ]; then
-		. /etc/factory_mac
+	if [ -f "$tmpdir/factory_mac" ]; then
+		. $tmpdir/factory_mac
 	else
 		factory_mac="unknown"
 	fi
@@ -6296,8 +6296,8 @@ get_indexed_mac() {
 	if [ -f "$tmpdir/last_mac_indexed" ]; then
 		. $tmpdir/last_mac_indexed	# base new mac on last_mac_indexed if it exists
 	else
-		if [ -f "/etc/factory_mac" ]; then
-			. /etc/factory_mac
+		if [ -f "$tmpdir/factory_mac" ]; then
+			. $tmpdir/factory_mac
 		else
 			return 1
 		fi
@@ -6742,8 +6742,8 @@ elif [ "$1" = "status" ]; then
 	echo "    \"procd_status\":\"$procd_status\","
 	echo "    \"node_type\":\"$node_type_code\","
 
-	if [ -f "/etc/factory_mac" ]; then
-		. /etc/factory_mac
+	if [ -f "$tmpdir/factory_mac" ]; then
+		. $tmpdir/factory_mac
 		echo "    \"label_mac\":\"$factory_mac\","
 	fi
 
@@ -7999,19 +7999,19 @@ elif [ "$1" = "daemon" ]; then
 	# Destroy our nft table if it exists
 	nft destroy table bridge mesh11s
 
-	if [ -f "/etc/factory_mac" ]; then
-		. /etc/factory_mac
+	if [ -f "$tmpdir/factory_mac" ]; then
+		. $tmpdir/factory_mac
 
 		if [ "$installver" != "$version" ]; then
-			rm "/etc/factory_mac"
+			rm "$tmpdir/factory_mac"
 		fi
 	fi
 
 	strlen="$((${#labelmac}))"
 	factory_mac=${labelmac:1:strlen}
 
-	if [ ! -f "/etc/factory_mac" ]; then
-		echo "factory_mac=\"$factory_mac\"; installver=\"$version\"" > /etc/factory_mac
+	if [ ! -f "$tmpdir/factory_mac" ]; then
+		echo "factory_mac=\"$factory_mac\"; installver=\"$version\"" > $tmpdir/factory_mac
 	fi
 
 	if [ -f "$tmpdir/last_mac_indexed" ]; then
@@ -8203,8 +8203,8 @@ elif [ "$1" = "daemon" ]; then
 			wanif=$(uci get network.wan.device)
 			wan6if=$(uci get network.wan6.device)
 
-			if [ -e /etc/factory_mac ]; then
-				. /etc/factory_mac
+			if [ -e $tmpdir/factory_mac ]; then
+				. $tmpdir/factory_mac
 			fi
 
 			if [ -z "$factory_mac" ]; then
@@ -8249,7 +8249,7 @@ elif [ "$1" = "daemon" ]; then
 				write_to_syslog
 			fi
 
-			. /etc/factory_mac
+			. $tmpdir/factory_mac
 			suffix=$(echo $factory_mac | awk -F":" '{printf "%s%s", $5, $6}')
 
 			if [ "$cpe_mode" = "relay" ]; then
@@ -8486,7 +8486,7 @@ elif [ "$1" = "daemon" ]; then
 							radioindex=$(echo "$radio" | awk -F "radio" '{printf "%s", $2}')
 							radioindex=$(printf "%x" $radioindex)
 							mesh_ifname=$(uci get "wireless.m11s$radioindex.ifname")
-							. /etc/factory_mac
+							. $tmpdir/factory_mac
 							echo "set wireless.m11s$radioindex.macaddr='$factory_mac'" | uci batch
 							log_notice "Setting mac address of mesh interface $mesh_ifname to [ $factory_mac ]"
 							changed=1
