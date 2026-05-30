@@ -1688,10 +1688,11 @@ manage_fallback_ula_route() {
 
 		# Generate EUI-64 from bridge MAC
 		mac_no_colons="${devicemac//:/}"
-		first_byte_hex=${mac_no_colons:0:2}
-		first_byte_dec=$((0x$first_byte_hex ^ 0x02))
-		first_byte=$(printf "%02x" "$first_byte_dec")
-		eui64="${first_byte}${mac_no_colons:2:2}${mac_no_colons:4:2}fffe${mac_no_colons:6:2}${mac_no_colons:8:2}${mac_no_colons:10:2}"
+		#first_byte_hex=${mac_no_colons:0:2}
+		#first_byte_dec=$((0x$first_byte_hex ^ 0x02))
+		#first_byte=$(printf "%02x" "$first_byte_dec")
+		#eui64="${first_byte}${mac_no_colons:2:2}${mac_no_colons:4:2}fffe${mac_no_colons:6:2}${mac_no_colons:8:2}${mac_no_colons:10:2}"
+		eui64="${mac_no_colons:0:2}${mac_no_colons:2:2}${mac_no_colons:4:2}fffe${mac_no_colons:6:2}${mac_no_colons:8:2}${mac_no_colons:10:2}"
 
 		# Format EUI-64 with colons
 		eui64_formatted="${eui64:0:4}:${eui64:4:4}:${eui64:8:4}:${eui64:12:4}"
@@ -1717,14 +1718,15 @@ manage_fallback_ula_route() {
 	# -------------------------------------------------------------------------------
 	# Part 2: Add portal-specific ::1 ULA to bridge (only on MBP, Mesh Bridge Portal)
 	# -------------------------------------------------------------------------------
-	if [ "$detected_state" = "portal" ] && [ "$portal_detect" -eq 4 ] && [ -n "$device" ]; then
+	#if [ "$detected_state" = "portal" ] && [ "$portal_detect" -eq 4 ] && [ -n "$device" ]; then
+	if [ "$detected_state" = "portal" ]; then
 
 		# Portal ULA = prefix:subnet::1 /64
 		portal_ula_addr="$ula_base:$ula_subnet::1/64"
 
 		# Check if already present
 		if ! ip -6 addr show dev "$device" | grep -q "$portal_ula_addr"; then
-			log_info "MBP portal mode → adding portal ULA $portal_ula_addr to bridge $device"
+			log_info "Portal mode → adding portal ULA $portal_ula_addr to bridge $device"
 
 			ip -6 addr add "$portal_ula_addr" dev "$device" 2>/dev/null
 
@@ -6177,9 +6179,28 @@ radiophy() {
 # =============================================================================
 set_bridge_mac_addresses() {
 	log_debug "checking mac addresses"
-	local main_bridge="br-$auto_mesh_network"
+	local mesh_bridge="br-$auto_mesh_network"
 	local vxlan_bridge="br-tun$tun_id"
 	local briface=""
+
+	# Set MESH bridge a locally administered, indexed MAC
+	if [ -f "$tmpdir/brmesh_mac" ]; then
+		. $tmpdir/brmesh_mac
+	else
+		get_indexed_mac "$mesh_bridge"
+		brmesh_mac="$mac_indexed"
+		echo "brmesh_mac=\"$brmesh_mac\"" > $tmpdir/brmesh_mac
+	fi
+
+	current_mac=$(ip link show "$mesh_bridge" | grep -o 'link/ether [^ ]*' | awk '{print $2}')
+
+	if [ "$current_mac" != "$brmesh_mac" ]; then
+		log_debug "Setting $mesh_bridge MAC to $brmesh_mac"
+		ip link set "$mesh_bridge" down 2>/dev/null || true
+		ip link set "$mesh_bridge" address "$brmesh_mac" 2>/dev/null || true
+		ip link set "$mesh_bridge" up 2>/dev/null || true
+	fi
+
 
 	# Skip if VXLAN is not active
 	if [ "$vtun_enable" -ne 1 ] || [ -z "$tun_id" ] || [ "$tun_id" -eq 0 ]; then
@@ -6249,16 +6270,16 @@ move_ethernet_to_vxlan_bridge() {
 	fi
 
 	local vxlan_bridge="br-tun$tun_id"
-	local main_bridge="br-$auto_mesh_network"
+	local mesh_bridge="br-$auto_mesh_network"
 
-	log_debug "vxlan_bridge [ $vxlan_bridge ], mesh_bridge [ $main_bridge ]"
+	log_debug "vxlan_bridge [ $vxlan_bridge ], mesh_bridge [ $mesh_bridge ]"
 
 	# Check if VXLAN bridge exists
 	if ! brctl show "$vxlan_bridge" >/dev/null 2>&1; then
 		return 0
 	fi
 
-	local lan_ports=$(brctl show "$main_bridge" 2>/dev/null | awk 'NR>1 {print $NF}')
+	local lan_ports=$(brctl show "$mesh_bridge" 2>/dev/null | awk 'NR>1 {print $NF}')
 	local moved_count=0
 
 	for port in $lan_ports; do
@@ -6272,9 +6293,9 @@ move_ethernet_to_vxlan_bridge() {
 		# Only move Ethernet-type ports
 		case "$port" in
 			lan*|eth*|usb*|enx*)
-				if brctl show "$main_bridge" 2>/dev/null | grep -q "$port"; then
-					log_debug "Moving $port from $main_bridge → $vxlan_bridge"
-					brctl delif "$main_bridge" "$port" 2>/dev/null || true
+				if brctl show "$mesh_bridge" 2>/dev/null | grep -q "$port"; then
+					log_debug "Moving $port from $mesh_bridge → $vxlan_bridge"
+					brctl delif "$mesh_bridge" "$port" 2>/dev/null || true
 					brctl addif "$vxlan_bridge" "$port" 2>/dev/null || true
 					ip link set "$port" up 2>/dev/null || true
 					moved_count=$((moved_count + 1))
@@ -8772,6 +8793,15 @@ elif [ "$1" = "daemon" ]; then
 
 		move_ethernet_to_vxlan_bridge
 		set_bridge_mac_addresses
+
+		if [ -f "$tmpdir/is_portal" ]; then
+			. $tmpdir/is_portal
+
+			if [ "$detected_state" = "portal" ]; then
+				manage_fallback_ula_route
+			fi
+		fi
+
 		block_bridge_loops
 		log_info "Checkinterval [$checkinterval]"
 
