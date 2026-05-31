@@ -1653,14 +1653,9 @@ check_channel() {
 manage_fallback_ula_route() {
 	# ------------------------------------------------------------
 	# Always assign deterministic ULA address to bridge on ALL peer nodes
-	# + add portal-specific ::1 on MBP portal
+	# + add portal-specific ::1 on portal
 	# + add sticky on-link route on peers in auto-detect modes
 	# ------------------------------------------------------------
-
-	if [ "$portal_detect" -ne 4 ] && [ "$detected_state" = "portal" ]; then
-		log_debug "manage_fallback_ula_route - Node is a routed portal"
-		return 0
-	fi
 
 	if [ -f "$tmpdir/devicemac" ]; then
 		. "$tmpdir/devicemac"
@@ -1681,8 +1676,39 @@ manage_fallback_ula_route() {
 	ula_base="${ula_prefix%%::*}"   # everything before the last ::
 	log_debug "ula_base [ $ula_base ]"
 
+	# -------------------------------------------------------------------------------
+	# Part 1: Add portal-specific ::1 ULA to bridge (only on Portal)
+	# -------------------------------------------------------------------------------
+
+	if [ -f "$tmpdir/is_portal" ]; then
+		. "$tmpdir/is_portal"
+	fi
+
+	if [ ! -z "$detected_state" ] && [ "$detected_state" = "portal" ]; then
+		log_debug "manage_fallback_ula_route - Node is a portal"
+		# Portal ULA = prefix:subnet::1 /64
+		portal_ula_addr="$ula_base:$ula_subnet::1/64"
+		log_debug "portal_ula_addr is [ $portal_ula_addr ], checking..."
+
+		# Check if already present
+		if ! ip -6 addr show dev "$device" | grep -q "$portal_ula_addr"; then
+			log_info "Portal mode → adding portal ULA $portal_ula_addr to bridge $device"
+
+			ip -6 addr add "$portal_ula_addr" dev "$device" 2>/dev/null
+
+			if [ $? -eq 0 ]; then
+				log_notice "Portal ULA $portal_ula_addr added to $device"
+			else
+				log_error "Failed to add portal ULA $portal_ula_addr to $device"
+				log_debug "ip error: $(ip -6 addr add "$portal_ula_addr" dev "$device" 2>&1)"
+			fi
+		else
+			log_debug "portal_ula_addr [ $portal_ula_addr ] is present"
+		fi
+	fi
+
 	# --------------------------------------------------------------------
-	# Part 1: Deterministic ULA address on bridge (ALL peer nodes)
+	# Part 2: Deterministic ULA address on bridge (ALL peer nodes)
 	# --------------------------------------------------------------------
 	if [ -n "$device" ] && [ -n "$devicemac" ] && [ "$portal_detect" -ne 4 ]; then
 
@@ -1711,30 +1737,6 @@ manage_fallback_ula_route() {
 			else
 				log_error "Failed to add ULA address $ula_addr to $device"
 				log_debug "ip error: $(ip -6 addr add "$ula_addr" dev "$device" 2>&1)"
-			fi
-		fi
-	fi
-
-	# -------------------------------------------------------------------------------
-	# Part 2: Add portal-specific ::1 ULA to bridge (only on MBP, Mesh Bridge Portal)
-	# -------------------------------------------------------------------------------
-	#if [ "$detected_state" = "portal" ] && [ "$portal_detect" -eq 4 ] && [ -n "$device" ]; then
-	if [ "$detected_state" = "portal" ]; then
-
-		# Portal ULA = prefix:subnet::1 /64
-		portal_ula_addr="$ula_base:$ula_subnet::1/64"
-
-		# Check if already present
-		if ! ip -6 addr show dev "$device" | grep -q "$portal_ula_addr"; then
-			log_info "Portal mode → adding portal ULA $portal_ula_addr to bridge $device"
-
-			ip -6 addr add "$portal_ula_addr" dev "$device" 2>/dev/null
-
-			if [ $? -eq 0 ]; then
-				log_notice "Portal ULA $portal_ula_addr added to $device"
-			else
-				log_error "Failed to add portal ULA $portal_ula_addr to $device"
-				log_debug "ip error: $(ip -6 addr add "$portal_ula_addr" dev "$device" 2>&1)"
 			fi
 		fi
 	fi
