@@ -6402,6 +6402,90 @@ get_factory_mac() {
 	return 1
 }
 
+# =============================================================================
+# set_root_bridge_priority()
+# Set STP bridge priority + port priorities.
+# - Portals: bridge priority = 0
+# - Peers: bridge priority = last 4 hex digits of SHA256(factory_mac)
+# - Ethernet ports: low port priority (preferred)
+# - Mesh interface: higher port priority
+# =============================================================================
+set_root_bridge_priority() {
+	local bridge="br-$auto_mesh_network"
+	local priority=8192
+	local is_portal_file="$tmpdir/is_portal"
+	local factory_mac_file="$tmpdir/factory_mac"
+	local factory_mac=""
+
+	detected_state="peer"
+
+	if [ -f "$is_portal_file" ]; then
+		. "$is_portal_file"
+	fi
+
+	if [ "$detected_state" = "portal" ]; then
+		priority=0
+	else
+		if [ -f "$factory_mac_file" ]; then
+			. "$factory_mac_file"
+		fi
+
+		if [ -n "$factory_mac" ]; then
+			local hash
+			hash=$(printf '%s' "$factory_mac" | sha256sum | awk '{print $1}')
+			local last4=${hash: -4}
+			priority=$((0x$last4))
+		fi
+	fi
+
+	# === Set Bridge Priority (only if changed) ===
+	local current
+	current=$(cat "/sys/class/net/$bridge/bridge/priority" 2>/dev/null)
+
+	if [ "$current" != "$priority" ]; then
+		echo "$priority" > "/sys/class/net/$bridge/bridge/priority" 2>/dev/null
+		if [ $? -eq 0 ]; then
+			log_info "Set $bridge STP priority to $priority (detected_state=$detected_state)"
+		else
+			log_warning "Failed to set STP priority on $bridge"
+		fi
+	fi
+
+	# === Set Port Priorities ===
+	local br_ifaces=$(brctl showstp "$bridge" 2>/dev/null | grep -B 1 -w "port id" | grep "(" | awk '{print $1}')
+	local updated_count=0
+
+	for br_iface in $br_ifaces; do
+		local port_prio_file="/sys/class/net/$br_iface/brport/priority"
+		local desired_prio=32
+
+		case "$br_iface" in
+			lan*|eth*)
+				desired_prio=16          # Ethernet ports preferred
+				;;
+			m-11s-*)
+				desired_prio=32          # Mesh interface less preferred
+				;;
+		esac
+
+		if [ -f "$port_prio_file" ]; then
+			local current_prio
+			current_prio=$(cat "$port_prio_file" 2>/dev/null)
+
+			if [ "$current_prio" != "$desired_prio" ]; then
+				echo "$desired_prio" > "$port_prio_file" 2>/dev/null
+				log_debug "Set $br_iface port priority to $desired_prio (was $current_prio)"
+				updated_count=$((updated_count + 1))
+			fi
+		fi
+	done
+
+	# Summary log at info level
+	if [ $updated_count -gt 0 ]; then
+		log_info "Updated port priority on $updated_count interface(s) on $bridge"
+	fi
+}
+
 ##############
 # Start point
 ##############
@@ -7130,7 +7214,8 @@ elif [ "$1" = "connect" ]; then
 			label_mac=$(iw dev "$active_mesh_ifname" mpp dump | grep "$ndpmac" | awk '{printf "%s", $2}')
 
 			if [ -z "$label_mac" ]; then
-				label_mac="    Not Known    "
+				mac_no_colons="${ndpmac//:/}"
+				label_mac="xx:xx:xx:xx:${mac_no_colons:8:2}:${mac_no_colons:10:2}"
 			fi
 
 			ip6addr=$(echo "$linklocal" | awk -F "%" '{printf "%s", $1}')
@@ -8803,6 +8888,8 @@ elif [ "$1" = "daemon" ]; then
 				manage_fallback_ula_route
 			fi
 		fi
+
+		set_root_bridge_priority
 
 		block_bridge_loops
 		log_info "Checkinterval [$checkinterval]"
