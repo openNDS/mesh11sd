@@ -1183,6 +1183,19 @@ get_current_setup() {
 	debugtype="info"
 	mute="$mutestate"
 	write_to_syslog
+
+	#####
+
+	connect_show_all=$(uci get mesh11sd.setup.connect_show_all 2> /dev/null)
+
+	if [ -z "$connect_show_all" ] || [ "$connect_show_all" -gt 1 ]; then
+		connect_show_all=1
+	fi
+
+	syslogmessage="option connect_show_all [ $connect_show_all ]"
+	debugtype="info"
+	mute="$mutestate"
+	write_to_syslog
 }
 
 check_config_params() {
@@ -2498,10 +2511,11 @@ wait_for_nodes() {
 
 	for tic in $(seq $tics); do
 		ndp_scan_peer
+		response_total="$response_total $response"
 		echo -n "* "
 	done
 
-	sleep 1
+	response="$response_total"
 	echo
 }
 
@@ -2713,7 +2727,7 @@ ndp_scan_peer() {
 	# NDP - Send linklocal multicast ip6-allrouters
 	br_dev="br-$auto_mesh_network"
 
-	response=$(ping -q -c 8 "ff02::2%""$br_dev" &>/dev/null &)
+	response=$(ping -c 2 "ff02::2%""$br_dev" 2>/dev/null)
 }
 
 get_wiphy_by_ifname() {
@@ -6504,54 +6518,83 @@ if [ -z "$1" ] || [ "$1" = "-h" ] || [ $1 = "--help" ] || [ $1 = "help" ]; then
 	echo "
   Usage: mesh11sd [option] [argument...]]
 
+####
   Option: -h --help help
   Returns: This help information
 
+####
   Option: -v --version version
   Returns: The mesh11sd version
 
+####
   Option: debuglevel
   Argument: 0 - silent, 1 - notice, 2 - info, 3 - debug
   Returns: The mesh11sd debug level
 
+####
   Option: enable
   Returns: \"1\" and exit code 0 if successful, exit code 1 if was already enabled
 
+####
   Option: disable
   Returns: \"0\" and exit code 0 if successful, exit code 1 if was already disabled
 
+####
   Option: auto_config
   Configure auto config mode
   Usage:
     mesh11sd auto_config test | enable | disable
-      Takes immediate effect, any current connection is likely to be lost, requiring re-connection on possibly a different ipv4 address 
-      test - turn on auto config test mode. A reboot will revert the auto configuration.
-      enable - enable auto config mode.
-      disable - disable auto config mode.
+      Takes immediate effect. Any current connection is likely to be lost and may require reconnection on a different IPv4 address.
 
+        test - turn on auto config test mode. A reboot will revert the auto configuration.
+        enable - enable auto config mode.
+        disable - disable auto config mode.
+
+####
   Option: status
   Returns: the mesh status in json format
 
+####
   Option: connect
   Connect a remote terminal session on a remote meshnode
-  Usage: mesh11sd connect [remote_meshnode_macaddress]
-    If the remote meshnode mac address is omitted, a list of meshnode mac addresses available for connection is listed
 
+  Usage:
+    mesh11sd connect
+        Lists all reachable mesh nodes (including island meshes)
+
+    mesh11sd connect filter_list
+        Lists available mesh nodes in this contiguous mesh only
+
+    mesh11sd connect [Node ID]
+        Connects to the requested meshnode
+
+####
   Option: copy
   Copy a file to $tmpdir/ on a remote meshnode
-  Usage: mesh11sd copy [remote_meshnode_macaddress] [path_of_source_file]
-    If the remote meshnode mac address is null, or both arguments are omitted, a list of meshnode mac addresses available for copy is listed
 
+  Usage:
+    mesh11sd copy
+        Lists all reachable mesh nodes (including island meshes)
+
+    mesh11sd copy filter_list
+        Lists available mesh nodes in this contiguous mesh only
+
+    mesh11sd copy [Node ID] [path_to_source_file]
+        Copies the file to $tmpdir/ on the requested meshnode
+
+####
   Option: txpower
   Change the mesh transmit power
   Usage: mesh11sd txpower [+|-]
     where \"+\" increments by 3dBm and \"-\" decrements by 3dBm
     Takes effect immediately
 
+####
   Option: stations
   List all mesh peer stations directly connected to this mesh peer station (one hop)
   Usage: mesh11sd stations
 
+####
   Option: mesh_rssi_threshold
   Change the mesh rssi threshold
   Usage: mesh11sd mesh_rssi_threshold [+|-] [force]
@@ -6560,10 +6603,12 @@ if [ -z "$1" ] || [ "$1" = "-h" ] || [ $1 = "--help" ] || [ $1 = "help" ]; then
     The keyword \"force\" forces the new threshold on all connected peers
     Warning - \"force\" will briefly remove this node from the mesh network, taking a few seconds to rejoin
 
+####
   Option: mesh_leechmode
   Usage: mesh11sd mesh_leechmode [enable/disable]
   If enabled, the mesh node connects to the mesh backhaul but does not forward packets or contribute to the mesh.
 
+####
   Option: mesh_node_mobility_level
   Usage: mesh11sd mesh_node_mobility_level [level]
   Sets the mesh node mobility level
@@ -6573,105 +6618,128 @@ if [ -z "$1" ] || [ "$1" = "-h" ] || [ $1 = "--help" ] || [ $1 = "help" ]; then
     Level 1 supports inter node relative velocities up to 1.5 metres per second
     Levels 2 to 4 support progressively higher relative inter node velocities at the expense of a larger and larger backhaul overhead
 
+####
   Option: commit_changes
   Usage: mesh11sd commit_changes commit
     Commits changes to mesh_leechmode, txpower and rssi_threshold to non volatile configuration (make permanent)
 
+####
   Option: commit_all
   Usage: mesh11sd commit_all commit
     Writes all changes made by auto_config to configuration file
     Active only when auto_config is enabled
 
+####
   Option: revert_all
   Usage: mesh11sd revert_all revert
     Reverts all changes made by commit_all
     Active only when auto_config is enabled
 
+####
   Option: force_ipv4_download
   Usage: mesh11sd force_ipv4_download
     Forces opkg or apk to use ipv4 for its downloads
 
+####
   Option: download_revert_to_default
   Usage: mesh11sd download_revert_to_default
     Reverts opkg or apk to default for its downloads
 
+####
   Option: dhcp4_renew
   Usage: mesh11sd dhcp4_renew
     Renews the current dhcp4 lease
 
+####
   Option: is_installed
   Usage: mesh11sd is_installed [packagename]
     Checks if \"packagename\" is installed
     Returns the installation status of the package and exit code 0 if installed
 
+####
   Option: get_portal_ula
   Usage: mesh11sd get_portal_ula
     Gets the portal unique local ipv6 address (ula)
 
+####
   Option: set_ula_prefix
   Usage: mesh11sd set_ula_prefix [get|set|revert]
     get - gets the current ula prefix
     set - sets the ula prefix for the mesh backhaul based on the mesh id
     revert - reverts a previously set ula prefix
 
+####
   Option: str_to_hex
   Usage: mesh11sd str_to_hex [access_point_data_string]
     Run length hex encodes access_point_data from apmond format
 
+####
   Option: hex_to_str
   Usage: mesh11sd hex_to_str [hex encoded_access_point_data_string]
     Decode run length hex encoded access_point_data to apmond format
 
+####
   Option: is_hex
   Usage: mesh11sd is_hex [string]
     Check if string contains only valid hex characters (0-9, a-f, A-F)
     Return code 0 if string is valid hex, 1 otherwise.
 
+####
   Option: is_ipv4addr_valid [string]
     Check if string contains a single ipv4 address
     Return code 0 if string is valid ipv4 address, 1 otherwise.
 
+####
   Option: write_node_data
   Usage: mesh11sd write_node_data [node_id] [querystring]
     Called from apmond cgi script. Writes node data received by web server
 
+####
   Option: send_ap_data
   Usage: mesh11sd send_ap_data
     Sends hex encoded apmon data to portal/apmond web server
 
+####
   Option: get_ap_data
   Usage: mesh11sd get_ap_data
     Get json format access point data for this node
 
+####
   Option: show_ap_data
   Usage: mesh11sd show_ap_data [node_id | all]
     Shows json format access point data for requested node | all nodes
     Valid on portal/apmond node
 
+####
   Option: country
   Usage: mesh11sd country [country_code]
     Shows the regulatory domain and country code if the optional country code is not supplied.
     Sets the regulatory domain for the country code if it is supplied.
     A restart or reboot is required for changes to take effect.
 
+####
   Option: write_to_syslog
   Usage: mesh11sd write_to_syslog [string to log] [debuglevel (debug, info, warn, notice, err or emerg)]
     Writes to the syslog at the specified debuglevel
 
+####
   Option: write_log
   Usage: mesh11sd write_log [string to log] [debuglevel (debug, info, warn, notice, err or emerg)]
     Writes to the mesh11sd log at the specified debuglevel
 
+####
   Option: read_log
   Usage: mesh11sd read_log [ -f ]
     Displays the mesh11sd log
       If -f is specified, the existing log will be deleted and all subsequent logs will be followed on the display
 
+####
   Option: get_valid_channels
   Usage: mesh11sd get_valid_channels
     Returns a list of valid wireless channels for the current country code setting
     Note: DFS channels are not suitable for use in a mesh backhaul so are excluded.
 
+####
   For further documentation, see: https://github.com/openNDS/mesh11sd#readme
 
 "
@@ -7180,12 +7248,17 @@ elif [ "$1" = "connect" ]; then
 		exit 1
 	fi
 
-	nodeaddr=$(printf "%s" "$2" | tr "-" ":" | tr "[A-Z]" "[a-z]")
+	if [ "$2" = "filter_list" ]; then
+		connect_show_all=0
+	else
+		nodeaddr=$(printf "%s" "$2" | tr "-" ":" | tr "[A-Z]" "[a-z]")
+	fi
 
 	echo "============================================================================================================================================================================="
 
 	echo " Connect a remote terminal session on a remote meshnode"
 	echo "    Usage: mesh11sd connect [Node ID]"
+	echo "           mesh11sd connect filter_list   (show only nodes from this contiguous mesh)"
 	echo
 	wait_for_nodes
 	echo
@@ -7204,7 +7277,14 @@ elif [ "$1" = "connect" ]; then
 		for connectto in $connectlist; do
 			linklocal="${connectto%,*}"
 			ndpmac="${connectto##*,}"
-			check_if_peer
+
+			if [ "$connect_show_all" -eq 1 ]; then
+				# When enabled, bypass the strict peer check.
+				# This allows nodes on an island mesh to be shown.
+				ispeer=0
+			else
+				check_if_peer
+			fi
 
 			if [ "$ispeer" -ne 0 ]; then
 				continue
@@ -7214,9 +7294,24 @@ elif [ "$1" = "connect" ]; then
 			label_mac=$(iw dev "$active_mesh_ifname" mpp dump | grep "$ndpmac" | awk '{printf "%s", $2}')
 
 			if [ -z "$label_mac" ]; then
-				mac_no_colons="${ndpmac//:/}"
-				label_mac="xx:xx:xx:xx:${mac_no_colons:8:2}:${mac_no_colons:10:2}"
+				continue
 			fi
+
+			linklocaladdr=$(echo "$linklocal" | awk -F "%" '{printf "%s", $1}')
+			echo "$response" | grep -q "$linklocaladdr"
+			inresponse=$?
+
+			if [ "$inresponse" -eq 1 ]; then
+				continue
+			fi
+
+			ndpmac_no_colons="${ndpmac//:/}"
+			label_mac_no_colons="${label_mac//:/}"
+
+			if [ "${ndpmac_no_colons:8:2}${ndpmac_no_colons:10:2}" != "${label_mac_no_colons:8:2}${label_mac_no_colons:10:2}" ]; then
+				label_mac="xx:xx:xx:xx:${ndpmac_no_colons:8:2}:${ndpmac_no_colons:10:2}"
+			fi
+
 
 			ip6addr=$(echo "$linklocal" | awk -F "%" '{printf "%s", $1}')
 
@@ -7236,7 +7331,7 @@ elif [ "$1" = "connect" ]; then
 
 				if [ "$pingreturn" -eq 0 ]; then
 					if [ -n "$node_ula" ]; then
-						echo "Node ID: $ndpmacf [ lable mac: $label_mac ] [ ULA: $node_ula ] [ web_ui: https://[$node_ula] ]"
+						echo "Node ID: $ndpmacf [ label mac: $label_mac ] [ ULA: $node_ula ] [ web_ui: https://[$node_ula] ]"
 					else
 						echo "$ndpmacf [ ipaddress: $ip6addr ]"
 					fi
@@ -7263,6 +7358,21 @@ elif [ "$1" = "connect" ]; then
 	exit 0
 
 elif [ "$1" = "copy" ]; then
+	mute=$mutestate
+	firstloop=0
+	vxlan_status=$(ip link show vxlan$tun_id &> /dev/null; echo $?)
+
+	if [ -f "$tmpdir/is_portal" ]; then
+		. $tmpdir/is_portal
+	fi
+
+	if [ -f "$tmpdir/devicemac" ]; then
+		. $tmpdir/devicemac
+	fi
+
+	if [ -f "$tmpdir/active_mesh_ifname" ]; then
+		. $tmpdir/active_mesh_ifname
+	fi
 
 	if [ "$auto_config" -eq 0 ]; then
 		echo "================================================================"
@@ -7270,42 +7380,102 @@ elif [ "$1" = "copy" ]; then
 		echo "================================================================"
 		exit 1
 	fi
-	nodeaddr=$(printf "%s" "$2" | tr "-" ":" | tr "[A-Z]" "[a-z]")
+
+	if [ "$2" = "filter_list" ]; then
+		connect_show_all=0
+	else
+		nodeaddr=$(printf "%s" "$2" | tr "-" ":" | tr "[A-Z]" "[a-z]")
+	fi
+
+
 	filepath=$3
 	filename=$(echo "$filepath" | awk -F "/" '{printf "%s", $NF}')
 
-	echo "==========================================================================="
+	echo "============================================================================================================================================================================="
 
 	echo " Copy a file to $tmpdir/ on a remote meshnode"
-	echo "    Usage: mesh11sd copy [remote_meshnode_macaddress] [path_of_source_file]"
+	echo "    Usage: mesh11sd copy [Node ID] [path_to_file]"
+	echo "           mesh11sd copy filter_list   (show only nodes from this contiguous mesh)"
 	echo
 	wait_for_nodes
 	echo
 
 	if [ -z "$nodeaddr" ]; then
 		echo " If the node you are looking for is not in the list - re-run this command."
-		echo "==========================================================================="
+		echo "============================================================================================================================================================================="
 		echo " The following meshnodes are available for remote copy:"
 
 	fi
 
 	if [ ! -z "$peerlist" ]; then
+		# peerlist is a list of mac addresses of peers, both la and non la
+
+		get_portal_ula
 
 		for connectto in $connectlist; do
 			linklocal="${connectto%,*}"
 			ndpmac="${connectto##*,}"
 
-			check_if_peer
+			if [ "$connect_show_all" -eq 1 ]; then
+				# When enabled, bypass the strict peer check.
+				# This allows nodes on an island mesh to be shown.
+				ispeer=0
+			else
+				check_if_peer
+			fi
 
 			if [ "$ispeer" -ne 0 ]; then
 				continue
 			fi
 
 			ndpmacf=$(printf "%s" "$ndpmac" | tr ":" "-")
+			label_mac=$(iw dev "$active_mesh_ifname" mpp dump | grep "$ndpmac" | awk '{printf "%s", $2}')
+
+			if [ -z "$label_mac" ]; then
+				continue
+			fi
+
+			linklocaladdr=$(echo "$linklocal" | awk -F "%" '{printf "%s", $1}')
+			echo "$response" | grep -q "$linklocaladdr"
+			inresponse=$?
+
+			if [ "$inresponse" -eq 1 ]; then
+				continue
+			fi
+
+			ndpmac_no_colons="${ndpmac//:/}"
+			label_mac_no_colons="${label_mac//:/}"
+
+			if [ "${ndpmac_no_colons:8:2}${ndpmac_no_colons:10:2}" != "${label_mac_no_colons:8:2}${label_mac_no_colons:10:2}" ]; then
+				label_mac="xx:xx:xx:xx:${ndpmac_no_colons:8:2}:${ndpmac_no_colons:10:2}"
+			fi
+
+
 			ip6addr=$(echo "$linklocal" | awk -F "%" '{printf "%s", $1}')
 
 			if [ -z "$nodeaddr" ]; then
-				echo "	$ndpmacf	[ ip address: $ip6addr ]"
+				# Generate EUI-64 from target peer's MAC (ndpmac)
+				mac_no_colons="${ndpmac//:/}"
+				first_byte_hex=${mac_no_colons:0:2}
+				first_byte_dec=$((0x$first_byte_hex ^ 0x02))
+				first_byte=$(printf "%02x" "$first_byte_dec")
+				eui64="${first_byte}${mac_no_colons:2:2}${mac_no_colons:4:2}fffe${mac_no_colons:6:2}${mac_no_colons:8:2}${mac_no_colons:10:2}"
+				eui64_formatted="${eui64:0:4}:${eui64:4:4}:${eui64:8:4}:${eui64:12:4}"
+
+				# Construct final clean 8-segment ULA for this peer
+				node_ula="$ula_base:$ula_subnet:$eui64_formatted"
+
+				pingreturn=$(ping6 -q -c 1 -W 1 -I $br_dev $ip6addr &>/dev/null; echo $?)
+
+				if [ "$pingreturn" -eq 0 ]; then
+					if [ -n "$node_ula" ]; then
+						echo "Node ID: $ndpmacf [ label mac: $label_mac ] [ ULA: $node_ula ] [ web_ui: https://[$node_ula] ]"
+					else
+						echo "$ndpmacf [ ipaddress: $ip6addr ]"
+					fi
+				fi
+
+
 			elif [ ! -z "$nodeaddr" ]; then
 
 				if [ "$nodeaddr" = "$ndpmac" ] && [ ! -z "$filepath" ]; then
@@ -7321,7 +7491,7 @@ elif [ "$1" = "copy" ]; then
 		done
 	fi
 
-	echo "==========================================================================="
+	echo "============================================================================================================================================================================="
 	echo
 
 	exit 0
