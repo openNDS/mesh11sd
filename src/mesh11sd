@@ -6500,6 +6500,52 @@ set_root_bridge_priority() {
 	fi
 }
 
+# =============================================================================
+# ensure_cpe_multicast_discovery_rule()
+# On CPE nodes (portal_detect=3), ensure the portal can discover us via
+# multicast ping to ff02::2. We use nft directly because UCI ordering is
+# not reliable enough for this case.
+# =============================================================================
+ensure_cpe_multicast_discovery_rule() {
+    if [ "$portal_detect" -ne 3 ]; then
+        return 0
+    fi
+
+    local added=0
+
+    # Rule 1: Accept incoming multicast pings to ff02::2
+    if ! nft list chain inet fw4 input_wan 2>/dev/null | grep -q "ip6 daddr ff02::2"; then
+        nft insert rule inet fw4 input_wan \
+            meta l4proto ipv6-icmp \
+            ip6 daddr ff02::2 \
+            counter accept \
+            comment '"mesh11sd: Allow multicast discovery from portal"'
+
+        if [ $? -eq 0 ]; then
+            log_debug "CPE mode: Added incoming ff02::2 rule to input_wan"
+            added=1
+        fi
+    fi
+
+    # Rule 2: Allow all outgoing ICMPv6 on br-wan (required for Echo Replies)
+    if ! nft list chain inet fw4 accept_to_wan 2>/dev/null | grep -q "mesh11sd.*ICMPv6.*WAN"; then
+        nft insert rule inet fw4 accept_to_wan \
+            meta nfproto ipv6 \
+            meta l4proto ipv6-icmp \
+            accept \
+            comment '"mesh11sd: Allow ICMPv6 output on WAN (CPE discovery)"'
+
+        if [ $? -eq 0 ]; then
+            log_debug "CPE mode: Added outgoing ICMPv6 rule to accept_to_wan"
+            added=1
+        fi
+    fi
+
+    if [ "$added" -eq 1 ]; then
+        log_notice "CPE mode: Added nft rules for multicast discovery from portal"
+    fi
+}
+
 ##############
 # Start point
 ##############
@@ -8625,8 +8671,6 @@ elif [ "$1" = "daemon" ]; then
 			uci del dhcp.wan.ra_dns
 			uci del dhcp.wan.ra_flags
 			uci add_list dhcp.wan.ra_flags='none'
-
-
 		fi
 
 		br_tun=$(brctl show | grep "br-tun" | awk '{printf "%s", $1}')
@@ -9062,6 +9106,7 @@ elif [ "$1" = "daemon" ]; then
 		set_root_bridge_priority
 
 		block_bridge_loops
+		ensure_cpe_multicast_discovery_rule
 		log_info "Checkinterval [$checkinterval]"
 
 		sleep $checkinterval
