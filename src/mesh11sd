@@ -1689,6 +1689,8 @@ manage_fallback_ula_route() {
 	ula_base="${ula_prefix%%::*}"   # everything before the last ::
 	log_debug "ula_base [ $ula_base ]"
 
+	get_portal_ula
+
 	# -------------------------------------------------------------------------------
 	# Part 1: Add portal-specific ::1 ULA to bridge (only on Portal)
 	# -------------------------------------------------------------------------------
@@ -1700,7 +1702,7 @@ manage_fallback_ula_route() {
 	if [ ! -z "$detected_state" ] && [ "$detected_state" = "portal" ]; then
 		log_debug "manage_fallback_ula_route - Node is a portal"
 		# Portal ULA = prefix:subnet::1 /64
-		portal_ula_addr="$ula_base:$ula_subnet::1/64"
+		portal_ula_addr="$portal_ula""/64"
 		log_debug "portal_ula_addr is [ $portal_ula_addr ], checking..."
 
 		# Check if already present
@@ -4221,81 +4223,215 @@ is_ipv4mask_valid() {
 	fi
 }
 
+# =============================================================================
+# update_known_portals_from_ras()
+# Builds list of remote portal ULAs (ending in ::1) from received RAs.
+# =============================================================================
+update_known_portals_from_ras() {
+
+	if [ -f "$tmpdir/known_portal_ulas.tmp" ]; then
+		rm "$tmpdir/known_portal_ulas.tmp"
+	fi
+
+	# Refresh bridge device's name ($device) and mac address ($devicemac)
+	refresh_bridgemac
+	set_ula_prefix "get"
+
+	local mac_clean=$(echo "$devicemac" | tr -d ':')
+
+	# Create EUI-64 version of local MAC (ff:fe insertion)
+	local eui64_part=$(echo "$mac_clean" | sed 's/^\(.\{6\}\)\(.\{6\}\)$/\1fffe\2/')
+	local interface_id="${eui64_part:0:4}:${eui64_part:4:4}:${eui64_part:8:4}:${eui64_part:12:4}"
+	local node_id="${eui64_part:12:4}"
+	local ip_addrs=$(ip -6 addr show dev "$device" scope global 2>/dev/null)
+	local ula_list=$(echo "$ip_addrs" | grep "$node_id" | grep "$ula_base"| awk '{printf "%s ", $2}')
+
+	if [ -z "$ula_list" ]; then
+		log_debug "No remote portal ULAs found yet"
+		return 0
+	fi
+
+	for ula_item in $ula_list; do
+		portal_ula=$(echo "$ula_item" | awk -F ":" '{printf "%s:%s:%s:%s::1", $1, $2, $3, $4}')
+		echo "$portal_ula" >> "$tmpdir/known_portal_ulas.tmp"
+	done
+
+	local count=$(wc -l < "$tmpdir/known_portal_ulas.tmp" 2>/dev/null || echo 0)
+
+	if [ "$count" -gt 0 ]; then
+		log_debug "Discovered $count remote portal ULA(s)"
+		mv "$tmpdir/known_portal_ulas.tmp" "$tmpdir/known_portal_ulas"
+	fi
+}
+
+# =============================================================================
+# set_ula_prefix [get|set|revert]
+# Every node gets a deterministic ULA prefix based on its factory MAC.
+# The 4th hextet is used for ip6hint (LAN and VXLAN), not in ula_prefix.
+# =============================================================================
 set_ula_prefix() {
 
 	if [ -z "$1" ]; then
 		return 1
 	fi
 
-	current_prefix="$(uci get network.globals.ula_prefix)"
-	preconf_ula_prefix=$(cat /etc/config/network | grep "ula_prefix" | awk -F "'" '{printf "%s", $2}')
+	. "$tmpdir/factory_mac"
+	factory_hash=$(echo "$factory_mac" | sha256sum | awk '{printf "%s", $1}')
+	current_prefix="$(uci get network.globals.ula_prefix 2>/dev/null)"
+	preconf_ula_prefix=$(cat /etc/config/network 2>/dev/null | grep "ula_prefix" | awk -F "'" '{printf "%s", $2}')
 
 	if [ "$1" = "revert" ]; then
 		ula_prefix=$preconf_ula_prefix
 
 	elif [ "$1" = "set" ] || [ "$1" = "get" ]; then
+
 		first=${auto_mesh_id:9:2}
 		second=${auto_mesh_id:11:4}
 		third=${auto_mesh_id:15:4}
-		ula_subnet=${auto_mesh_id:20:4}           # ← fourth segment from hash becomes lan subnet/ip6hint value for odhcpd
-		ula_vxsubnet=${auto_mesh_id:25:4}           # ← fourth segment from hash becomes vxlan subnet/ip6hint value for odhcpd
-		ula_prefix="fd$first:$second:$third::/48"   # ← trailing ::
+
+		# Deterministic subnet IDs from factory MAC hash
+		ula_subnet=${factory_hash:20:4}      # LAN subnet / ip6hint
+		ula_vxsubnet=${factory_hash:25:4}    # VXLAN subnet / ip6hint
+
+		# Base ULA prefix ( /48 ) - does NOT include the subnet
+		ula_base="fd$first:$second:$third"
+		ula_prefix="$ula_base::/48"
+
 	else
 		return 1
 	fi
 
+	# Apply changes if needed
 	if [ -z "$current_prefix" ] || [ "$current_prefix" != "$ula_prefix" ]; then
 
 		if [ "$1" != "get" ]; then
 
-			if [ "$portal_detect" -eq 1 ]; then
-
-				if [ -f "$tmpdir/is_portal" ]; then
-					. $tmpdir/is_portal
-				fi
-
-				if [ "$detected_state" = "peer" ]; then
-					return 0
-				fi
-			fi
-
-			if [ "$portal_detect" -eq 3 ] || [ "$portal_detect" -eq 5 ]; then
-				return 0
-			fi
-
 			echo "set network.globals.ula_prefix='$ula_prefix'" | uci batch
 			echo "set network.$auto_mesh_network.ip6hint='$ula_subnet'" | uci batch
+
+			log_debug "ULA prefix set to $ula_prefix (LAN hint: $ula_subnet, VXLAN hint: $ula_vxsubnet)"
 		fi
 	fi
 }
 
+# =============================================================================
+# get_portal_ula()
+# Selects the best portal based on metrics of each known portal ULA.
+# Returns $portal_ula of selected portal and $pingstatus (>0 if failed)
+# =============================================================================
 get_portal_ula() {
-	# Calculates portal ula from common mesh id etc and ping it 
-	# If failed, tries vxlan tunnel
-	# returns $portal_ula if found and $pingstatus (>0 if failed)
+	# Calculate values and populate $ula_prefix, $ula_subnet and $ula_vxsubnet
+	# $ula_subnet and $ula_vxsubnet will be what this node would use if it was a portal
 	set_ula_prefix "get"
 
-	# Get base prefix without /48 (now 4 segments, no trailing ::)
-	ula_base=$(echo "$ula_prefix" | awk -F"::/" '{print $1}')
+	# If this is a portal:
+	if [ -f "$tmpdir/is_portal" ]; then
+		. "$tmpdir/is_portal"
 
-	# Portal ULA = prefix + ::1 (standard gateway address)
-	portal_ula="$ula_base:$ula_subnet::1"
+		if [ "$detected_state" = "portal" ]; then
+			# This is a portal!
 
-	# VXLAN tunnel variant: insert :$ula_vxsubnet: after the prefix (before ::)
-	portal_ula_vtun="$ula_base:$ula_vxsubnet::1"
+			# Get base prefix
+			ula_base=$(echo "$ula_prefix" | awk -F"::/" '{print $1}')
 
-	pingstatus=$(ping -q -W 10 -c 1 "$portal_ula" &>/dev/null ; echo $?)
+			# Portal ULA = prefix + ::1 (standard gateway address)
+			portal_ula="$ula_base:$ula_subnet::1"
 
-	if [ "$pingstatus" -eq 1 ] && [ "$vtun_enable" -eq 1 ]; then
-		# VXLAN tunnel variant: insert :$ula_vxsubnet: after the prefix (before ::)
-		pingstatus=$(ping -q -W 1 -c 1 "$portal_ula_vtun" &>/dev/null ; echo $?)
-
-		if [ "$pingstatus" -eq 0 ]; then
-			portal_ula="$portal_ula_vtun"
+			return 0
 		fi
+
 	fi
 
+	# This is not a portal, so try all discovered portals from RAs
+	# Active portal and its metric are written to $tmpdir/active_portal
+	local best_ula
+	local best_metric=9999
+	local candidate
+
+	if [ -f "$tmpdir/known_portal_ulas" ] && [ -s "$tmpdir/known_portal_ulas" ]; then
+
+		while read -r candidate; do
+			if [ -z "$candidate" ]; then
+				break
+			fi
+
+			if [ -z "$best_ula" ]; then
+				best_ula="$candidate"
+			fi
+
+			# Populate NDP table
+			pingstatus=$(ping -q -c 2 "$candidate" &>/dev/null; echo -n $?)
+
+			if [ "$pingstatus" -eq 1 ]; then
+				continue
+			fi
+
+			# Get the mesh metrics for this candidate, $portal_mac, $metric, $hops, $path_changes
+			get_metrics_from_ula "$candidate"
+
+			# Choose portal by best metric
+			if [ "$metric" -lt "$best_metric" ]; then
+				best_metric="$metric"
+				best_ula="$candidate"
+				continue
+			fi
+
+		done < "$tmpdir/known_portal_ulas"
+	fi
+
+	if [ -z "$pingstatus" ]; then
+		pingstatus=1
+	fi
+
+	portal_ula="$best_ula"
 	link_to_portal=$pingstatus
+	ula_subnet=$(echo "$portal_ula" | awk -F ":" '{printf "%s", $4}')
+	ula_base=$(echo "$portal_ula" | awk -F ":" '{printf "%s:%s:%s", $1, $2, $3}')
+	ula_vxsubnet=$(ip -6 addr show dev "br-tun$tun_id" | grep "$ula_base" | awk -F ":" '{print $4}')
+
+	if [ "$pingstatus" -eq 0 ]; then
+		# Write selected portal and its metric to the log and $tmpdir/active_portal
+		log_debug "Selected portal: $portal_ula, mesh metric [ $best_metric ] )"
+		echo "portal_ula=$portal_ula; metric=$best_metric" > $tmpdir/active_portal
+	else
+		log_warning "No responsive portal found"
+	fi
+
+	return "$pingstatus"
+}
+
+# =============================================================================
+# get_metrics_from_ula()
+# Returns the mesh metrics for the portal candidate node, with the provided ULA
+# in the variables $metric $hops and $path_changes
+# =============================================================================
+get_metrics_from_ula() {
+	local remote_ula="$1"
+
+	if [ -z "$remote_ula" ]; then
+		return 1
+	fi
+
+	ula_mac=$(ip -6 neigh | grep -w "$remote_ula" | awk '{print $5}')
+
+	if [ -f "$tmpdir/active_mesh_ifname" ]; then
+		. "$tmpdir/active_mesh_ifname"
+	else
+		return 1
+	fi
+
+	local mpp_list=$(iw dev "$active_mesh_ifname" mpp dump)
+
+	if [ -z "$mpp_list" ]; then
+		return 1
+	fi
+
+	local mpath_list=$(iw dev "$active_mesh_ifname" mpath dump)
+	local mpp_entry=$(echo "$mpp_list" | grep "$ula_mac")
+	local portal_mac=$(echo "$mpp_entry" | awk '{printf "%s", $2}')
+	metrics=$(echo "$mpath_list" | grep "$portal_mac" | awk -v portal_mac="$portal_mac" 'portal_mac==$1 {printf "portal_mac=%s; metric=%s; hops=%s; path_change=%s ", portal_mac, $5, $11, $12}')
+	eval "$metrics"
+
 }
 
 str_to_hex() {
@@ -4633,7 +4769,9 @@ luci_cgi() {
 	echo "printf \"%s\n%s\n\n\" \"Content-type: text/html\"" >> "$cgi"
 	echo -e "status=\$(mesh11sd -v)" >> "$cgi"
 	echo -e "hostname=\$(uci get system.@system[0].hostname)" >> "$cgi"
-	echo -e "portal_ula=\$(mesh11sd get_portal_ula)" >> "$cgi"
+
+	eval "$(mesh11sd get_portal_ula)"
+	echo -e "portal_ula=\$portal_ula" >> "$cgi"
 	echo -e "active_nodecount=\$(mesh11sd active_nodecount)" >> "$cgi"
 	echo -e "current_time=\$(date)" >> "$cgi"
 	echo -e "host=\"\$HTTP_HOST\"" >> "$cgi"
@@ -8046,7 +8184,8 @@ elif [ "$1" = "dhcp4_renew" ]; then
 
 elif [ "$1" = "get_portal_ula" ]; then
 	get_portal_ula
-	echo "$portal_ula"
+	pingstatus="$?"
+	echo "portal_ula=\"$portal_ula\"; pingstatus=\"$pingstatus\"; ula_subnet=\"$ula_subnet\"; ula_vxsubnet=\"$ula_vxsubnet\""
 	exit 0
 
 elif [ "$1" = "get_portal_type" ]; then
@@ -8311,6 +8450,25 @@ elif [ "$1" = "is_channel_valid" ]; then
 	fi
 
 	exit "$is_valid"
+
+elif [ "$1" = "update_known_portals_from_ras" ]; then
+	mute=0
+	update_known_portals_from_ras
+
+	if [ -f "$tmpdir/known_portal_ulas" ]; then
+		cat "$tmpdir/known_portal_ulas"
+	else
+		exit 1
+	fi
+
+	exit 0
+
+elif [ "$1" = "get_metrics_from_ula" ]; then
+	mute=0
+	get_metrics_from_ula "$2"
+
+	echo "$metrics"
+	exit 0
 
 elif [ "$1" = "daemon" ]; then
 	mute=0
@@ -9100,6 +9258,8 @@ elif [ "$1" = "daemon" ]; then
 
 			if [ "$detected_state" = "portal" ]; then
 				manage_fallback_ula_route
+			else
+				update_known_portals_from_ras
 			fi
 		fi
 
