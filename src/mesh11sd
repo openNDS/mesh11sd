@@ -1173,6 +1173,25 @@ get_current_setup() {
 	write_to_syslog
 
 	#####
+	wpad_debuglevel=$(uci get mesh11sd.setup.wpad_debuglevel 2> /dev/null)
+	# Can be set from 0 to 5
+	# 0 - QUIET, ERROR, WARNING
+	# 1 - QUIET, ERROR, WARNING
+	# 2 - QUIET, ERROR, WARNING
+	# 3 - INFO
+	# 4 - DEBUG
+	# 5 - EXCESSIVE
+
+	if [ -z "$wpad_debuglevel" ]; then
+		wpad_debuglevel="2"
+	fi
+
+	syslogmessage="option wpad_debuglevel [ $wpad_debuglevel ]"
+	debugtype="info"
+	mute="$mutestate"
+	write_to_syslog
+
+	#####
 	move_ethernet_to_vxlan_bridge=$(uci get mesh11sd.setup.move_ethernet_to_vxlan_bridge 2> /dev/null)
 
 	if [ -z "$move_ethernet_to_vxlan_bridge" ]; then
@@ -3414,7 +3433,8 @@ mobility_settings() {
 			mesh_fwding=1
 		fi
 
-		# Beacon Interval - This parameter, defined in the 802.11 standard, sets the time interval (in Time Units, typically 1 TU = 1024 µs) between beacon transmissions by mesh stations (STAs).
+		# Beacon Interval - This parameter, defined in the 802.11 standard, sets the time interval (in Time Units, typically 1 TU = 1024 µs)
+		# between beacon transmissions by mesh stations (STAs).
 		# Beacons carry information used to update link quality metrics, which feed into the Airtime Link Metric (ALM) calculation.
 		# A shorter beacon interval increases the frequency of link quality updates, allowing the ALM to reflect changes in the mobile environment more quickly.
 		# However, it also increases control overhead.
@@ -3517,11 +3537,11 @@ check_path_changes() {
 
 							if [ "$is_connected" -eq 0 ]; then
 								debugtype="debug"
-								syslogmessage="Station [ $peermac ] is [ $hop_count ] hops away and [ $path_change_count ] path_change(s) for station have been detected"
+								syslogmessage="Station [ $peermac ] is [ $hop_count ] hops away, path_change_count [ $path_change_count ]"
 								write_to_syslog
 
 								debugtype="info"
-								syslogmessage="Path to [ $peermac ], changed, [ $hop_count ] hop(s) via [ $next_hop ], HWMP Sequence Lifetime [ $hwmp_update_period ] ms"
+						syslogmessage="Path to [ $peermac ], changed, [ $hop_count ] hop(s) via [ $next_hop ], HWMP Sequence Lifetime [ $hwmp_update_period ] ms"
 								write_to_syslog
 
 								# Reactive path stabilisation:
@@ -3529,9 +3549,7 @@ check_path_changes() {
 								if [ "$mesh_path_stabilisation" -eq 1 ] && [ "$detected_state" != "portal" ] ; then
 
 									debugtype="debug"
-									syslogmessage="Station [ $peermac ] has an incrementing path change count, adjust its location, txpower or rssi_threshold ....."
-									write_to_syslog
-									syslogmessage=" ..... or, if not already enabled, consider enabling mesh_leechmode on this node"
+									syslogmessage="Station [ $peermac ] has an incrementing path change count."
 									write_to_syslog
 
 									mrstloopcount=$(eval echo "\$node$peermac_id")
@@ -3556,7 +3574,7 @@ check_path_changes() {
 										fi
 									else
 										debugtype="notice"
-										syslogmessage="Mesh Reactive Stabilisation Threshold counter [ $mrstloopcount/$reactive_path_stabilisation_threshold ]"
+								syslogmessage="Mesh Reactive Stabilisation Threshold counter [ $mrstloopcount/$reactive_path_stabilisation_threshold ]"
 										write_to_syslog
 										mrstloopcount="$((mrstloopcount + 1))"
 										eval "node$peermac_id"="$mrstloopcount"
@@ -3867,6 +3885,7 @@ create_vxlan_if() {
 
 	debugtype="debug"
 	syslogmessage="create_vxlan_if [ vxlan$tun_id ], address [ $vxmac_indexed ], link_local [ $link_local_addr ], group [ ff02::$tun_id ], device [ $device ]"
+echo "$(date) $syslogmessage" >> /tmp/vxlan_conf
 	write_to_syslog
 
 	if [ ! -f "$tmpdir/active_mesh_ifname" ]; then
@@ -6684,6 +6703,57 @@ ensure_cpe_multicast_discovery_rule() {
     fi
 }
 
+# =============================================================================
+# manage_wpad_loglevel()
+# Maps mesh11sd.setup.wpad_debuglevel (0-5) to wpa_supplicant flags
+# =============================================================================
+manage_wpad_loglevel() {
+	local target_flag
+
+	# Map wpad_debuglevel → actual command line flag
+	case "$wpad_debuglevel" in
+		0|1|2) target_flag="-q" ;;
+		3)     target_flag="" ;;
+		4)     target_flag="-d" ;;
+		5)     target_flag="-dd" ;;
+		*)     target_flag="" ;;
+	esac
+
+	local init_script="/etc/init.d/wpad"
+	local backup_file="${init_script}.original"
+
+	# Create backup on first run only
+	if [ ! -f "$backup_file" ]; then
+		cp "$init_script" "$backup_file"
+		log_info "Created backup of original wpad init script"
+	fi
+
+	# Check current flag - simplified for BusyBox grep
+	local current_flag=""
+	if grep -q "\-d[dq]" "$init_script"; then
+		current_flag=$(grep -o "\-d[dq]\?" "$init_script" | head -n1)
+	elif grep -q "\-q" "$init_script"; then
+		current_flag="-q"
+	fi
+
+	if [ "$current_flag" != "$target_flag" ]; then
+		# Remove any existing -d, -dd or -q flags
+		sed -i 's/ -[dq][dq]\?//g' "$init_script"
+
+		# Insert new flag if needed
+		if [ -n "$target_flag" ]; then
+			sed -i "s|wpa_supplicant |wpa_supplicant ${target_flag} |g" "$init_script"
+		fi
+
+		log_notice "Updated wpa_supplicant verbosity: wpad_debuglevel=${wpad_debuglevel} → ${target_flag:-default (INFO)}"
+
+		# Restart wpad
+		/etc/init.d/wpad restart
+	else
+		log_debug "wpa_supplicant verbosity unchanged"
+	fi
+}
+
 ##############
 # Start point
 ##############
@@ -8514,6 +8584,9 @@ elif [ "$1" = "daemon" ]; then
 	debugtype="notice"
 	syslogmessage="mesh11sd is in startup"
 	write_to_syslog
+
+	# Set the wpad debuglevel
+	manage_wpad_loglevel
 
 	#Default flags
 	startup=4 # bit 2
