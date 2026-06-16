@@ -3879,8 +3879,26 @@ check_package_list() {
 
 create_vxlan_if() {
 
+	if [ "$vtun_enable" -eq 1 ]; then
+		vxlan_status=$(ip link show vxlan$tun_id &> /dev/null; echo $?)
+
+		if [ "$vxlan_status" -eq 0 ]; then
+			return 0
+		fi
+	fi
+
 	if [ "$portal_detect" -eq 3 ]; then
 		device="br-wan"
+	else
+		device="br-$auto_mesh_network"
+	fi
+
+
+
+	link_local_addr=$(ip addr show "$device" | grep "inet6 fe80" | awk '{printf "%s", $2}' | awk -F "/" '{printf "%s", $1}')
+
+	if [ -z "$link_local_addr"]; then
+		return 1
 	fi
 
 	debugtype="debug"
@@ -3947,6 +3965,7 @@ create_vxlan_if() {
 		echo "add_list dhcp.vtunlan.ra_flags='none'" | uci batch 2> /dev/null
 	fi
 
+	vxlan_if="created"
 	. $tmpdir/devicemac
 }
 
@@ -4114,14 +4133,6 @@ check_vtunnel() {
 			/sbin/service network restart
 			wait_for_interface "$device"
 			vtunnel="configured"
-			link_local_addr="$(ip addr show "$device" | grep "inet6 fe80" | awk '{printf "%s", $2}' | awk -F "/" '{printf "%s", $1}')"
-
-			if [ -z "$link_local_addr" ]; then
-				return 1
-			fi
-
-			create_vxlan_if
-			vxlan_if="created"
 
 			if [ "$portal_detect" -ne 4 ] && [ "$commit_all" -eq 0 ]; then
 				device="br-tun$tun_id"
@@ -4141,16 +4152,6 @@ check_vtunnel() {
 			done
 
 		elif [ "$vxlan_status" -eq 1 ] && [ "$commit_all" -eq 1 ]; then
-			. $tmpdir/devicemac
-			link_local_addr=$(ip addr show "$device" | grep "inet6 fe80" | awk '{printf "%s", $2}' | awk -F "/" '{printf "%s", $1}')
-
-			if [ -z "$link_local_addr"]; then
-				return 1
-			fi
-
-			create_vxlan_if
-			vxlan_if="created"
-
 			device="br-tun$tun_id"
 ###			echo 1 > /proc/sys/net/ipv4/conf/$device/proxy_arp
 
@@ -9325,6 +9326,7 @@ elif [ "$1" = "daemon" ]; then
 
 		move_ethernet_to_vxlan_bridge
 		set_bridge_mac_addresses
+		create_vxlan_if
 
 		if [ -f "$tmpdir/is_portal" ]; then
 			. $tmpdir/is_portal
