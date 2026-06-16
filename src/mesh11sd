@@ -1710,6 +1710,10 @@ manage_fallback_ula_route() {
 
 	get_portal_ula
 
+	if [ "$?" -eq 1 ]; then
+		return 1
+	fi
+
 	# -------------------------------------------------------------------------------
 	# Part 1: Add portal-specific ::1 ULA to bridge (only on Portal)
 	# -------------------------------------------------------------------------------
@@ -2025,6 +2029,11 @@ get_portal_type() {
 	. $tmpdir/is_portal
 	. $tmpdir/devicemac
 
+	if [ "${#devicemac}" -ne 17 ]; then
+		portal_type="UNKNOWN"
+		return 0
+	fi
+
 	if [ "$detected_state" = "portal" ]; then
 
 		if [ "$portal_detect" -eq 4 ]; then
@@ -2047,6 +2056,13 @@ get_portal_type() {
 	fi
 
 	portal_mac=$(ip -6 neigh | grep "$portal_ula" | awk '{print $5}')
+
+	if [ "${#portal_mac}" -ne 17 ]; then
+		portal_type="UNKNOWN"
+		log_warning "Portal [ $portal_type ]"
+		return 1
+	fi
+
 	portal_ipv4=$(ip -4 neigh | grep "$device" | grep "$portal_mac" | awk '{printf "%s", $1}')
 	mrp_default_ipv4_gw=$(ip -4 route | grep -m 1 "default via $portal_ipv4 dev $device")
 
@@ -4251,6 +4267,7 @@ update_known_portals_from_ras() {
 
 	if [ -f "$tmpdir/known_portal_ulas.tmp" ]; then
 		rm "$tmpdir/known_portal_ulas.tmp"
+		touch "$tmpdir/known_portal_ulas.tmp"
 	fi
 
 	# Refresh bridge device's name ($device) and mac address ($devicemac)
@@ -4273,7 +4290,12 @@ update_known_portals_from_ras() {
 
 	for ula_item in $ula_list; do
 		portal_ula=$(echo "$ula_item" | awk -F ":" '{printf "%s:%s:%s:%s::1", $1, $2, $3, $4}')
-		echo "$portal_ula" >> "$tmpdir/known_portal_ulas.tmp"
+
+		duplicate=$(grep -c "$portal_ula" "$tmpdir/known_portal_ulas.tmp" 2>/dev/null)
+
+		if [ -z "$duplicate" ] || [ "$duplicate" -eq 0 ]; then
+			echo "$portal_ula" >> "$tmpdir/known_portal_ulas.tmp"
+		fi
 	done
 
 	local count=$(wc -l < "$tmpdir/known_portal_ulas.tmp" 2>/dev/null || echo 0)
@@ -4397,6 +4419,8 @@ get_portal_ula() {
 			fi
 
 		done < "$tmpdir/known_portal_ulas"
+	else
+		return 1
 	fi
 
 	if [ -z "$pingstatus" ]; then
