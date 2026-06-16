@@ -3885,7 +3885,7 @@ create_vxlan_if() {
 
 	debugtype="debug"
 	syslogmessage="create_vxlan_if [ vxlan$tun_id ], address [ $vxmac_indexed ], link_local [ $link_local_addr ], group [ ff02::$tun_id ], device [ $device ]"
-echo "$(date) $syslogmessage" >> /tmp/vxlan_conf
+	echo "$(date) $syslogmessage" >> $tmpdir/vxlan_conf
 	write_to_syslog
 
 	if [ ! -f "$tmpdir/active_mesh_ifname" ]; then
