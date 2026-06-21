@@ -2357,6 +2357,10 @@ check_portal() {
 
 				echo "set network.$auto_mesh_network.proto='dhcp'" | uci batch
 
+				if [ -z "$portal_ula" ]; then
+					get_portal_ula
+				fi
+
 				uci set dhcp.@dnsmasq[0].authoritative='0'
 				echo "set dhcp.$auto_mesh_network.ignore='1'" | uci batch
 				echo "set dhcp.$auto_mesh_network.ra_default='2'" | uci batch
@@ -2366,7 +2370,10 @@ check_portal() {
 				echo "del_list dhcp.$auto_mesh_network.ra_flags='managed-config'" | uci batch 2> /dev/null
 				echo "del_list dhcp.$auto_mesh_network.ra_flags='other-config'" | uci batch 2> /dev/null
 				echo "add_list dhcp.$auto_mesh_network.ra_flags='none'" | uci batch
-				echo "del_list dhcp.$auto_mesh_network.ra_dns='$portal_ula'" | uci batch 2> /dev/null
+				#echo "set dhcp.$auto_mesh_network.ra_dns='1'" | uci batch
+				#echo "del dhcp.$auto_mesh_network.dns" | uci batch 2> /dev/null
+				#echo "add_list dhcp.$auto_mesh_network.dns='$portal_ula'" | uci batch 2> /dev/null
+
 				uci set dhcp.@dnsmasq[0].rebind_protection='0'
 
 				uci set dhcp.@dnsmasq[0].logfacility='-'
@@ -2475,6 +2482,10 @@ check_portal() {
 				set_ula_prefix "set"
 				/sbin/service network reload
 
+				if [ -z "$portal_ula" ]; then
+					get_portal_ula
+				fi
+
 				uci set dhcp.@dnsmasq[0].authoritative='1'
 				uci set dhcp.@dnsmasq[0].logfacility='-'
 				uci set dhcp.@dnsmasq[0].quietdhcp='1'
@@ -2489,8 +2500,9 @@ check_portal() {
 				echo "del_list dhcp.$auto_mesh_network.ra_flags='other-config'" | uci batch 2> /dev/null
 				echo "add_list dhcp.$auto_mesh_network.ra_flags='managed-config'" | uci batch 2> /dev/null
 				echo "add_list dhcp.$auto_mesh_network.ra_flags='other-config'" | uci batch 2> /dev/null
-				echo "del_list dhcp.$auto_mesh_network.ra_dns=''" | uci batch 2> /dev/null
-				echo "add_list dhcp.$auto_mesh_network.ra_dns='$portal_ula'" | uci batch 2> /dev/null
+				#echo "set dhcp.$auto_mesh_network.ra_dns='1'" | uci batch
+				#echo "del dhcp.$auto_mesh_network.dns" | uci batch 2> /dev/null
+				#echo "add_list dhcp.$auto_mesh_network.dns='$portal_ula'" | uci batch 2> /dev/null
 				uci set dhcp.@dnsmasq[0].rebind_protection='1'
 
 				if [ "$vxlan_status" -eq 0 ]; then
@@ -2498,12 +2510,21 @@ check_portal() {
 					uci set dhcp.vtunlan.dhcpv6='server'
 					uci set dhcp.vtunlan.ra='server'
 					uci set dhcp.vtunlan.ignore='0'
+
+					if [ -z "$portal_ula_vtun" ]; then
+						get_portal_ula
+						portal_ula_vtun="${ula_base}${ula_vx_subnet}::1"
+					fi
+
 					echo "del_list dhcp.vtunlan.ra_flags='none'" | uci batch 2> /dev/null
 					echo "del_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
 					echo "del_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
 					echo "add_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
 					echo "add_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
-					echo "add_list dhcp.vtunlan.ra_dns='$portal_ula_vtun'" | uci batch 2> /dev/null
+					#echo "set dhcp.dhcp.vtunlan.ra_dns.ra_dns='1'" | uci batch
+					#echo "del dhcp.dhcp.vtunlan.dns" | uci batch 2> /dev/null
+					#echo "add_list dhcp.dhcp.vtunlan.dns='$portal_ula_vtun'" | uci batch 2> /dev/null
+
 					uci set dhcp.@dnsmasq[0].rebind_protection='1'
 
 				fi
@@ -3962,12 +3983,21 @@ create_vxlan_if() {
 		uci set dhcp.vtunlan.dhcpv6='server'
 		uci set dhcp.vtunlan.ra='server'
 		uci set dhcp.vtunlan.ignore='0'
+
+		if [ -z "$portal_ula_vtun" ]; then
+			get_portal_ula
+			portal_ula_vtun="${ula_base}${ula_vx_subnet}::1"
+		fi
+
 		echo "del_list dhcp.vtunlan.ra_flags='none'" | uci batch 2> /dev/null
 		echo "del_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
 		echo "del_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
 		echo "add_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
 		echo "add_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
-		echo "add_list dhcp.vtunlan.ra_dns='$portal_ula_vtun'" | uci batch 2> /dev/null
+		#echo "set dhcp.dhcp.vtunlan.ra_dns.ra_dns='1'" | uci batch
+		#echo "del dhcp.dhcp.vtunlan.dns" | uci batch 2> /dev/null
+		#echo "add_list dhcp.dhcp.vtunlan.dns='$portal_ula_vtun'" | uci batch 2> /dev/null
+
 		uci set dhcp.@dnsmasq[0].rebind_protection='1'
 	else
 		uci set dhcp.vtunlan.dhcpv4='disabled'
@@ -3981,8 +4011,36 @@ create_vxlan_if() {
 		echo "add_list dhcp.vtunlan.ra_flags='none'" | uci batch 2> /dev/null
 	fi
 
+	log_info "vxlan$tun_id created"
+	log_debug "dnsmasq restarting"
+	/sbin/service dnsmasq restart
 	vxlan_if="created"
 	. $tmpdir/devicemac
+}
+
+check_odhcpd() {
+	# We need to wait for dnsmasq to finish setting up dhcpv4 before restarting odhcpd
+	# If we don't wait long enough, RA will fail on vxlan
+	# So wait one full cycle of the service daemon
+	# Only do this if this is a dhcp server
+
+	dhcpserver=$(uci get dhcp.vtunlan.ignore 2>/dev/null)
+
+	if [ -z "$dhcpserver" ] || [ "$dhcpserver" -eq 1 ]; then
+		return 0
+	fi
+
+	if [ -z "odhcpd_check" ]; then
+		odhcpd_check=0
+
+	elif [ "$odhcpd_check" -eq 0 ]; then
+		odhcpd_check=1
+
+	elif [ "$odhcpd_check" -eq 1 ]; then
+		log_debug "odhcpd restarting"
+		/sbin/service odhcpd restart
+		odhcpd_check=2
+	fi
 }
 
 check_vtunnel() {
@@ -4095,12 +4153,22 @@ check_vtunnel() {
 						uci set dhcp.vtunlan.dhcpv6='server'
 						uci set dhcp.vtunlan.ra='server'
 						uci set dhcp.vtunlan.ignore='0'
+
+						if [ -z "$portal_ula_vtun" ]; then
+							get_portal_ula
+							portal_ula_vtun="${ula_base}${ula_vx_subnet}::1"
+						fi
+
 						echo "del_list dhcp.vtunlan.ra_flags='none'" | uci batch
 						echo "del_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
 						echo "del_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
 						echo "add_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
 						echo "add_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
-						echo "add_list dhcp.vtunlan.ra_dns='$portal_ula_vtun'" | uci batch 2> /dev/null
+
+						#echo "set dhcp.dhcp.vtunlan.ra_dns.ra_dns='1'" | uci batch
+						#echo "del dhcp.dhcp.vtunlan.dns" | uci batch 2> /dev/null
+						#echo "add_list dhcp.dhcp.vtunlan.dns='$portal_ula_vtun'" | uci batch 2> /dev/null
+
 						uci set dhcp.@dnsmasq[0].rebind_protection='1'
 					fi
 				fi
@@ -8273,7 +8341,13 @@ elif [ "$1" = "download_revert_to_default" ]; then
 	exit 127
 
 elif [ "$1" = "dhcp4_renew" ]; then
-	dhcpdevice=$(echo "get network.$auto_mesh_network.device" | uci batch | awk '{printf "%s", $1}')
+
+	if [ -z "$2" ]; then
+		dhcpdevice=$(echo "get network.$auto_mesh_network.device" | uci batch | awk '{printf "%s", $1}')
+	else
+		dhcpdevice="$2"
+	fi
+
 	dhcp4_renew
 	exit 0
 
@@ -8636,6 +8710,7 @@ elif [ "$1" = "daemon" ]; then
 	apmondloopstart=6
 	setroute=0
 	check_channel_now=0
+	odhcpd_check=0
 
 	#loop counter for Mesh Reactive Stabilsation Threshold:
 	mrstloopcount=0
@@ -8710,6 +8785,11 @@ elif [ "$1" = "daemon" ]; then
 
 		# Set default dhcp settings for lan
 		if [ "$portal_detect" -ne 4 ]; then
+
+			if [ -z "$portal_ula" ]; then
+				get_portal_ula
+			fi
+
 			uci set dhcp.$auto_mesh_network.dhcpv4='server'
 			uci set dhcp.$auto_mesh_network.dhcpv6='server'
 			uci set dhcp.$auto_mesh_network.ra='server'
@@ -8719,8 +8799,11 @@ elif [ "$1" = "daemon" ]; then
 			echo "del_list dhcp.$auto_mesh_network.ra_flags='other-config'" | uci batch 2> /dev/null
 			echo "add_list dhcp.$auto_mesh_network.ra_flags='managed-config'" | uci batch 2> /dev/null
 			echo "add_list dhcp.$auto_mesh_network.ra_flags='other-config'" | uci batch 2> /dev/null
-			echo "del_list dhcp.$auto_mesh_network.ra_dns=''" | uci batch 2> /dev/null
-			echo "add_list dhcp.$auto_mesh_network.ra_dns='$portal_ula'" | uci batch 2> /dev/null
+
+			#echo "set dhcp.$auto_mesh_network.ra_dns='1'" | uci batch
+			#echo "del dhcp.$auto_mesh_network.dns" | uci batch 2> /dev/null
+			#echo "add_list dhcp.$auto_mesh_network.dns='$portal_ula'" | uci batch 2> /dev/null
+
 			echo "set network.$auto_mesh_network.proto='static'" | uci batch
 
 			uci set dhcp.@dnsmasq[0].rebind_protection='1'
@@ -9366,6 +9449,8 @@ elif [ "$1" = "daemon" ]; then
 
 		block_bridge_loops
 		ensure_cpe_multicast_discovery_rule
+		check_odhcpd
+
 		log_info "Checkinterval [$checkinterval]"
 
 		sleep $checkinterval
