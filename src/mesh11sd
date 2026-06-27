@@ -2308,7 +2308,7 @@ check_portal() {
 			log_debug "vxlan_status [ $vxlan_status ]"
 
 			if [ "$vxlan_status" -eq 1 ]; then
-				log_debug "MBP - checking vtunnel"
+				log_debug "CPE - checking vtunnel"
 				check_vtunnel
 			fi
 
@@ -3922,6 +3922,13 @@ create_vxlan_if() {
 		if [ "$vxlan_status" -eq 0 ]; then
 			return 0
 		fi
+	fi
+
+	get_indexed_mac "vxlan$tun_id"
+	vxmac_indexed="$mac_indexed"
+
+	if [ -z "$vxmac_indexed" ]; then
+		return 1
 	fi
 
 	if [ "$portal_detect" -eq 3 ]; then
@@ -6446,27 +6453,71 @@ radiophy() {
 set_bridge_mac_addresses() {
 	log_debug "checking mac addresses"
 	local mesh_bridge="br-$auto_mesh_network"
+	local cpe_bridge="br-lan"
 	local vxlan_bridge="br-tun$tun_id"
 	local briface=""
+	local achieved_mac=""
 
 	# Set MESH bridge a locally administered, indexed MAC
-	if [ -f "$tmpdir/brmesh_mac" ]; then
-		. $tmpdir/brmesh_mac
-	else
-		get_indexed_mac "$mesh_bridge"
-		brmesh_mac="$mac_indexed"
-		echo "brmesh_mac=\"$brmesh_mac\"" > $tmpdir/brmesh_mac
+	get_indexed_mac "$mesh_bridge"
+	brmesh_mac="$mac_indexed"
+
+	wait_for_interface "$mesh_bridge"
+
+	if [ "$ifstatus" = "down" ]; then
+		# interface is not ready - abort
+		return 1
 	fi
 
-	current_mac=$(ip link show "$mesh_bridge" | grep -o 'link/ether [^ ]*' | awk '{print $2}')
+	current_mac=$(ip link show "$mesh_bridge" | grep -o 'link/ether [^ ]*' | awk '{printf "%s", $2}')
 
-	if [ "$current_mac" != "$brmesh_mac" ]; then
+	if [ -z "$brmeshdone" ] && [ "$current_mac" != "$brmesh_mac" ]; then
 		log_debug "Setting $mesh_bridge MAC to $brmesh_mac"
 		ip link set "$mesh_bridge" down 2>/dev/null || true
 		ip link set "$mesh_bridge" address "$brmesh_mac" 2>/dev/null || true
 		ip link set "$mesh_bridge" up 2>/dev/null || true
+		achieved_mac=$(ip link show "$mesh_bridge" | grep -o 'link/ether [^ ]*' | awk '{printf "%s", $2}')
+
+		if [ "$achieved_mac" = "$brmesh_mac" ]; then
+			echo "brmesh_mac=\"$brmesh_mac\"" > $tmpdir/brmesh_mac
+			brmeshdone=1
+		else
+			log_debug "Failed to set mac [ $brmesh_mac ] on [ $mesh_bridge ]"
+		fi
 	fi
 
+	# Set CPE bridge a locally administered, indexed MAC
+
+	if [ "$portal_detect" -eq 3 ]; then
+		get_indexed_mac "$cpe_bridge"
+		brcpe_mac="$mac_indexed"
+
+		wait_for_interface "$cpe_bridge"
+
+		if [ "$ifstatus" = "down" ]; then
+			# interface is not ready - abort
+			log_debug "[ $cpe_bridge ] is not ready"
+		else
+
+			current_mac=$(ip link show "$cpe_bridge" | grep -o 'link/ether [^ ]*' | awk '{printf "%s", $2}')
+
+			if [ -z "$brcpedone" ] && [ "$current_mac" != "$brcpe_mac" ]; then
+				log_debug "Setting $cpe_bridge MAC to $brcpe_mac"
+				ip link set "$cpe_bridge" down 2>/dev/null || true
+				ip link set "$cpe_bridge" address "$brcpe_mac" 2>/dev/null || true
+				ip link set "$cpe_bridge" up 2>/dev/null || true
+
+				achieved_mac=$(ip link show "$cpe_bridge" | grep -o 'link/ether [^ ]*' | awk '{printf "%s", $2}')
+
+				if [ "$achieved_mac" = "$brcpe_mac" ]; then
+					echo "brcpe_mac=\"$brcpe_mac\"" > $tmpdir/brcpe_mac
+					brcpedone=1
+				else
+					log_debug "Failed to set mac [ $brcpe_mac ] on [ $cpe_bridge ]"
+				fi
+			fi
+		fi
+	fi
 
 	# Skip if VXLAN is not active
 	if [ "$vtun_enable" -ne 1 ] || [ -z "$tun_id" ] || [ "$tun_id" -eq 0 ]; then
@@ -6474,15 +6525,14 @@ set_bridge_mac_addresses() {
 	fi
 
 	# Set VXLAN bridge a locally administered MAC (flip the universal/local bit)
-	if [ -f "$tmpdir/vxlan_mac" ]; then
-		. $tmpdir/vxlan_mac
-	else
-		get_indexed_mac "$vxlan_bridge"
-		vxlan_mac="$mac_indexed"
+	get_indexed_mac "$vxlan_bridge"
+	vxlan_mac="$mac_indexed"
+
+	if [ ! -f "$tmpdir/vxlan_mac" ]; then
 		echo "vxlan_mac=\"$vxlan_mac\"" > $tmpdir/vxlan_mac
 	fi
 
-	current_mac=$(ip link show "$vxlan_bridge" | grep -o 'link/ether [^ ]*' | awk '{print $2}')
+	current_mac=$(ip link show "$vxlan_bridge" | grep -o 'link/ether [^ ]*' | awk '{printf "%s", $2}')
 
 	if [ "$current_mac" != "$vxlan_mac" ]; then
 		log_debug "Setting $vxlan_bridge MAC to $vxlan_mac"
@@ -6498,19 +6548,19 @@ set_bridge_mac_addresses() {
 
 	for briface in $bridge_interfaces; do
 
-		if [ "$briface" = "$active_mesh_ifname" ]; then
+		if [ "$briface" = "$active_mesh_ifname" ] || [ "$briface" = "no" ] || [ "$briface" = "yes" ]; then
 			continue
 		fi
 
 		get_indexed_mac "$briface"
+		current_mac=$(ip link show "$briface" | grep -o 'link/ether [^ ]*' | awk '{printf "%s", $2}')
 
-		if [ "$?" -gt 0 ]; then
-			continue
+		if [ "$current_mac" != "$mac_indexed" ]; then
+			log_debug "Setting $briface MAC to $mac_indexed"
+			ip link set "$briface" down 2>/dev/null || true
+			ip link set "$briface" address "$mac_indexed" 2>/dev/null || true
+			ip link set "$briface" up 2>/dev/null || true
 		fi
-
-		log_debug "Setting $briface MAC to $mac_indexed"
-
-		ip link set "$briface" address "$mac_indexed" 2>/dev/null || true
 	done
 }
 
@@ -6593,7 +6643,7 @@ get_indexed_mac() {
 	fi
 
 	increment_mac_octet "$last_mac_indexed" "$devname"	# increment the index octet
-	# $mac_indexed now contains the indexed mac or return code 127 is set if already assigned
+	# $mac_indexed now contains the indexed mac and return code 127 is set if already assigned
 	return $?
 }
 
@@ -6607,10 +6657,12 @@ increment_mac_octet() {
 	fi
 
 	if [ -f "$tmpdir/maclist" ]; then
-		ifcount=$(grep -c "$devname" "$tmpdir/maclist")
+		ifcount=$(grep -c "${devname}_mac" "$tmpdir/maclist")
 
 		if [ "$ifcount" -ne 0 ]; then
-			# abort - mac address already assigned
+			# abort increment - mac address already assigned
+			# so get existing assignment
+			mac_indexed=$(grep "${devname}_mac" /tmp/mesh11sd/maclist | awk -F "=" '{printf "%s", $2}')
 			return 127
 		fi
 	fi
@@ -6622,7 +6674,7 @@ increment_mac_octet() {
 	local new=$(( (0x$o4 + inc) % 256 ))
 	mac_indexed=$(printf '%s:%s:%s:%02x:%s:%s\n' "$o1" "$o2" "$o3" "$new" "$o5" "$o6")
 	echo "last_mac_indexed=$mac_indexed" > $tmpdir/last_mac_indexed
-	echo "$devname=$mac_indexed" >> $tmpdir/maclist
+	echo "${devname}_mac=$mac_indexed" >> $tmpdir/maclist
 }
 
 # =============================================================================
@@ -7146,16 +7198,19 @@ elif [ "$1" = "auto_config" ]; then
 	fi
 
 	if [ "$auto_config" -ne 0 ] && [ "$2" = "test" ];  then
-		echo "auto_config is already enabled"
+		echo "auto_config is already enabled, no need to test"
+		rm "$tmpdir/auto_config_test" 2>/dev/null
 		exit 0
 	fi
 
 	if [ "$auto_config" -ne 0 ] && [ "$2" = "enable" ];  then
+		rm "$tmpdir/auto_config_test" 2>/dev/null
 		echo "auto_config is already enabled"
 		exit 0
 	fi
 
 	if [ "$auto_config" -eq 0 ] && [ "$2" = "disable" ];  then
+		rm "$tmpdir/auto_config_test" 2>/dev/null
 		echo "auto_config is already disabled"
 		exit 0
 	fi
@@ -7198,7 +7253,7 @@ elif [ "$1" = "auto_config" ]; then
 		read reply
 
 		if [ "$reply" = "yes" ]; then
-			touch "$tmpdir/auto_config_test"
+			rm "$tmpdir/auto_config_test" 2>/dev/null
 			changes=$(uci changes mesh11sd)
 			changelist=$(echo "$changes" | awk '{printf "%s ", $1}')
 
@@ -7269,7 +7324,6 @@ elif [ "$1" = "status" ]; then
 		echo "    \"label_mac\":\"$factory_mac\","
 	fi
 
-	echo "    \"label_mac\":\"$factory_mac\","
 	echo "    \"portal_detect\":\"$portal_detect\","
 	echo "    \"portal_detect_threshold\":\"$portal_detect_threshold\","
 	echo "    \"portal_channel\":\"$portal_channel\","
