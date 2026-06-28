@@ -1783,6 +1783,10 @@ manage_fallback_ula_route() {
 	# Part 3: Sticky on-link route (on all nodes)
 	# --------------------------------------------------------------------
 
+	if [ "$portal_detect" -eq 3 ]; then
+		device="br-wan"
+	fi
+
 	if ! ip -6 route show "$ula_base:$ula_subnet::/64" 2>/dev/null | grep -q "dev[[:space:]]\+$device.*proto static.*metric 512.*onlink"; then
 		log_info "Adding sticky fallback on-link route $ula_base:$ula_subnet::/64 dev $device (peer auto-detect mode)"
 
