@@ -13,8 +13,8 @@
 # mesh11sd daemon
 #
 
-last_version="7.1.0~be7a"
-version="7.1.0"
+last_version="7.1.0"
+version="7.2.0~be7a"
 
 checksum=$(sha256sum /usr/sbin/mesh11sd | awk '{printf "%s", $1}')
 fixup1=0
@@ -3918,6 +3918,55 @@ check_package_list() {
 	return $retval
 }
 
+# =============================================================================
+# update_vxlan_for_active_portal()
+# Reconfigures vxlan$tun_id to join the chosen portal's VXLAN group.
+# Works for normal peers and CPE mode (portal_detect=3).
+# Call this instead of create_vxlan_if() in the main loop.
+# =============================================================================
+update_vxlan_for_active_portal() {
+
+	[ "$vtun_enable" -ne 1 ] && return 0
+
+	vxlan_if="vxlan$tun_id"
+
+	# Ensure we have a current portal selection with ula_subnet
+	get_portal_ula
+
+	if [ -z "$ula_subnet" ]; then
+		log_warning "update_vxlan_for_active_portal: No ula_subnet - using default group"
+		unset vxlan_group
+		create_vxlan_if
+		return 1
+	fi
+
+	local new_group="ff02::$ula_subnet"
+
+	# Check current group
+	current_group=$(ip -d link show type vxlan | grep -w "vxlan" | awk -F "group" '{print $2}' | awk '{printf "%s", $1}')
+
+	if [ "$current_group" = "$new_group" ]; then
+		log_debug "VXLAN already using correct group $new_group"
+		return 0
+	fi
+
+	log_notice "Portal change detected - switching VXLAN to group $new_group (portal $portal_ula)"
+
+	# Delete old interface (cannot change group on the fly)
+	if ip link show "$vxlan_if" &>/dev/null; then
+		log_info "Deleting old vxlan interface"
+		ip link del "$vxlan_if" 2>/dev/null || true
+		sleep 2
+	fi
+
+	# Create new one with correct group
+	vxlan_group="$new_group"
+	create_vxlan_if
+
+	log_info "VXLAN successfully reconfigured for new portal"
+	return 0
+}
+
 create_vxlan_if() {
 
 	if [ "$vtun_enable" -eq 1 ]; then
@@ -3941,7 +3990,13 @@ create_vxlan_if() {
 		device="br-$auto_mesh_network"
 	fi
 
+	# === Dynamic per-portal VXLAN support ===
+	# If caller (update_vxlan_for_active_portal) has set vxlan_group, use it.
+	# Otherwise fall back to old default behaviour.
 
+	if [ -z "$vxlan_group" ]; then
+		vxlan_group="ff02::$tun_id"
+	fi
 
 	link_local_addr=$(ip addr show "$device" | grep "inet6 fe80" | awk '{printf "%s", $2}' | awk -F "/" '{printf "%s", $1}')
 
@@ -3949,10 +4004,10 @@ create_vxlan_if() {
 		return 1
 	fi
 
-	debugtype="debug"
-	syslogmessage="create_vxlan_if [ vxlan$tun_id ], address [ $vxmac_indexed ], link_local [ $link_local_addr ], group [ ff02::$tun_id ], device [ $device ]"
-	echo "$(date) $syslogmessage" >> $tmpdir/vxlan_conf
-	write_to_syslog
+	local vni_decimal=$(hex_to_dec "$ula_subnet")
+	log_debug "create_vxlan_if [ vxlan$tun_id ], id [ $vni_decimal ], address [ $vxmac_indexed ], link_local [ $link_local_addr ], group [ $vxlan_group ], device [ $device ]"
+	echo "vxlan_if=\"vxlan$tun_id\"; id=\"$vni_decimal\"; address=\"$vxmac_indexed\"; link_local=\"$link_local_addr\"; group=\"$vxlan_group\"; device=\"$device\"" > $tmpdir/vxlan_conf
+
 
 	if [ ! -f "$tmpdir/active_mesh_ifname" ]; then
 		. $tmpdir/active_mesh_ifname
@@ -3961,12 +4016,13 @@ create_vxlan_if() {
 	ip -6 link add "vxlan$tun_id" \
 		address "$vxmac_indexed" \
 		type vxlan \
-		id "$tun_id" \
+		id "$vni_decimal" \
 		dstport 4789 \
 		local "$link_local_addr" \
-		group "ff02::$tun_id" \
+		group "$vxlan_group" \
 		dev "$device" \
 		ttl 5
+
 
 	ip link set "vxlan$tun_id" up
 
@@ -3977,13 +4033,13 @@ create_vxlan_if() {
 		vxlanstate="%ifstatus"
 
 		if [ "$ifstatus" = "down" ]; then
-			ip link set "vxlan$tun_id" up
+			ip link set "vxlan_if" up
 			sleep 1
 			continue
 		elif [ "$ifstatus" = "up" ]; then
 			ip link set "$active_mesh_ifname" mtu 1600
 			ip link set "$device" mtu 1600
-			ip link set "vxlan$tun_id" mtu 1500
+			ip link set "vxlan_if" mtu 1500
 			break
 		fi
 	done
@@ -4022,7 +4078,7 @@ create_vxlan_if() {
 		echo "add_list dhcp.vtunlan.ra_flags='none'" | uci batch 2> /dev/null
 	fi
 
-	log_info "vxlan$tun_id created"
+	log_info "vxlan_if created"
 	log_debug "dnsmasq restarting"
 	/sbin/service dnsmasq restart
 	vxlan_if="created"
@@ -4582,6 +4638,14 @@ str_to_hex() {
 	done
 
 	echo -n "$hexstr" > "$tmpdir/apmond/hexencoded"
+}
+
+# =============================================================================
+# hex_to_dec()
+# Converts a hex string (e.g. ba97) to decimal for use as VXLAN VNI
+# =============================================================================
+hex_to_dec() {
+    printf "%d" "0x${1}"
 }
 
 hex_to_str() {
@@ -9491,7 +9555,6 @@ elif [ "$1" = "daemon" ]; then
 
 		move_ethernet_to_vxlan_bridge
 		set_bridge_mac_addresses
-		create_vxlan_if
 
 		if [ -f "$tmpdir/is_portal" ]; then
 			. $tmpdir/is_portal
@@ -9503,6 +9566,7 @@ elif [ "$1" = "daemon" ]; then
 			fi
 		fi
 
+		update_vxlan_for_active_portal
 		set_root_bridge_priority
 
 		block_bridge_loops
