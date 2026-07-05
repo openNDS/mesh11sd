@@ -1215,6 +1215,18 @@ get_current_setup() {
 	debugtype="info"
 	mute="$mutestate"
 	write_to_syslog
+
+	#####
+	mesh_metric_threshold=$(uci get mesh11sd.setup.mesh_metric_threshold 2> /dev/null)
+
+	if [ -z "$mesh_metric_threshold" ]; then
+		mesh_metric_threshold=50
+	fi
+
+	syslogmessage="option mesh_metric_threshold [ $mesh_metric_threshold ]"
+	debugtype="info"
+	mute="$mutestate"
+	write_to_syslog
 }
 
 check_config_params() {
@@ -1910,16 +1922,20 @@ get_portal_state() {
 			mute=0
 
 			if [ "$ifstatus" = "up" ]; then
-				default_gw=$(ip route | grep "default via" | grep -w "dev $up_zone")
+				# Look for ipv4 gateway
+				default_ipv4_gw=$(ip route | grep "default via" | grep -w "dev $up_zone")
 
-				if [ -z "$default_gw" ]; then
+				if [ -z "$default_ipv4_gw" ]; then
 					dhcpdevice="$up_zone"
 					dhcp4_renew
-					default_gw=$(ip route | grep "default via" | grep -w "dev $up_zone")
+					default_ipv4_gw=$(ip route | grep "default via" | grep -w "dev $up_zone")
 				fi
+
+				# Look for ipv6 gateway
+				default_ipv6_gw=$(ip -6 neigh | grep "$up_zone" | awk '{print $1}' | awk -F ":" '$1 != "fe80" {print $0}')
 			fi
 
-			if [ ! -z "$default_gw" ]; then
+			if [ ! -z "$default_ipv4_gw" ] || [ ! -z "$default_ipv4_gw" ]; then
 				# This is a portal
 				is_portal="detected"
 				debugtype="debug"
@@ -4493,48 +4509,41 @@ set_ula_prefix() {
 
 # =============================================================================
 # get_portal_ula()
-# Selects the best portal based on metrics of each known portal ULA.
-# Returns $portal_ula of selected portal and $pingstatus (>0 if failed)
+# Selects the best portal based on metrics. Uses mesh_metric_threshold for
+# hysteresis when a portal is already active.
 # =============================================================================
 get_portal_ula() {
 	# Calculate values and populate $ula_prefix, $ula_subnet and $ula_vxsubnet
-	# $ula_subnet and $ula_vxsubnet will be what this node would use if it was a portal
 	set_ula_prefix "get"
 
-	# If this is a portal:
+	# If this node is itself a portal
 	if [ -f "$tmpdir/is_portal" ]; then
 		. "$tmpdir/is_portal"
-
 		if [ "$detected_state" = "portal" ]; then
-			# This is a portal!
-
-			# Get base prefix
 			ula_base=$(echo "$ula_prefix" | awk -F"::/" '{print $1}')
-
-			# Portal ULA = prefix + ::1 (standard gateway address)
 			portal_ula="$ula_base:$ula_subnet::1"
-
 			return 0
 		fi
-
 	fi
 
-	# This is not a portal, so try all discovered portals from RAs
-	# Active portal and its metric are written to $tmpdir/active_portal
+	# Not a portal - evaluate candidates
 	local best_ula
-	local best_metric=9999
+	local best_metric=999999
 	local candidate
+	local current_portal_ula=""
+	local current_metric=999999
+
+	# Read current active portal (if any)
+	if [ -f "$tmpdir/active_portal" ]; then
+		. "$tmpdir/active_portal" 2>/dev/null
+		current_portal_ula="$portal_ula"
+		current_metric="${metric:-999999}"
+	fi
 
 	if [ -f "$tmpdir/known_portal_ulas" ] && [ -s "$tmpdir/known_portal_ulas" ]; then
 
 		while read -r candidate; do
-			if [ -z "$candidate" ]; then
-				break
-			fi
-
-			if [ -z "$best_ula" ]; then
-				best_ula="$candidate"
-			fi
+			[ -z "$candidate" ] && break
 
 			# Populate NDP table
 			pingstatus=$(ping -q -c 2 "$candidate" &>/dev/null; echo -n $?)
@@ -4543,14 +4552,28 @@ get_portal_ula() {
 				continue
 			fi
 
-			# Get the mesh metrics for this candidate, $portal_mac, $metric, $hops, $path_changes
 			get_metrics_from_ula "$candidate"
 
-			# Choose portal by best metric
-			if [ "$metric" -lt "$best_metric" ]; then
-				best_metric="$metric"
-				best_ula="$candidate"
+			# First-run or no current portal: take the best
+			if [ -z "$current_portal_ula" ]; then
+				if [ "$metric" -lt "$best_metric" ]; then
+					best_metric="$metric"
+					best_ula="$candidate"
+				fi
 				continue
+			fi
+
+			# There is a current portal - apply threshold hysteresis
+			if [ "$candidate" = "$current_portal_ula" ]; then
+				# Always prefer current if it's still reachable (unless much worse)
+				best_ula="$candidate"
+				best_metric="$metric"
+			elif [ "$((current_metric - metric))" -gt "$mesh_metric_threshold" ]; then
+				# New portal is significantly better
+				if [ "$metric" -lt "$best_metric" ]; then
+					best_metric="$metric"
+					best_ula="$candidate"
+				fi
 			fi
 
 		done < "$tmpdir/known_portal_ulas"
@@ -4558,20 +4581,20 @@ get_portal_ula() {
 		return 1
 	fi
 
-	if [ -z "$pingstatus" ]; then
-		pingstatus=1
+	# Fallback
+	if [ -z "$best_ula" ]; then
+		best_ula="$current_portal_ula"
 	fi
 
 	portal_ula="$best_ula"
 	link_to_portal=$pingstatus
+
 	ula_subnet=$(echo "$portal_ula" | awk -F ":" '{printf "%s", $4}')
 	ula_base=$(echo "$portal_ula" | awk -F ":" '{printf "%s:%s:%s", $1, $2, $3}')
-	ula_vxsubnet=$(ip -6 addr show dev "br-tun$tun_id" | grep "$ula_base" | awk -F ":" '{print $4}')
 
 	if [ "$pingstatus" -eq 0 ]; then
-		# Write selected portal and its metric to the log and $tmpdir/active_portal
-		log_debug "Selected portal: $portal_ula, mesh metric [ $best_metric ] )"
-		echo "portal_ula=$portal_ula; metric=$best_metric" > $tmpdir/active_portal
+		log_debug "Selected portal: $portal_ula, mesh metric [ $best_metric ] (mesh_metric_threshold=$mesh_metric_threshold)"
+		echo "portal_ula=$portal_ula; metric=$best_metric" > "$tmpdir/active_portal"
 	else
 		log_warning "No responsive portal found"
 	fi
