@@ -1919,7 +1919,7 @@ get_portal_state() {
 
 			if [ $(ip link show $up_zone 2> /dev/null | grep -c -w "state UP") -eq 1 ] || [ $(ip link show $up_zone 2> /dev/null | grep -c -w "state UNKNOWN") -eq 1 ]; then
 				# Look for ipv6 gateway
-				default_ipv6_gw=$(ip -6 neigh | grep "$up_zone" | awk '{print $1}' | awk -F ":" '$1 != "fe80" {printf "%s", $0}')
+				default_ipv6_gw=$(ip -6 neigh | grep "$br_zone" | grep "router" | awk '{print $1}' | awk -F ":" '$1 != "fe80" {print $0}')
 			fi
 
 			if [ ! -z "$default_ipv6_gw" ]; then
@@ -1951,14 +1951,14 @@ get_portal_state() {
 						wait_for_interface "$br_zone"
 
 						if [ "$ifstatus" = "up" ]; then
-							default_ipv6_gw=$(ip -6 neigh | grep "$br_zone" | awk '{print $1}' | awk -F ":" '$1 != "fe80" {print $0}')
+							default_ipv6_gw=$(ip -6 neigh | grep "$br_zone" | grep "router" | awk '{print $1}' | awk -F ":" '$1 != "fe80" {print $0}')
 
 							if [ -z "$default_ipv6_gw" ]; then
 								get_portal_ula
 								scan_channel
 
 								dhcpdevice="$br_zone"
-								default_ipv6_gw=$(ip -6 neigh | grep "$br_zone" | awk '{print $1}' | awk -F ":" '$1 != "fe80" {print $0}')
+								default_ipv6_gw=$(ip -6 neigh | grep "$br_zone" | grep "router" | awk '{print $1}' | awk -F ":" '$1 != "fe80" {print $0}')
 							fi
 						fi
 
