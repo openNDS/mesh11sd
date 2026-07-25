@@ -3695,19 +3695,19 @@ block_bridge_loops() {
 
 			if [ "$rulecount" -lt 2 ]; then
 				rule_status=$(nft add rule bridge mesh11s mesh_PRE \
-					meta iifname { "\"$br_iface\"" } \
+					meta iif { "\"$br_iface\"" } \
 					ether saddr "\"$devicemac\"" \
 					counter log prefix \"MESH-LOOP-OWN-$br_iface: \" drop \
 					2> /dev/null; echo -n $?)
 
 				rule_status=$(nft add rule bridge mesh11s mesh_PRE \
-					meta iifname { "\"$br_iface\"" } \
+					meta iif { "\"$br_iface\"" } \
 					ether saddr "\"$powerline_dicovery_mac\"" \
 					counter log prefix \"MESH-LOOP-PLC-$br_iface: \" drop \
 					2> /dev/null; echo -n $?)
 
 				rule_status=$(nft add rule bridge mesh11s mesh_PRE \
-					meta iifname { "\"$br_iface\"" } \
+					meta iif { "\"$br_iface\"" } \
 					counter accept \
 					2> /dev/null; echo -n $?)
 			fi
