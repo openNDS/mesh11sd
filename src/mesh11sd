@@ -3938,7 +3938,7 @@ create_vxlan_if() {
 	if [ "$portal_detect" -eq 3 ]; then
 		device="br-wan"
 	else
-		device="br-$auto_mesh_network"
+		device=$(uci get "network.${auto_mesh_network}.device")
 	fi
 
 
@@ -6687,6 +6687,30 @@ increment_mac_octet() {
 # =============================================================================
 get_factory_mac() {
 	local mac=""
+
+	# 1. Preferred: use the board.json values if present
+	if [ -f "/etc/board.json" ]; then
+		mac=$(jsonfilter -i "/etc/board.json" -e '@["system"]["label_macaddr"]')
+		if [ -n "$mac" ]; then
+			log_info "Factory MAC obtained from board.json label_macaddr: $mac"
+			echo "$mac"
+			return 0
+		fi
+		# prefer wan
+		mac=$(jsonfilter -i "/etc/board.json" -e '@["network"]["wan"]["macaddr"]')
+		if [ -n "$mac" ]; then
+			log_info "Factory MAC obtained from board.json wan macaddr: $mac"
+			echo "$mac"
+			return 0
+		fi
+		# then lan
+		mac=$(jsonfilter -i "/etc/board.json" -e '@["network"]["lan"]["macaddr"]')
+		if [ -n "$mac" ]; then
+			log_info "Factory MAC obtained from board.json lan macaddr: $mac"
+			echo "$mac"
+			return 0
+		fi
+	fi
 
 	# 1. Preferred: Use the configured WAN device (best on GL.iNet and most routers)
 	local wan_device=$(uci -q get network.wan.device)
