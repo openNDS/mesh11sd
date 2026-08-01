@@ -1467,7 +1467,7 @@ write_log() {
 				echo "Log file too big, please archive contents and reduce max_log_entries" | logger -p "daemon.err" -s -t "mesh11sd[$mesh11sdpid]: "
 			fi
 		else
-			if [ "$available" > 10 ];then
+			if [ "$available" -gt 10 ];then
 				datetime=$(date)
 				datetime="$datetime "
 
@@ -5329,7 +5329,7 @@ get_ap_data() {
 	# Output the clients at node_mac line for this node
 	printf '    "%s": {\n' $clients > $tmpdir/apmond/clients
 
-	# Scan around the aps on this node
+	# Scan around the access point vifs on this node
 	for ap in $aplist; do
 		first_sta=1
 		ap_ifname=$(uci get wireless."$ap".ifname)
@@ -5387,6 +5387,9 @@ get_ap_data() {
 
 		first_ap=0 # finished with the first ap
 	done
+
+	#scan for ethernet connections
+	get_ethernet_clients
 
 	if [ "$sta_flag" -eq 1 ]; then
 		sed -i '$ s/.$//' "$tmpdir/apmond/clients"
@@ -6353,7 +6356,13 @@ fix_dropbear() {
 
 	if [ "$fixed" -eq 1 ]; then
 		sed -i '/^[[:space:]]*STOP=/c\STOP=10' /etc/init.d/dropbear
-		/sbin/service dropbear restart
+
+		# regenerate dropbear's symlink in /etc/rc.d
+		/sbin/service dropbear "disable"
+		/sbin/service dropbear "enable"
+
+		# restart dropbear
+		/sbin/service dropbear "restart"
 	fi
 }
 
@@ -6541,7 +6550,7 @@ set_bridge_mac_addresses() {
 
 	current_mac=$(ip link show "$mesh_bridge" | grep -o 'link/ether [^ ]*' | awk '{printf "%s", $2}')
 
-	if [ -z "$brmeshdone" ] && [ "$current_mac" != "$brmesh_mac" ]; then
+	if [ "$current_mac" != "$brmesh_mac" ]; then
 		log_debug "Setting $mesh_bridge MAC to $brmesh_mac"
 		ip link set "$mesh_bridge" down 2>/dev/null || true
 		ip link set "$mesh_bridge" address "$brmesh_mac" 2>/dev/null || true
@@ -6550,7 +6559,6 @@ set_bridge_mac_addresses() {
 
 		if [ "$achieved_mac" = "$brmesh_mac" ]; then
 			echo "brmesh_mac=\"$brmesh_mac\"" > $tmpdir/brmesh_mac
-			brmeshdone=1
 		else
 			log_debug "Failed to set mac [ $brmesh_mac ] on [ $mesh_bridge ]"
 		fi
@@ -6967,6 +6975,52 @@ manage_wpad_loglevel() {
 	else
 		log_debug "wpa_supplicant verbosity unchanged"
 	fi
+}
+
+get_ethernet_clients() {
+	local bridgelist=$(brctl show | awk 'NF==4 {printf "%s ", $1}')
+	local first=1
+
+	if [ -f "$tmpdir/active_mesh_ifname" ]; then
+		. "$tmpdir/active_mesh_ifname"
+	else
+		return 1
+	fi
+
+	for bridge in $bridgelist; do
+		net_device=$(uci show network | grep "name='$bridge'" | awk -F "." '{printf "%s.%s", $1, $2}')
+		bridge_ports=$(uci get "$net_device.ports")
+		local mac_if_list=$(brctl showmacs "$bridge" 2>/dev/null | tail -n +2 | grep "no" | awk '{printf "(%s),%s ", $1, $2}')
+
+		if [ -z "$mac_if_list" ]; then
+			continue
+		fi
+
+		for mac_if in $mac_if_list; do
+
+			local iface_id=$(echo "$mac_if" | awk -F "," '{print $1}')
+			local mac=$(echo "$mac_if" | awk -F "," '{print $2}')
+			local iface_name=$(brctl showstp "$bridge" | grep "$iface_id" | awk '{printf "%s", $1}')
+
+			if [ "$iface_name" = "vxlan$tun_id" ]; then
+				continue
+			fi
+
+			if [ "$first" -eq 1 ]; then
+				echo -e "      }," >> $tmpdir/apmond/clients
+				echo -e "      \"$bridge\": {" >> $tmpdir/apmond/clients
+				first=0
+			fi
+
+			for port in $bridge_ports; do
+
+				if [ "$iface_name" = "$port" ]; then
+					echo "        \"$port\": \"$mac\"," >> $tmpdir/apmond/clients
+					sta_flag=1 # flag that we have some stations
+				fi
+			done
+		done
+	done
 }
 
 ##############
@@ -8761,6 +8815,12 @@ elif [ "$1" = "get_metrics_from_ula" ]; then
 	get_metrics_from_ula "$2"
 
 	echo "$metrics"
+	exit 0
+
+elif [ "$1" = "get_ethernet_clients" ]; then
+	mute=0
+	get_ethernet_clients
+	echo "$json"
 	exit 0
 
 elif [ "$1" = "daemon" ]; then
