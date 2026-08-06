@@ -6915,7 +6915,11 @@ else
 	mesh11sdpid=$(pgrep -f "/bin/sh /usr/sbin/mesh11sd")
 fi
 
-get_current_setup 2> /dev/null
+# Skip the expensive runtime setup for informational options.
+case "$1" in
+	""|-h|--help|help|-v|--version|version) ;;
+	*) get_current_setup 2> /dev/null ;;
+esac
 
 if [ -z "$1" ] || [ "$1" = "-h" ] || [ $1 = "--help" ] || [ $1 = "help" ]; then
 	echo "
