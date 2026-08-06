@@ -7173,8 +7173,6 @@ else
 	mesh11sdpid=$(pgrep -f "/bin/sh /usr/sbin/mesh11sd")
 fi
 
-get_current_setup 2> /dev/null
-
 if [ -z "$1" ] || [ "$1" = "-h" ] || [ $1 = "--help" ] || [ $1 = "help" ]; then
 	echo "
   Usage: mesh11sd [option] [argument...]]
@@ -7404,11 +7402,16 @@ if [ -z "$1" ] || [ "$1" = "-h" ] || [ $1 = "--help" ] || [ $1 = "help" ]; then
   For further documentation, see: https://github.com/openNDS/mesh11sd#readme
 
 "
+	exit 0
 
 elif [ "$1" = "-v" ] || [ $1 = "--version" ] || [ $1 = "version" ]; then
 	echo "mesh11sd version $version"
+	exit 0
+fi
 
-elif [ "$1" = "debuglevel" ]; then
+get_current_setup 2> /dev/null
+
+if [ "$1" = "debuglevel" ]; then
 
 	if [ -z "$2" ];then
 		echo "$debuglevel"
