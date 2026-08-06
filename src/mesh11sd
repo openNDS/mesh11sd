@@ -1017,7 +1017,7 @@ get_current_setup() {
 		apmond_cgi_dir="/www/cgi-bin"
 	fi
 
-	strlen=$((${#apmon_cgi_dir}));
+	strlen=$((${#apmond_cgi_dir}));
 	lastchar=${apmond_cgi_dir:$strlen -1 :1}
 
 	if [ "$lastchar" != "/" ]; then
