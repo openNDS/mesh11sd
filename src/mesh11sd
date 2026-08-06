@@ -5306,7 +5306,8 @@ usi_full() {
 get_ap_data() {
 	aplist=$(uci show wireless | grep "mode='ap'" | awk -F "." '{printf "%s ", $2}')
 	first_ap=1
-	sta_flag=0
+	ap_sta=0
+	eth_sta=0
 	clients="clients@$devicemac"
 
 	local timeout=4
@@ -5340,7 +5341,7 @@ get_ap_data() {
 		if [ ! -s "$tmpdir/stations" ]; then
 			continue
 		else
-			sta_flag=1 # flag that we have some stations
+			ap_sta=1 # flag that we have some stations
 		fi
 
 		# Scan around stations on this ap
@@ -5386,20 +5387,66 @@ get_ap_data() {
 		done
 
 		first_ap=0 # finished with the first ap
-	done
+	done # done with aps
+
+	if [ "$ap_sta" -eq 1 ]; then # ap_sta=1 means we processed client stations on at least 1 ap
+		remove_last_char "$tmpdir/apmond/clients" 2
+		echo -en "\n      }," >> $tmpdir/apmond/clients
+	fi
 
 	#scan for ethernet connections
+	if [ "$ap_sta" -eq 0 ]; then # ap_sta=0 means there were no client stations on any aps
+		remove_last_char "$tmpdir/apmond/clients" 2
+	fi
 	get_ethernet_clients
 
-	if [ "$sta_flag" -eq 1 ]; then
-		sed -i '$ s/.$//' "$tmpdir/apmond/clients"
-		echo -e "      }\n    }\n  }\n}" >> $tmpdir/apmond/clients
-		usi_full
-		cat $tmpdir/apmond/clients
+	if [ "$ap_sta" -eq 1 ] && [ "$eth_sta" -eq 1 ]; then # output the json
+		end_json="\n      }\n    }\n  }\n}"
 	fi
+
+	if [ "$ap_sta" -eq 1 ] && [ "$eth_sta" -eq 0 ]; then # output the json
+		end_json="   }\n    }\n  }\n}"
+	fi
+
+	remove_last_char "$tmpdir/apmond/clients" 2
+	echo -e "$end_json" >> $tmpdir/apmond/clients
+	usi_full
+	cat $tmpdir/apmond/clients
+
 
 	# remove the lock file
 	rm $tmpdir/apmond/clients.loc
+}
+
+remove_last_char() {
+	local file="$1"
+	local count="${2:-1}"
+	local size
+
+	[ -n "$file" ] || { echo "Usage: remove_last_char <file> [count]" >&2; return 1; }
+	[ -f "$file" ] || { echo "Error: '$file' is not a regular file" >&2; return 1; }
+
+	# Validate count is a non-negative integer
+	case "$count" in
+		''|*[!0-9]*)
+			echo "Error: count must be a non-negative integer" >&2
+			return 1
+			;;
+	esac
+
+	[ "$count" -eq 0 ] && return 0
+
+	size=$(wc -c < "$file")
+	[ "$size" -eq 0 ] && return 0
+
+	if [ "$count" -ge "$size" ]; then
+		: > "$file"		# truncate to empty
+		return 0
+	fi
+
+	# Remove the last $count bytes
+	dd if="$file" of="$file.tmp" bs=1 count=$((size - count)) 2>/dev/null &&
+		mv "$file.tmp" "$file"
 }
 
 is_default() {
@@ -6762,7 +6809,17 @@ increment_mac_octet() {
 get_factory_mac() {
 	local mac=""
 
-	# 1. Preferred: Use the configured WAN device (best on GL.iNet and most routers)
+	# 1. Preferred: Use system function call - sometimes fails and returns a single newline
+	mac=$(. /lib/functions/system.sh && get_mac_label 2>/dev/null)
+	maclen=$((${#mac}))
+
+	if [ -n "$mac" ] && [ "$maclen" -eq 17 ]; then
+		log_info "Factory MAC obtained from system function call: $mac"
+		echo "$mac"
+		return 0
+	fi
+
+	# 2. First fallback: Use the configured WAN device (best on GL.iNet and most routers)
 	local wan_device=$(uci -q get network.wan.device)
 	if [ -n "$wan_device" ]; then
 		mac=$(ip link show "$wan_device" 2>/dev/null | grep -o 'link/ether [^ ]*' | awk '{print $2}')
@@ -6773,7 +6830,7 @@ get_factory_mac() {
 		fi
 	fi
 
-	# 2. Common fallback interfaces (in priority order)
+	# 3. Common fallback interfaces (in priority order)
 	for dev in eth1 eth0 lan0 lan1; do
 		mac=$(ip link show "$dev" 2>/dev/null | grep -o 'link/ether [^ ]*' | awk '{print $2}')
 		if [ -n "$mac" ]; then
@@ -6783,7 +6840,7 @@ get_factory_mac() {
 		fi
 	done
 
-	# 3. Last resort: First Ethernet interface found
+	# 4. Last resort: First Ethernet interface found
 	mac=$(ip -o link show type ether | head -n1 | awk -F': ' '{print $2}' | awk '{print $2}')
 	if [ -n "$mac" ]; then
 		log_info "Factory MAC obtained from first detected Ethernet interface: $mac"
@@ -6977,9 +7034,26 @@ manage_wpad_loglevel() {
 	fi
 }
 
+get_timestamp() {
+	local vif="$1"
+
+	# Prefer high-resolution time from iw (milliseconds since epoch)
+	# Only available when at least one station is present
+	if [ -n "$vif" ]; then
+		timestamp=$(iw dev "$vif" station dump 2>/dev/null | awk '/current time:/ {printf "%s", $3; exit}')
+	fi
+
+	# Fallback: second resolution (padded to milliseconds)
+	# Used mainly at startup before any mesh peers exist
+	if [ -z "$timestamp" ]; then
+		timestamp=$(date +%s)000
+	fi
+}
+
 get_ethernet_clients() {
 	local bridgelist=$(brctl show | awk 'NF==4 {printf "%s ", $1}')
 	local first=1
+	local numchar=0
 
 	if [ -f "$tmpdir/active_mesh_ifname" ]; then
 		. "$tmpdir/active_mesh_ifname"
@@ -7006,21 +7080,85 @@ get_ethernet_clients() {
 				continue
 			fi
 
-			if [ "$first" -eq 1 ]; then
-				echo -e "      }," >> $tmpdir/apmond/clients
-				echo -e "      \"$bridge\": {" >> $tmpdir/apmond/clients
-				first=0
-			fi
-
 			for port in $bridge_ports; do
 
 				if [ "$iface_name" = "$port" ]; then
-					echo "        \"$port\": \"$mac\"," >> $tmpdir/apmond/clients
-					sta_flag=1 # flag that we have some stations
+					eth_sta=1 # flag that we have some stations
+					get_eth_stats "$port"
+
+					if [ "$first" -eq 1 ]; then
+
+						if [ -z "$ap_sta" ] || [ "$ap_sta" -eq 0 ]; then
+							remove_last_char "$tmpdir/apmond/clients"
+							echo " {" >> $tmpdir/apmond/clients
+							echo -e "      \"$port@$bridge\": {" >> $tmpdir/apmond/clients
+						else
+							echo -e "\n      \"$port@$bridge\": {" >> $tmpdir/apmond/clients
+						fi
+
+						first=0
+					fi
+
+					echo "        \"$mac\": {" >> $tmpdir/apmond/clients
+					echo "          \"rx_bytes\": \"$rx_bytes\"," >> $tmpdir/apmond/clients
+					echo "          \"tx_bytes\": \"$tx_bytes\"," >> $tmpdir/apmond/clients
+					echo "          \"rx_bitrate\": \"$speed\"," >> $tmpdir/apmond/clients
+					echo "          \"tx_bitrate\": \"$speed\"," >> $tmpdir/apmond/clients
+
+					get_timestamp "$active_mesh_ifname"
+
+					echo "          \"timestamp\":\"$timestamp\"," >> $tmpdir/apmond/clients
+
+					local secs=$(echo "$timestamp" | head -c 10)
+					date_time="$(date -d "@$secs")"
+					# translate any spaces to underscores
+					date_time=$(echo ${date_time// /_})
+
+					echo "          \"date_time\": \"$date_time\"" >> $tmpdir/apmond/clients
+					echo "        }, " >> $tmpdir/apmond/clients
 				fi
 			done
 		done
 	done
+
+	if [ "$eth_sta" -eq 0 ]; then
+		numchar=3
+	else
+		numchar=1
+	fi
+	remove_last_char "$tmpdir/apmond/clients" "$numchar"
+}
+
+get_eth_stats() {
+	local iface="$1"
+
+	[ -z "$iface" ] && {
+		echo "Usage: get_eth_stats <interface>" >&2
+		return 1
+	}
+
+	[ ! -d "/sys/class/net/$iface" ] && {
+		echo "Interface $iface does not exist" >&2
+		return 1
+	}
+
+	# Link rate (Mb/s). -1 means link down / unknown
+	speed=$(cat "/sys/class/net/$iface/speed" 2>/dev/null)
+	[ -z "$speed" ] || [ "$speed" = "-1" ] && speed="down"
+
+	# RX / TX bytes from sysfs
+	rx_bytes=$(cat "/sys/class/net/$iface/statistics/rx_bytes" 2>/dev/null)
+	tx_bytes=$(cat "/sys/class/net/$iface/statistics/tx_bytes" 2>/dev/null)
+
+	# Fallback to ip -s if sysfs counters are missing
+	if [ -z "$rx_bytes" ] || [ -z "$tx_bytes" ]; then
+		local stats
+		stats=$(ip -s -o link show dev "$iface" 2>/dev/null)
+		rx_bytes=$(echo "$stats" | awk '{print $4}')
+		tx_bytes=$(echo "$stats" | awk '{print $6}')
+	fi
+
+	eth_stats=$(printf "%s, Speed: %s, RX: %s, TX: %s\n" "$iface" "${speed}Mb/s" "${rx_bytes:-0}" "${tx_bytes:-0}")
 }
 
 ##############
@@ -8820,7 +8958,18 @@ elif [ "$1" = "get_metrics_from_ula" ]; then
 elif [ "$1" = "get_ethernet_clients" ]; then
 	mute=0
 	get_ethernet_clients
-	echo "$json"
+	exit 0
+
+elif [ "$1" = "get_eth_stats" ]; then
+	mute=0
+	get_eth_stats "$2"
+	echo "$eth_stats"
+	exit 0
+
+elif [ "$1" = "remove_last_char" ]; then
+	mute=0
+	remove_last_char "$2" "$3"
+	cat "$2"
 	exit 0
 
 elif [ "$1" = "daemon" ]; then
