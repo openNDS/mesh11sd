@@ -1898,8 +1898,15 @@ scan_channel() {
 }
 
 get_portal_state() {
+
+	if [ "$firstloop" -eq 1 ]; then
+		return 0
+	fi
+
 	local default_ipv6_gw=""
 	local muteorg=$mute
+
+
 	log_debug "In get_portal_state. firstloop=$firstloop..."
 
 	if [ "$firstloop" -eq 1 ]; then
@@ -1918,20 +1925,21 @@ get_portal_state() {
 			fi
 
 			if [ $(ip link show $up_zone 2> /dev/null | grep -c -w "state UP") -eq 1 ] || [ $(ip link show $up_zone 2> /dev/null | grep -c -w "state UNKNOWN") -eq 1 ]; then
-				# Look for ipv6 gateway
-				default_ipv6_gw=$(ip -6 neigh | grep "$br_zone" | grep "router" | awk '{print $1}' | awk -F ":" '$1 != "fe80" {print $0}')
+				# Look for ipv4 and ipv6 gateways
+				default_ipv6_gw=$(ip -6 neigh | grep "$up_zone" | grep "router" | awk '{print $1}' | awk -F ":" '$1 != "fe80" {print $0}')
+				default_ipv4_gw=$(ip -4 neigh | grep "$up_zone" | awk 'NR==1 {printf "%s", $1}')
 			fi
 
-			if [ ! -z "$default_ipv6_gw" ]; then
+			if [ ! -z "$default_ipv6_gw" ] || [ ! -z "$default_ipv4_gw" ]; then
 				# This is a portal
 				is_portal="detected"
 				debugtype="debug"
-				syslogmessage="Node has an upstream ipv6 gateway, zone [ $up_zone ], [ $default_ipv6_gw ]"
+				syslogmessage="Node has upstream gateway(s), zone [ $up_zone ], [ $default_ipv6_gw ], [ $default_ipv4_gw ]"
 				mute=$muteorg
 				write_to_syslog
 				detected_state="portal"
 			else
-				# Try to find a portal on the backhaul
+				# Try to find a portal on the backhaul - we only need to check ipv6
 				is_portal=""
 				local retries=4
 
@@ -2856,7 +2864,6 @@ get_wiphys() {
 refresh_bridgemac() {
 	# get the device mac and write it to $tmpdir/devicemac
 	device=$(uci get network.$auto_mesh_network.device)
-	configured_mac=$(uci get network.$auto_mesh_network.macaddr 2>/dev/null)
 
 	if [ -z "$device" ]; then
 		device="br-lan"
@@ -5408,6 +5415,10 @@ get_ap_data() {
 		end_json="   }\n    }\n  }\n}"
 	fi
 
+	if [ "$ap_sta" -eq 0 ] && [ "$eth_sta" -eq 1 ]; then # output the json
+		end_json="\n      }\n    }\n  }\n}"
+	fi
+
 	remove_last_char "$tmpdir/apmond/clients" 2
 	echo -e "$end_json" >> $tmpdir/apmond/clients
 	usi_full
@@ -6591,6 +6602,10 @@ set_bridge_mac_addresses() {
 	wait_for_interface "$mesh_bridge"
 
 	if [ "$ifstatus" = "down" ]; then
+		wait_for_interface "$mesh_bridge"
+	fi
+
+	if [ "$ifstatus" = "down" ]; then
 		# interface is not ready - abort
 		return 1
 	fi
@@ -6606,6 +6621,12 @@ set_bridge_mac_addresses() {
 
 		if [ "$achieved_mac" = "$brmesh_mac" ]; then
 			echo "brmesh_mac=\"$brmesh_mac\"" > $tmpdir/brmesh_mac
+			# add brmesh_mac also to uci config, if not already there
+			config_mac=$(uci get network.$auto_mesh_network.macaddr 2>/dev/null)
+
+			if [ "$config_mac" != "$brmesh_mac" ]; then
+				echo "set network.$auto_mesh_network.macaddr='$brmesh_mac'" | uci batch
+			fi
 		else
 			log_debug "Failed to set mac [ $brmesh_mac ] on [ $mesh_bridge ]"
 		fi
@@ -9051,11 +9072,6 @@ elif [ "$1" = "daemon" ]; then
 	#loop counter for Mesh Reactive Stabilsation Threshold:
 	mrstloopcount=0
 
-	refresh_bridgemac
-
-	/sbin/service odhcpd stop
-	/sbin/service network reload
-
 	set_led init
 
 	set_led on
@@ -9073,6 +9089,14 @@ elif [ "$1" = "daemon" ]; then
 
 	# unconditionally try to stop openNDS
 	manage_opennds stop
+
+	#configure mac addresses of intitial interfaces
+	set_gridge_mac_addresses
+
+	refresh_bridgemac
+
+	/sbin/service odhcpd stop
+	/sbin/service network reload
 
 	if [ -e "$tmpdir/auto_config_test" ] && [ "$auto_config" -eq 0 ]; then
 		autostartup=1
