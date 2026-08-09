@@ -3680,38 +3680,40 @@ block_bridge_loops() {
 	# We will always delete Phantoms to prevent both temporary or permanent mac-routing black holes.
 	# But it might be better to drop AR7400 PLC discovery frames as they are received, preventing any propagation occuring before being deleted.
 
-	local powerline_dicovery_mac="00:b0:52:00:00:01"
+	local powerline_discovery_mac="00:b0:52:00:00:01"
+
+	# Single global rule for PLC discovery MAC (no need to repeat per interface)
+	if ! nft -a list table bridge mesh11s 2>/dev/null | grep -q "$powerline_discovery_mac"; then
+		rule_status=$(nft add rule bridge mesh11s mesh_PRE \
+			ether saddr "$powerline_discovery_mac" \
+			counter drop \
+			2>/dev/null; echo -n $?)
+	fi
 
 	for device in $bridgelist; do
 		local devicemac=$(ip link show dev "$device" | grep "link/ether" | awk '{printf "%s", $2}')
-		local mac_changed=0
 		local br_iface
 		local br_ifaces=$(brctl showstp "$device" | grep -B 1 -w "port id" | grep "(" | awk '{printf "%s ", $1}')
 
 		get_mesh_iflist
 
-		br_mac_list=""
-
 		for br_iface in $br_ifaces; do
-			rulecount=$(nft -a list table bridge mesh11s 2> /dev/null | grep -w -c "$br_iface" | awk '{printf "%s", $1}')
+			# Only add the own-MAC drop + accept if the interface is not already covered
+			rulecount=$(nft -a list table bridge mesh11s 2>/dev/null | grep -w -c "$br_iface" | awk '{printf "%s", $1}')
 
 			if [ "$rulecount" -lt 2 ]; then
+				# Drop frames that appear to come from our own bridge MAC (classic loop)
 				rule_status=$(nft add rule bridge mesh11s mesh_PRE \
-					meta iifname { "\"$br_iface\"" } \
+					meta iifname "\"$br_iface\"" \
 					ether saddr "\"$devicemac\"" \
-					counter log prefix \"MESH-LOOP-OWN-$br_iface: \" drop \
-					2> /dev/null; echo -n $?)
+					counter drop \
+					2>/dev/null; echo -n $?)
 
+				# Accept everything else on this interface
 				rule_status=$(nft add rule bridge mesh11s mesh_PRE \
-					meta iifname { "\"$br_iface\"" } \
-					ether saddr "\"$powerline_dicovery_mac\"" \
-					counter log prefix \"MESH-LOOP-PLC-$br_iface: \" drop \
-					2> /dev/null; echo -n $?)
-
-				rule_status=$(nft add rule bridge mesh11s mesh_PRE \
-					meta iifname { "\"$br_iface\"" } \
+					meta iifname "\"$br_iface\"" \
 					counter accept \
-					2> /dev/null; echo -n $?)
+					2>/dev/null; echo -n $?)
 			fi
 		done
 	done
