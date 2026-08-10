@@ -1103,7 +1103,7 @@ get_current_setup() {
 	mesh_node_mobility_level=$(uci get mesh11sd.setup.mesh_node_mobility_level 2> /dev/null)
 
 	if [ -z "$mesh_node_mobility_level" ]; then
-		mesh_node_mobility_level="1"
+		mesh_node_mobility_level="2"
 	fi
 
 	syslogmessage="option mesh_node_mobility_level [ $mesh_node_mobility_level ]"
@@ -3364,8 +3364,10 @@ mobility_settings() {
 	phyindex=$(echo "$phy" | awk -F "phy" '{printf "%s", $2}')
 	phyindex=$(printf "%x" $phyindex)
 
+	mesh_node_mobility_level=$(uci get mesh11sd.setup.mesh_node_mobility_level 2>/dev/null)
+
 	if [ -z "$mesh_node_mobility_level" ]; then
-		mesh_node_mobility_level=1
+		mesh_node_mobility_level=2
 	fi
 
 	case $mesh_node_mobility_level in
@@ -3408,6 +3410,14 @@ mobility_settings() {
 			mesh_hwmp_max_preq_retries=1;;
 		*) return 0;;
 	esac
+
+	if [ -f "$tmpdir/is_portal" ]; then
+		. "$tmpdir/is_portal"
+
+		if [ "$detected_state" = "portal" ]; then
+			rootmode=4
+		fi
+	fi
 
 	if [ ! -z "$use_default_beacon_interval" ] && [ "$use_default_beacon_interval"  -gt 0 ]; then
 		beacon_int=100
