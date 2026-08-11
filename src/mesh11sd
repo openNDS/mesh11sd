@@ -5806,22 +5806,24 @@ wifi_chipset_detect() {
 		write_debug "default_driver"
 		chipset=""
 
-		# Band and 802.11 standards detection - robust for Wi-Fi 6E/7 MediaTek?
+		# ---------------------------------------------------------------------
+		# Band + 802.11 Standards detection (strict frequency-based for bands)
+		# ---------------------------------------------------------------------
 		phy_info=$(iw phy "$name" info 2>/dev/null)
 		bands=""
 		standards=""
 
-		detected_something=0
-
+		# Process each Band section
 		for band_num in 1 2 3 4; do
 			if echo "$phy_info" | grep -q "Band ${band_num}:"; then
 				next_band=$((band_num + 1))
 				band_info=$(echo "$phy_info" | sed -n "/Band ${band_num}:/,/Band ${next_band}:/p")
+				# Remove the next Band header if present
 				if echo "$band_info" | grep -q "Band ${next_band}:"; then
 					band_info=$(echo "$band_info" | sed '$d')
 				fi
 
-				# Explicit frequencies (primary method)
+				# ----- Band detection (frequency only – never invent 6GHz) -----
 				if echo "$band_info" | grep -qE "[* ]+24[0-9]{2}(\.0)? MHz"; then
 					echo "$bands" | grep -qw "2.4GHz" || bands="${bands:+$bands }2.4GHz"
 				fi
@@ -5832,84 +5834,43 @@ wifi_chipset_detect() {
 					echo "$bands" | grep -qw "6GHz" || bands="${bands:+$bands }6GHz"
 				fi
 
-				# Standards (strict)
-				if echo "$band_info" | grep -qE "HT20|HT40|^\s*HT Capabilities"; then
+				# ----- Standards detection (capability based) -----
+				if echo "$band_info" | grep -qE "HT20|HT40|HT Capabilities|^\s*HT TX/RX MCS"; then
 					echo "$standards" | grep -qw "n" || standards="${standards:+$standards }n"
-					detected_something=1
 				fi
-				if echo "$band_info" | grep -qE "^\s*VHT Capabilities| VHT RX MCS| VHT TX MCS|80MHz|160MHz"; then
+				if echo "$band_info" | grep -qE "VHT Capabilities|VHT RX MCS|VHT TX MCS|Supported Channel Width:.*(80|160)"; then
 					echo "$standards" | grep -qw "ac" || standards="${standards:+$standards }ac"
-					detected_something=1
 				fi
-				if echo "$band_info" | grep -qE "HE Capabilities|HE MAC Capabilities|HE PHY Capabilities|^\s*HE Iftypes"; then
+				if echo "$band_info" | grep -qE "HE Capabilities|HE MAC Capabilities|HE PHY Capabilities|HE Iftypes|HE RX MCS"; then
 					echo "$standards" | grep -qw "ax" || standards="${standards:+$standards }ax"
-					detected_something=1
 				fi
-				if echo "$band_info" | grep -qE "EHT Capabilities|EHT MAC|EHT PHY"; then
+				if echo "$band_info" | grep -qE "EHT Capabilities|EHT MAC Capabilities|EHT PHY Capabilities|EHT Iftypes|EHT-MCS Map"; then
 					echo "$standards" | grep -qw "be" || standards="${standards:+$standards }be"
-					detected_something=1
 				fi
 			fi
 		done
 
-		per_band_detection_bands="$bands"
-		write_debug "per_band_detection_bands"
-		per_band_detection_standards="$standards"
-		write_debug "per_band_detection_standards"
-
-		# Improved fallback: prioritize explicit frequencies, infer conservatively
-		has_2ghz=0; has_5ghz=0; has_6ghz=0
-		echo "$bands" | grep -qw "2.4GHz" && has_2ghz=1
-		echo "$bands" | grep -qw "5GHz" && has_5ghz=1
-		echo "$bands" | grep -qw "6GHz" && has_6ghz=1
-
-		# Explicit frequencies anywhere (robust even if not in Band sections)
-		if ! [ "$has_6ghz" = 1 ] && echo "$phy_info" | grep -qE "[* ]+[6-7][0-9]{3}(\.0)? MHz"; then
-			bands="${bands:+$bands }6GHz"
-		fi
-
-		# Inference only for true tri-band Wi-Fi 7 (EHT = be standard)
-		if echo "$standards" | grep -qw "be" && [ "$has_2ghz" = 1 ]; then
-			# Wi-Fi 7 almost always tri-band if 2.4GHz present
-			[ "$has_5ghz" = 0 ] && bands="${bands:+$bands }5GHz"
-			[ "$has_6ghz" = 0 ] && bands="${bands:+$bands }6GHz"
-		fi
-
-		# Gentle 5GHz inference for Wi-Fi 6 if wide channels mentioned
-		if [ "$has_5ghz" = 0 ] && echo "$standards" | grep -qw "ax" && \
-		   echo "$phy_info" | grep -qiE "HE.*(80MHz|160MHz|80+80)"; then
-			bands="${bands:+$bands }5GHz"
-		fi
-
-		# Fallback standards ONLY if still empty
-		if [ -z "$standards" ]; then
-			if echo "$phy_info" | grep -qE "HT20|HT40|HT Capabilities"; then standards="n"; fi
-			if echo "$phy_info" | grep -qE "VHT Capabilities|VHT RX MCS|VHT TX MCS"; then
-				standards="${standards:+$standards }ac"
+		# Fallback if no Band sections were found (rare)
+		if [ -z "$bands" ]; then
+			if echo "$phy_info" | grep -qE "24[0-9]{2}(\.0)? MHz"; then
+				bands="2.4GHz"
 			fi
-			if echo "$phy_info" | grep -qE "HE Capabilities|HE MAC Capabilities|HE PHY Capabilities|HE Iftypes"; then
-				standards="${standards:+$standards }ax"
+			if echo "$phy_info" | grep -qE "5[0-9]{3}(\.0)? MHz"; then
+				[ -n "$bands" ] && bands="$bands 5GHz" || bands="5GHz"
 			fi
-			if echo "$phy_info" | grep -qE "EHT Capabilities|EHT MAC|EHT PHY"; then
-				standards="${standards:+$standards }be"
+			if echo "$phy_info" | grep -qE "[6-7][0-9]{3}(\.0)? MHz"; then
+				[ -n "$bands" ] && bands="$bands 6GHz" || bands="6GHz"
 			fi
-
-			fallback_standards="$standards"
-			write_debug "fallback_standards"
 		fi
 
-		# Final standards: deduplicated union of per-band and fallback detection
-		standards=$(echo "$per_band_detection_standards $standards" | tr ' ' '\n' | sort -u | tr '\n' ' ' | sed 's/^ //;s/ $//')
-		[ -z "$standards" ] && standards="legacy"
-
-		# Filter out invalid "ac" on pure 2.4 GHz PHYs (keep for dual-band)
-		if echo "$bands" | grep -q "2.4GHz" && ! echo "$bands" | grep -q "5GHz"; then
-			standards=$(echo "$standards" | sed 's/ac//g' | sed 's/  */ /g' | sed 's/^ //;s/ $//')
-		fi
-
-		# Final defaults
+		# Safety fallbacks
 		[ -z "$bands" ] && bands="unknown"
 		[ -z "$standards" ] && standards="legacy"
+
+		# Remove "ac" from pure 2.4 GHz PHYs (802.11ac is 5 GHz only)
+		if echo "$bands" | grep -q "2.4GHz" && ! echo "$bands" | grep -qE "5GHz|6GHz"; then
+			standards=$(echo "$standards" | sed 's/ac//g; s/  */ /g; s/^ //; s/ $//')
+		fi
 
 		write_debug "bands"
 		write_debug "standards"
