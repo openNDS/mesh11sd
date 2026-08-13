@@ -2418,31 +2418,6 @@ check_portal() {
 
 				/sbin/service dnsmasq restart
 				/sbin/service odhcpd restart
-
-#				local retries=5
-#
-#				for retry in $(seq $retries); do
-#					default_gw=$(ip route | grep "default via")
-#
-#					if [ -z "$default_gw" ]; then
-#						log_debug "Mesh startup watchdog - iteration [ $retry ] ...."
-#						wait_for_mesh
-#						log_debug "Mesh interface is [ $ifstatus ] ...."
-#
-#						if [ "$ifstatus" = "up" ]; then
-#							break
-#						fi
-#
-#						sleep 2
-#						continue
-#					else
-#						gw_ip=$(echo "$default_gw" | awk -F" " '{printf "%s", $3}')
-#						break
-#					fi
-#				done
-#
-#				check_dns_server
-				/sbin/service dnsmasq reload
 				/sbin/service system restart
 				echo 2 > /proc/sys/net/ipv6/conf/$device/accept_ra
 				# Just become a peer so stop opennds if it is installed and enabled
