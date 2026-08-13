@@ -1,9 +1,9 @@
 #!/bin/sh
 # Copyright (C) BlueWave Projects and Services 2015-2026
 #
-#	This software is released under the GNU General Public License version 3 or any later version.
+#	This software is released under the GNU General Public License version 2 or any later version.
 #	This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation,
-#	either version 3 of the License, or (at your option) any later version.
+#	either version 2 of the License, or (at your option) any later version.
 #
 #	This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 #	See the GNU General Public License for more details.
@@ -13,8 +13,8 @@
 # mesh11sd daemon
 #
 
-last_version="7.1.0~be7a"
-version="7.1.0"
+last_version="7.1.0"
+version="7.2.0~be7a"
 
 checksum=$(sha256sum /usr/sbin/mesh11sd | awk '{printf "%s", $1}')
 fixup1=0
@@ -1017,7 +1017,7 @@ get_current_setup() {
 		apmond_cgi_dir="/www/cgi-bin"
 	fi
 
-	strlen=$((${#apmon_cgi_dir}));
+	strlen=$((${#apmond_cgi_dir}));
 	lastchar=${apmond_cgi_dir:$strlen -1 :1}
 
 	if [ "$lastchar" != "/" ]; then
@@ -1103,7 +1103,7 @@ get_current_setup() {
 	mesh_node_mobility_level=$(uci get mesh11sd.setup.mesh_node_mobility_level 2> /dev/null)
 
 	if [ -z "$mesh_node_mobility_level" ]; then
-		mesh_node_mobility_level="1"
+		mesh_node_mobility_level="2"
 	fi
 
 	syslogmessage="option mesh_node_mobility_level [ $mesh_node_mobility_level ]"
@@ -1212,6 +1212,18 @@ get_current_setup() {
 	fi
 
 	syslogmessage="option connect_show_all [ $connect_show_all ]"
+	debugtype="info"
+	mute="$mutestate"
+	write_to_syslog
+
+	#####
+	mesh_metric_threshold=$(uci get mesh11sd.setup.mesh_metric_threshold 2> /dev/null)
+
+	if [ -z "$mesh_metric_threshold" ]; then
+		mesh_metric_threshold=50
+	fi
+
+	syslogmessage="option mesh_metric_threshold [ $mesh_metric_threshold ]"
 	debugtype="info"
 	mute="$mutestate"
 	write_to_syslog
@@ -1455,7 +1467,7 @@ write_log() {
 				echo "Log file too big, please archive contents and reduce max_log_entries" | logger -p "daemon.err" -s -t "mesh11sd[$mesh11sdpid]: "
 			fi
 		else
-			if [ "$available" > 10 ];then
+			if [ "$available" -gt 10 ];then
 				datetime=$(date)
 				datetime="$datetime "
 
@@ -1886,7 +1898,15 @@ scan_channel() {
 }
 
 get_portal_state() {
+
+	if [ "$firstloop" -eq 1 ]; then
+		return 0
+	fi
+
+	local default_ipv6_gw=""
 	local muteorg=$mute
+
+
 	log_debug "In get_portal_state. firstloop=$firstloop..."
 
 	if [ "$firstloop" -eq 1 ]; then
@@ -1894,7 +1914,6 @@ get_portal_state() {
 	fi
 
 	if [ "$portal_detect" -eq 1 ] || [ "$portal_detect" -eq 3 ] || [ "$portal_detect" -eq 4 ] || [ "$portal_detect" -eq 5 ]; then
-		default_gw=""
 
 		if [ "$firstloop" -eq 0 ]; then
 			#Check if portal - try to get the upstream default ipv4 gateway
@@ -1905,30 +1924,22 @@ get_portal_state() {
 				up_zone=$(echo "get network.wan.device" | uci batch | awk '{printf "%s", $1}')
 			fi
 
-			mute=1
-			wait_for_interface "$up_zone"
-			mute=0
-
-			if [ "$ifstatus" = "up" ]; then
-				default_gw=$(ip route | grep "default via" | grep -w "dev $up_zone")
-
-				if [ -z "$default_gw" ]; then
-					dhcpdevice="$up_zone"
-					dhcp4_renew
-					default_gw=$(ip route | grep "default via" | grep -w "dev $up_zone")
-				fi
+			if [ $(ip link show $up_zone 2> /dev/null | grep -c -w "state UP") -eq 1 ] || [ $(ip link show $up_zone 2> /dev/null | grep -c -w "state UNKNOWN") -eq 1 ]; then
+				# Look for ipv4 and ipv6 gateways
+				default_ipv6_gw=$(ip -6 neigh | grep "$up_zone" | grep "router" | awk '{print $1}' | awk -F ":" '$1 != "fe80" {print $0}')
+				default_ipv4_gw=$(ip -4 neigh | grep "$up_zone" | awk 'NR==1 {printf "%s", $1}')
 			fi
 
-			if [ ! -z "$default_gw" ]; then
+			if [ ! -z "$default_ipv6_gw" ] || [ ! -z "$default_ipv4_gw" ]; then
 				# This is a portal
 				is_portal="detected"
 				debugtype="debug"
-				syslogmessage="Node has an upstream ipv4 gateway"
+				syslogmessage="Node has upstream gateway(s), zone [ $up_zone ], [ $default_ipv6_gw ], [ $default_ipv4_gw ]"
 				mute=$muteorg
 				write_to_syslog
 				detected_state="portal"
 			else
-				# Try to find a portal on the backhaul
+				# Try to find a portal on the backhaul - we only need to check ipv6
 				is_portal=""
 				local retries=4
 
@@ -1940,7 +1951,7 @@ get_portal_state() {
 
 				for retry in $(seq $retries); do
 
-					if [ -z "$default_gw" ]; then
+					if [ -z "$default_ipv6_gw" ]; then
 						debugtype="debug"
 						syslogmessage="Portal upstream link check  [$br_zone] - iteration [ $((retry -1)) ] ...."
 						mute=$muteorg
@@ -1948,23 +1959,22 @@ get_portal_state() {
 						wait_for_interface "$br_zone"
 
 						if [ "$ifstatus" = "up" ]; then
-							default_gw=$(ip route | grep "default via" | grep -w "dev $br_zone")
+							default_ipv6_gw=$(ip -6 neigh | grep "$br_zone" | grep "router" | awk '{print $1}' | awk -F ":" '$1 != "fe80" {print $0}')
 
-							if [ -z "$default_gw" ]; then
+							if [ -z "$default_ipv6_gw" ]; then
 								get_portal_ula
 								scan_channel
 
 								dhcpdevice="$br_zone"
-								dhcp4_renew
-								default_gw=$(ip route | grep "default via" | grep -w "dev $br_zone")
+								default_ipv6_gw=$(ip -6 neigh | grep "$br_zone" | grep "router" | awk '{print $1}' | awk -F ":" '$1 != "fe80" {print $0}')
 							fi
 						fi
 
-						if [ ! -z "$default_gw" ]; then
+						if [ ! -z "$default_ipv6_gw" ]; then
 							# Portal detected
 							is_portal="backhaul"
 							debugtype="debug"
-							syslogmessage="Portal detected on backhaul"
+							syslogmessage="Portal detected on backhaul [ $default_ipv6_gw ]"
 							mute=$muteorg
 							write_to_syslog
 							detected_state="peer"
@@ -1984,23 +1994,15 @@ get_portal_state() {
 		# 0 - force portal mode
 		is_portal="forced"
 		detected_state="portal"
-		default_gw=$(ip route | grep "default via")
 	else
 		# Default to peer
 		detected_state="peer"
 	fi
 
-	# Log the default gateway, empty if we don't have one
-	debugtype="debug"
-	syslogmessage="default_gw=$default_gw...."
-	mute=$muteorg
-	write_to_syslog
-
 	# If is_portal is empty, portal detect has failed
 
 	if [ ! -z "$is_portal" ]; then
-		gw_ip=$(echo "$default_gw" | awk -F" " 'NR==1 {printf "%s", $3}')
-		gwstatus=$(ip neigh | grep -w "$gw_ip" | awk 'NR==1 {printf "%s", $NF}')
+		gwstatus=$(ip neigh | grep -w "$default_ipv6_gw" | awk 'NR==1 {printf "%s", $NF}')
 
 		if [ -z "$gwstatus" ]; then
 			is_portal=""
@@ -2279,7 +2281,8 @@ dhcp4_renew() {
 }
 
 check_dns_server() {
-	default_gw=$(ip route | grep "default via" | grep -w "dev $br_$auto_mesh_network")
+	# nothing to do, dummy function
+	default_gw=""
 
 	if [ ! -z "$default_gw" ]; then
 		gw_ip=$(echo "$default_gw" | awk -F" " '{printf "%s", $3}')
@@ -2415,38 +2418,13 @@ check_portal() {
 
 				/sbin/service dnsmasq restart
 				/sbin/service odhcpd restart
-
-				local retries=5
-
-				for retry in $(seq $retries); do
-					default_gw=$(ip route | grep "default via")
-
-					if [ -z "$default_gw" ]; then
-						log_debug "Mesh startup watchdog - iteration [ $retry ] ...."
-						wait_for_mesh
-						log_debug "Mesh interface is [ $ifstatus ] ...."
-
-						if [ "$ifstatus" = "up" ]; then
-							break
-						fi
-
-						sleep 2
-						continue
-					else
-						gw_ip=$(echo "$default_gw" | awk -F" " '{printf "%s", $3}')
-						break
-					fi
-				done
-
-				check_dns_server
-				/sbin/service dnsmasq reload
 				/sbin/service system restart
 				echo 2 > /proc/sys/net/ipv6/conf/$device/accept_ra
 				# Just become a peer so stop opennds if it is installed and enabled
 				manage_opennds stop
 			fi
 
-			check_dns_server
+#			check_dns_server
 			check_channel
 
 		else
@@ -2861,7 +2839,6 @@ get_wiphys() {
 refresh_bridgemac() {
 	# get the device mac and write it to $tmpdir/devicemac
 	device=$(uci get network.$auto_mesh_network.device)
-	configured_mac=$(uci get network.$auto_mesh_network.macaddr 2>/dev/null)
 
 	if [ -z "$device" ]; then
 		device="br-lan"
@@ -3362,8 +3339,10 @@ mobility_settings() {
 	phyindex=$(echo "$phy" | awk -F "phy" '{printf "%s", $2}')
 	phyindex=$(printf "%x" $phyindex)
 
+	mesh_node_mobility_level=$(uci get mesh11sd.setup.mesh_node_mobility_level 2>/dev/null)
+
 	if [ -z "$mesh_node_mobility_level" ]; then
-		mesh_node_mobility_level=1
+		mesh_node_mobility_level=2
 	fi
 
 	case $mesh_node_mobility_level in
@@ -3406,6 +3385,14 @@ mobility_settings() {
 			mesh_hwmp_max_preq_retries=1;;
 		*) return 0;;
 	esac
+
+	if [ -f "$tmpdir/is_portal" ]; then
+		. "$tmpdir/is_portal"
+
+		if [ "$detected_state" = "portal" ]; then
+			rootmode=4
+		fi
+	fi
 
 	if [ ! -z "$use_default_beacon_interval" ] && [ "$use_default_beacon_interval"  -gt 0 ]; then
 		beacon_int=100
@@ -3678,38 +3665,40 @@ block_bridge_loops() {
 	# We will always delete Phantoms to prevent both temporary or permanent mac-routing black holes.
 	# But it might be better to drop AR7400 PLC discovery frames as they are received, preventing any propagation occuring before being deleted.
 
-	local powerline_dicovery_mac="00:b0:52:00:00:01"
+	local powerline_discovery_mac="00:b0:52:00:00:01"
+
+	# Single global rule for PLC discovery MAC (no need to repeat per interface)
+	if ! nft -a list table bridge mesh11s 2>/dev/null | grep -q "$powerline_discovery_mac"; then
+		rule_status=$(nft add rule bridge mesh11s mesh_PRE \
+			ether saddr "$powerline_discovery_mac" \
+			counter drop \
+			2>/dev/null; echo -n $?)
+	fi
 
 	for device in $bridgelist; do
 		local devicemac=$(ip link show dev "$device" | grep "link/ether" | awk '{printf "%s", $2}')
-		local mac_changed=0
 		local br_iface
 		local br_ifaces=$(brctl showstp "$device" | grep -B 1 -w "port id" | grep "(" | awk '{printf "%s ", $1}')
 
 		get_mesh_iflist
 
-		br_mac_list=""
-
 		for br_iface in $br_ifaces; do
-			rulecount=$(nft -a list table bridge mesh11s 2> /dev/null | grep -w -c "$br_iface" | awk '{printf "%s", $1}')
+			# Only add the own-MAC drop + accept if the interface is not already covered
+			rulecount=$(nft -a list table bridge mesh11s 2>/dev/null | grep -w -c "$br_iface" | awk '{printf "%s", $1}')
 
 			if [ "$rulecount" -lt 2 ]; then
+				# Drop frames that appear to come from our own bridge MAC (classic loop)
 				rule_status=$(nft add rule bridge mesh11s mesh_PRE \
-					meta iifname { "\"$br_iface\"" } \
+					meta iifname "\"$br_iface\"" \
 					ether saddr "\"$devicemac\"" \
-					counter log prefix \"MESH-LOOP-OWN-$br_iface: \" drop \
-					2> /dev/null; echo -n $?)
+					counter drop \
+					2>/dev/null; echo -n $?)
 
+				# Accept everything else on this interface
 				rule_status=$(nft add rule bridge mesh11s mesh_PRE \
-					meta iifname { "\"$br_iface\"" } \
-					ether saddr "\"$powerline_dicovery_mac\"" \
-					counter log prefix \"MESH-LOOP-PLC-$br_iface: \" drop \
-					2> /dev/null; echo -n $?)
-
-				rule_status=$(nft add rule bridge mesh11s mesh_PRE \
-					meta iifname { "\"$br_iface\"" } \
+					meta iifname "\"$br_iface\"" \
 					counter accept \
-					2> /dev/null; echo -n $?)
+					2>/dev/null; echo -n $?)
 			fi
 		done
 	done
@@ -3918,6 +3907,55 @@ check_package_list() {
 	return $retval
 }
 
+# =============================================================================
+# update_vxlan_for_active_portal()
+# Reconfigures vxlan$tun_id to join the chosen portal's VXLAN group.
+# Works for normal peers and CPE mode (portal_detect=3).
+# Call this instead of create_vxlan_if() in the main loop.
+# =============================================================================
+update_vxlan_for_active_portal() {
+
+	[ "$vtun_enable" -ne 1 ] && return 0
+
+	vxlan_if="vxlan$tun_id"
+
+	# Ensure we have a current portal selection with ula_subnet
+	get_portal_ula
+
+	if [ -z "$ula_subnet" ]; then
+		log_warning "update_vxlan_for_active_portal: No ula_subnet - using default group"
+		unset vxlan_group
+		create_vxlan_if
+		return 1
+	fi
+
+	local new_group="ff02::$ula_subnet"
+
+	# Check current group
+	current_group=$(ip -d link show type vxlan | grep -w "vxlan" | awk -F "group" '{print $2}' | awk '{printf "%s", $1}')
+
+	if [ "$current_group" = "$new_group" ]; then
+		log_debug "VXLAN already using correct group $new_group"
+		return 0
+	fi
+
+	log_notice "Portal change detected - switching VXLAN to group $new_group (portal $portal_ula)"
+
+	# Delete old interface (cannot change group on the fly)
+	if ip link show "$vxlan_if" &>/dev/null; then
+		log_info "Deleting old vxlan interface"
+		ip link del "$vxlan_if" 2>/dev/null || true
+		sleep 2
+	fi
+
+	# Create new one with correct group
+	vxlan_group="$new_group"
+	create_vxlan_if
+
+	log_info "VXLAN successfully reconfigured for new portal"
+	return 0
+}
+
 create_vxlan_if() {
 
 	if [ "$vtun_enable" -eq 1 ]; then
@@ -3941,7 +3979,13 @@ create_vxlan_if() {
 		device="br-$auto_mesh_network"
 	fi
 
+	# === Dynamic per-portal VXLAN support ===
+	# If caller (update_vxlan_for_active_portal) has set vxlan_group, use it.
+	# Otherwise fall back to old default behaviour.
 
+	if [ -z "$vxlan_group" ]; then
+		vxlan_group="ff02::$tun_id"
+	fi
 
 	link_local_addr=$(ip addr show "$device" | grep "inet6 fe80" | awk '{printf "%s", $2}' | awk -F "/" '{printf "%s", $1}')
 
@@ -3949,10 +3993,10 @@ create_vxlan_if() {
 		return 1
 	fi
 
-	debugtype="debug"
-	syslogmessage="create_vxlan_if [ vxlan$tun_id ], address [ $vxmac_indexed ], link_local [ $link_local_addr ], group [ ff02::$tun_id ], device [ $device ]"
-	echo "$(date) $syslogmessage" >> $tmpdir/vxlan_conf
-	write_to_syslog
+	local vni_decimal=$(hex_to_dec "$ula_subnet")
+	log_debug "create_vxlan_if [ vxlan$tun_id ], id [ $vni_decimal ], address [ $vxmac_indexed ], link_local [ $link_local_addr ], group [ $vxlan_group ], device [ $device ]"
+	echo "vxlan_if=\"vxlan$tun_id\"; id=\"$vni_decimal\"; address=\"$vxmac_indexed\"; link_local=\"$link_local_addr\"; group=\"$vxlan_group\"; device=\"$device\"" > $tmpdir/vxlan_conf
+
 
 	if [ ! -f "$tmpdir/active_mesh_ifname" ]; then
 		. $tmpdir/active_mesh_ifname
@@ -3961,12 +4005,13 @@ create_vxlan_if() {
 	ip -6 link add "vxlan$tun_id" \
 		address "$vxmac_indexed" \
 		type vxlan \
-		id "$tun_id" \
+		id "$vni_decimal" \
 		dstport 4789 \
 		local "$link_local_addr" \
-		group "ff02::$tun_id" \
+		group "$vxlan_group" \
 		dev "$device" \
 		ttl 5
+
 
 	ip link set "vxlan$tun_id" up
 
@@ -3977,13 +4022,13 @@ create_vxlan_if() {
 		vxlanstate="%ifstatus"
 
 		if [ "$ifstatus" = "down" ]; then
-			ip link set "vxlan$tun_id" up
+			ip link set "vxlan_if" up
 			sleep 1
 			continue
 		elif [ "$ifstatus" = "up" ]; then
 			ip link set "$active_mesh_ifname" mtu 1600
 			ip link set "$device" mtu 1600
-			ip link set "vxlan$tun_id" mtu 1500
+			ip link set "vxlan_if" mtu 1500
 			break
 		fi
 	done
@@ -4022,7 +4067,7 @@ create_vxlan_if() {
 		echo "add_list dhcp.vtunlan.ra_flags='none'" | uci batch 2> /dev/null
 	fi
 
-	log_info "vxlan$tun_id created"
+	log_info "vxlan_if created"
 	log_debug "dnsmasq restarting"
 	/sbin/service dnsmasq restart
 	vxlan_if="created"
@@ -4437,48 +4482,41 @@ set_ula_prefix() {
 
 # =============================================================================
 # get_portal_ula()
-# Selects the best portal based on metrics of each known portal ULA.
-# Returns $portal_ula of selected portal and $pingstatus (>0 if failed)
+# Selects the best portal based on metrics. Uses mesh_metric_threshold for
+# hysteresis when a portal is already active.
 # =============================================================================
 get_portal_ula() {
 	# Calculate values and populate $ula_prefix, $ula_subnet and $ula_vxsubnet
-	# $ula_subnet and $ula_vxsubnet will be what this node would use if it was a portal
 	set_ula_prefix "get"
 
-	# If this is a portal:
+	# If this node is itself a portal
 	if [ -f "$tmpdir/is_portal" ]; then
 		. "$tmpdir/is_portal"
-
 		if [ "$detected_state" = "portal" ]; then
-			# This is a portal!
-
-			# Get base prefix
 			ula_base=$(echo "$ula_prefix" | awk -F"::/" '{print $1}')
-
-			# Portal ULA = prefix + ::1 (standard gateway address)
 			portal_ula="$ula_base:$ula_subnet::1"
-
 			return 0
 		fi
-
 	fi
 
-	# This is not a portal, so try all discovered portals from RAs
-	# Active portal and its metric are written to $tmpdir/active_portal
+	# Not a portal - evaluate candidates
 	local best_ula
-	local best_metric=9999
+	local best_metric=999999
 	local candidate
+	local current_portal_ula=""
+	local current_metric=999999
+
+	# Read current active portal (if any)
+	if [ -f "$tmpdir/active_portal" ]; then
+		. "$tmpdir/active_portal" 2>/dev/null
+		current_portal_ula="$portal_ula"
+		current_metric="${metric:-999999}"
+	fi
 
 	if [ -f "$tmpdir/known_portal_ulas" ] && [ -s "$tmpdir/known_portal_ulas" ]; then
 
 		while read -r candidate; do
-			if [ -z "$candidate" ]; then
-				break
-			fi
-
-			if [ -z "$best_ula" ]; then
-				best_ula="$candidate"
-			fi
+			[ -z "$candidate" ] && break
 
 			# Populate NDP table
 			pingstatus=$(ping -q -c 2 "$candidate" &>/dev/null; echo -n $?)
@@ -4487,14 +4525,28 @@ get_portal_ula() {
 				continue
 			fi
 
-			# Get the mesh metrics for this candidate, $portal_mac, $metric, $hops, $path_changes
 			get_metrics_from_ula "$candidate"
 
-			# Choose portal by best metric
-			if [ "$metric" -lt "$best_metric" ]; then
-				best_metric="$metric"
-				best_ula="$candidate"
+			# First-run or no current portal: take the best
+			if [ -z "$current_portal_ula" ]; then
+				if [ "$metric" -lt "$best_metric" ]; then
+					best_metric="$metric"
+					best_ula="$candidate"
+				fi
 				continue
+			fi
+
+			# There is a current portal - apply threshold hysteresis
+			if [ "$candidate" = "$current_portal_ula" ]; then
+				# Always prefer current if it's still reachable (unless much worse)
+				best_ula="$candidate"
+				best_metric="$metric"
+			elif [ "$((current_metric - metric))" -gt "$mesh_metric_threshold" ]; then
+				# New portal is significantly better
+				if [ "$metric" -lt "$best_metric" ]; then
+					best_metric="$metric"
+					best_ula="$candidate"
+				fi
 			fi
 
 		done < "$tmpdir/known_portal_ulas"
@@ -4502,20 +4554,20 @@ get_portal_ula() {
 		return 1
 	fi
 
-	if [ -z "$pingstatus" ]; then
-		pingstatus=1
+	# Fallback
+	if [ -z "$best_ula" ]; then
+		best_ula="$current_portal_ula"
 	fi
 
 	portal_ula="$best_ula"
 	link_to_portal=$pingstatus
+
 	ula_subnet=$(echo "$portal_ula" | awk -F ":" '{printf "%s", $4}')
 	ula_base=$(echo "$portal_ula" | awk -F ":" '{printf "%s:%s:%s", $1, $2, $3}')
-	ula_vxsubnet=$(ip -6 addr show dev "br-tun$tun_id" | grep "$ula_base" | awk -F ":" '{print $4}')
 
 	if [ "$pingstatus" -eq 0 ]; then
-		# Write selected portal and its metric to the log and $tmpdir/active_portal
-		log_debug "Selected portal: $portal_ula, mesh metric [ $best_metric ] )"
-		echo "portal_ula=$portal_ula; metric=$best_metric" > $tmpdir/active_portal
+		log_debug "Selected portal: $portal_ula, mesh metric [ $best_metric ], mesh metric delta [ $mesh_metric_threshold ]"
+		echo "portal_ula=$portal_ula; metric=$best_metric" > "$tmpdir/active_portal"
 	else
 		log_warning "No responsive portal found"
 	fi
@@ -4582,6 +4634,14 @@ str_to_hex() {
 	done
 
 	echo -n "$hexstr" > "$tmpdir/apmond/hexencoded"
+}
+
+# =============================================================================
+# hex_to_dec()
+# Converts a hex string (e.g. ba97) to decimal for use as VXLAN VNI
+# =============================================================================
+hex_to_dec() {
+    printf "%d" "0x${1}"
 }
 
 hex_to_str() {
@@ -5240,7 +5300,8 @@ usi_full() {
 get_ap_data() {
 	aplist=$(uci show wireless | grep "mode='ap'" | awk -F "." '{printf "%s ", $2}')
 	first_ap=1
-	sta_flag=0
+	ap_sta=0
+	eth_sta=0
 	clients="clients@$devicemac"
 
 	local timeout=4
@@ -5263,7 +5324,7 @@ get_ap_data() {
 	# Output the clients at node_mac line for this node
 	printf '    "%s": {\n' $clients > $tmpdir/apmond/clients
 
-	# Scan around the aps on this node
+	# Scan around the access point vifs on this node
 	for ap in $aplist; do
 		first_sta=1
 		ap_ifname=$(uci get wireless."$ap".ifname)
@@ -5274,7 +5335,7 @@ get_ap_data() {
 		if [ ! -s "$tmpdir/stations" ]; then
 			continue
 		else
-			sta_flag=1 # flag that we have some stations
+			ap_sta=1 # flag that we have some stations
 		fi
 
 		# Scan around stations on this ap
@@ -5320,17 +5381,70 @@ get_ap_data() {
 		done
 
 		first_ap=0 # finished with the first ap
-	done
+	done # done with aps
 
-	if [ "$sta_flag" -eq 1 ]; then
-		sed -i '$ s/.$//' "$tmpdir/apmond/clients"
-		echo -e "      }\n    }\n  }\n}" >> $tmpdir/apmond/clients
-		usi_full
-		cat $tmpdir/apmond/clients
+	if [ "$ap_sta" -eq 1 ]; then # ap_sta=1 means we processed client stations on at least 1 ap
+		remove_last_char "$tmpdir/apmond/clients" 2
+		echo -en "\n      }," >> $tmpdir/apmond/clients
 	fi
+
+	#scan for ethernet connections
+	if [ "$ap_sta" -eq 0 ]; then # ap_sta=0 means there were no client stations on any aps
+		remove_last_char "$tmpdir/apmond/clients" 2
+	fi
+	get_ethernet_clients
+
+	if [ "$ap_sta" -eq 1 ] && [ "$eth_sta" -eq 1 ]; then # output the json
+		end_json="\n      }\n    }\n  }\n}"
+	fi
+
+	if [ "$ap_sta" -eq 1 ] && [ "$eth_sta" -eq 0 ]; then # output the json
+		end_json="   }\n    }\n  }\n}"
+	fi
+
+	if [ "$ap_sta" -eq 0 ] && [ "$eth_sta" -eq 1 ]; then # output the json
+		end_json="\n      }\n    }\n  }\n}"
+	fi
+
+	remove_last_char "$tmpdir/apmond/clients" 2
+	echo -e "$end_json" >> $tmpdir/apmond/clients
+	usi_full
+	cat $tmpdir/apmond/clients
+
 
 	# remove the lock file
 	rm $tmpdir/apmond/clients.loc
+}
+
+remove_last_char() {
+	local file="$1"
+	local count="${2:-1}"
+	local size
+
+	[ -n "$file" ] || { echo "Usage: remove_last_char <file> [count]" >&2; return 1; }
+	[ -f "$file" ] || { echo "Error: '$file' is not a regular file" >&2; return 1; }
+
+	# Validate count is a non-negative integer
+	case "$count" in
+		''|*[!0-9]*)
+			echo "Error: count must be a non-negative integer" >&2
+			return 1
+			;;
+	esac
+
+	[ "$count" -eq 0 ] && return 0
+
+	size=$(wc -c < "$file")
+	[ "$size" -eq 0 ] && return 0
+
+	if [ "$count" -ge "$size" ]; then
+		: > "$file"		# truncate to empty
+		return 0
+	fi
+
+	# Remove the last $count bytes
+	dd if="$file" of="$file.tmp" bs=1 count=$((size - count)) 2>/dev/null &&
+		mv "$file.tmp" "$file"
 }
 
 is_default() {
@@ -5667,22 +5781,24 @@ wifi_chipset_detect() {
 		write_debug "default_driver"
 		chipset=""
 
-		# Band and 802.11 standards detection - robust for Wi-Fi 6E/7 MediaTek?
+		# ---------------------------------------------------------------------
+		# Band + 802.11 Standards detection (strict frequency-based for bands)
+		# ---------------------------------------------------------------------
 		phy_info=$(iw phy "$name" info 2>/dev/null)
 		bands=""
 		standards=""
 
-		detected_something=0
-
+		# Process each Band section
 		for band_num in 1 2 3 4; do
 			if echo "$phy_info" | grep -q "Band ${band_num}:"; then
 				next_band=$((band_num + 1))
 				band_info=$(echo "$phy_info" | sed -n "/Band ${band_num}:/,/Band ${next_band}:/p")
+				# Remove the next Band header if present
 				if echo "$band_info" | grep -q "Band ${next_band}:"; then
 					band_info=$(echo "$band_info" | sed '$d')
 				fi
 
-				# Explicit frequencies (primary method)
+				# ----- Band detection (frequency only – never invent 6GHz) -----
 				if echo "$band_info" | grep -qE "[* ]+24[0-9]{2}(\.0)? MHz"; then
 					echo "$bands" | grep -qw "2.4GHz" || bands="${bands:+$bands }2.4GHz"
 				fi
@@ -5693,84 +5809,43 @@ wifi_chipset_detect() {
 					echo "$bands" | grep -qw "6GHz" || bands="${bands:+$bands }6GHz"
 				fi
 
-				# Standards (strict)
-				if echo "$band_info" | grep -qE "HT20|HT40|^\s*HT Capabilities"; then
+				# ----- Standards detection (capability based) -----
+				if echo "$band_info" | grep -qE "HT20|HT40|HT Capabilities|^\s*HT TX/RX MCS"; then
 					echo "$standards" | grep -qw "n" || standards="${standards:+$standards }n"
-					detected_something=1
 				fi
-				if echo "$band_info" | grep -qE "^\s*VHT Capabilities| VHT RX MCS| VHT TX MCS|80MHz|160MHz"; then
+				if echo "$band_info" | grep -qE "VHT Capabilities|VHT RX MCS|VHT TX MCS|Supported Channel Width:.*(80|160)"; then
 					echo "$standards" | grep -qw "ac" || standards="${standards:+$standards }ac"
-					detected_something=1
 				fi
-				if echo "$band_info" | grep -qE "HE Capabilities|HE MAC Capabilities|HE PHY Capabilities|^\s*HE Iftypes"; then
+				if echo "$band_info" | grep -qE "HE Capabilities|HE MAC Capabilities|HE PHY Capabilities|HE Iftypes|HE RX MCS"; then
 					echo "$standards" | grep -qw "ax" || standards="${standards:+$standards }ax"
-					detected_something=1
 				fi
-				if echo "$band_info" | grep -qE "EHT Capabilities|EHT MAC|EHT PHY"; then
+				if echo "$band_info" | grep -qE "EHT Capabilities|EHT MAC Capabilities|EHT PHY Capabilities|EHT Iftypes|EHT-MCS Map"; then
 					echo "$standards" | grep -qw "be" || standards="${standards:+$standards }be"
-					detected_something=1
 				fi
 			fi
 		done
 
-		per_band_detection_bands="$bands"
-		write_debug "per_band_detection_bands"
-		per_band_detection_standards="$standards"
-		write_debug "per_band_detection_standards"
-
-		# Improved fallback: prioritize explicit frequencies, infer conservatively
-		has_2ghz=0; has_5ghz=0; has_6ghz=0
-		echo "$bands" | grep -qw "2.4GHz" && has_2ghz=1
-		echo "$bands" | grep -qw "5GHz" && has_5ghz=1
-		echo "$bands" | grep -qw "6GHz" && has_6ghz=1
-
-		# Explicit frequencies anywhere (robust even if not in Band sections)
-		if ! [ "$has_6ghz" = 1 ] && echo "$phy_info" | grep -qE "[* ]+[6-7][0-9]{3}(\.0)? MHz"; then
-			bands="${bands:+$bands }6GHz"
-		fi
-
-		# Inference only for true tri-band Wi-Fi 7 (EHT = be standard)
-		if echo "$standards" | grep -qw "be" && [ "$has_2ghz" = 1 ]; then
-			# Wi-Fi 7 almost always tri-band if 2.4GHz present
-			[ "$has_5ghz" = 0 ] && bands="${bands:+$bands }5GHz"
-			[ "$has_6ghz" = 0 ] && bands="${bands:+$bands }6GHz"
-		fi
-
-		# Gentle 5GHz inference for Wi-Fi 6 if wide channels mentioned
-		if [ "$has_5ghz" = 0 ] && echo "$standards" | grep -qw "ax" && \
-		   echo "$phy_info" | grep -qiE "HE.*(80MHz|160MHz|80+80)"; then
-			bands="${bands:+$bands }5GHz"
-		fi
-
-		# Fallback standards ONLY if still empty
-		if [ -z "$standards" ]; then
-			if echo "$phy_info" | grep -qE "HT20|HT40|HT Capabilities"; then standards="n"; fi
-			if echo "$phy_info" | grep -qE "VHT Capabilities|VHT RX MCS|VHT TX MCS"; then
-				standards="${standards:+$standards }ac"
+		# Fallback if no Band sections were found (rare)
+		if [ -z "$bands" ]; then
+			if echo "$phy_info" | grep -qE "24[0-9]{2}(\.0)? MHz"; then
+				bands="2.4GHz"
 			fi
-			if echo "$phy_info" | grep -qE "HE Capabilities|HE MAC Capabilities|HE PHY Capabilities|HE Iftypes"; then
-				standards="${standards:+$standards }ax"
+			if echo "$phy_info" | grep -qE "5[0-9]{3}(\.0)? MHz"; then
+				[ -n "$bands" ] && bands="$bands 5GHz" || bands="5GHz"
 			fi
-			if echo "$phy_info" | grep -qE "EHT Capabilities|EHT MAC|EHT PHY"; then
-				standards="${standards:+$standards }be"
+			if echo "$phy_info" | grep -qE "[6-7][0-9]{3}(\.0)? MHz"; then
+				[ -n "$bands" ] && bands="$bands 6GHz" || bands="6GHz"
 			fi
-
-			fallback_standards="$standards"
-			write_debug "fallback_standards"
 		fi
 
-		# Final standards: deduplicated union of per-band and fallback detection
-		standards=$(echo "$per_band_detection_standards $standards" | tr ' ' '\n' | sort -u | tr '\n' ' ' | sed 's/^ //;s/ $//')
-		[ -z "$standards" ] && standards="legacy"
-
-		# Filter out invalid "ac" on pure 2.4 GHz PHYs (keep for dual-band)
-		if echo "$bands" | grep -q "2.4GHz" && ! echo "$bands" | grep -q "5GHz"; then
-			standards=$(echo "$standards" | sed 's/ac//g' | sed 's/  */ /g' | sed 's/^ //;s/ $//')
-		fi
-
-		# Final defaults
+		# Safety fallbacks
 		[ -z "$bands" ] && bands="unknown"
 		[ -z "$standards" ] && standards="legacy"
+
+		# Remove "ac" from pure 2.4 GHz PHYs (802.11ac is 5 GHz only)
+		if echo "$bands" | grep -q "2.4GHz" && ! echo "$bands" | grep -qE "5GHz|6GHz"; then
+			standards=$(echo "$standards" | sed 's/ac//g; s/  */ /g; s/^ //; s/ $//')
+		fi
 
 		write_debug "bands"
 		write_debug "standards"
@@ -6287,7 +6362,13 @@ fix_dropbear() {
 
 	if [ "$fixed" -eq 1 ]; then
 		sed -i '/^[[:space:]]*STOP=/c\STOP=10' /etc/init.d/dropbear
-		/sbin/service dropbear restart
+
+		# regenerate dropbear's symlink in /etc/rc.d
+		/sbin/service dropbear "disable"
+		/sbin/service dropbear "enable"
+
+		# restart dropbear
+		/sbin/service dropbear "restart"
 	fi
 }
 
@@ -6469,13 +6550,17 @@ set_bridge_mac_addresses() {
 	wait_for_interface "$mesh_bridge"
 
 	if [ "$ifstatus" = "down" ]; then
+		wait_for_interface "$mesh_bridge"
+	fi
+
+	if [ "$ifstatus" = "down" ]; then
 		# interface is not ready - abort
 		return 1
 	fi
 
 	current_mac=$(ip link show "$mesh_bridge" | grep -o 'link/ether [^ ]*' | awk '{printf "%s", $2}')
 
-	if [ -z "$brmeshdone" ] && [ "$current_mac" != "$brmesh_mac" ]; then
+	if [ "$current_mac" != "$brmesh_mac" ]; then
 		log_debug "Setting $mesh_bridge MAC to $brmesh_mac"
 		ip link set "$mesh_bridge" down 2>/dev/null || true
 		ip link set "$mesh_bridge" address "$brmesh_mac" 2>/dev/null || true
@@ -6484,7 +6569,12 @@ set_bridge_mac_addresses() {
 
 		if [ "$achieved_mac" = "$brmesh_mac" ]; then
 			echo "brmesh_mac=\"$brmesh_mac\"" > $tmpdir/brmesh_mac
-			brmeshdone=1
+			# add brmesh_mac also to uci config, if not already there
+			config_mac=$(uci get network.$auto_mesh_network.macaddr 2>/dev/null)
+
+			if [ "$config_mac" != "$brmesh_mac" ]; then
+				echo "set network.$auto_mesh_network.macaddr='$brmesh_mac'" | uci batch
+			fi
 		else
 			log_debug "Failed to set mac [ $brmesh_mac ] on [ $mesh_bridge ]"
 		fi
@@ -6688,7 +6778,17 @@ increment_mac_octet() {
 get_factory_mac() {
 	local mac=""
 
-	# 1. Preferred: Use the configured WAN device (best on GL.iNet and most routers)
+	# 1. Preferred: Use system function call - sometimes fails and returns a single newline
+	mac=$(. /lib/functions/system.sh && get_mac_label 2>/dev/null)
+	maclen=$((${#mac}))
+
+	if [ -n "$mac" ] && [ "$maclen" -eq 17 ]; then
+		log_info "Factory MAC obtained from system function call: $mac"
+		echo "$mac"
+		return 0
+	fi
+
+	# 2. First fallback: Use the configured WAN device (best on GL.iNet and most routers)
 	local wan_device=$(uci -q get network.wan.device)
 	if [ -n "$wan_device" ]; then
 		mac=$(ip link show "$wan_device" 2>/dev/null | grep -o 'link/ether [^ ]*' | awk '{print $2}')
@@ -6699,7 +6799,7 @@ get_factory_mac() {
 		fi
 	fi
 
-	# 2. Common fallback interfaces (in priority order)
+	# 3. Common fallback interfaces (in priority order)
 	for dev in eth1 eth0 lan0 lan1; do
 		mac=$(ip link show "$dev" 2>/dev/null | grep -o 'link/ether [^ ]*' | awk '{print $2}')
 		if [ -n "$mac" ]; then
@@ -6709,7 +6809,7 @@ get_factory_mac() {
 		fi
 	done
 
-	# 3. Last resort: First Ethernet interface found
+	# 4. Last resort: First Ethernet interface found
 	mac=$(ip -o link show type ether | head -n1 | awk -F': ' '{print $2}' | awk '{print $2}')
 	if [ -n "$mac" ]; then
 		log_info "Factory MAC obtained from first detected Ethernet interface: $mac"
@@ -6903,6 +7003,133 @@ manage_wpad_loglevel() {
 	fi
 }
 
+get_timestamp() {
+	local vif="$1"
+
+	# Prefer high-resolution time from iw (milliseconds since epoch)
+	# Only available when at least one station is present
+	if [ -n "$vif" ]; then
+		timestamp=$(iw dev "$vif" station dump 2>/dev/null | awk '/current time:/ {printf "%s", $3; exit}')
+	fi
+
+	# Fallback: second resolution (padded to milliseconds)
+	# Used mainly at startup before any mesh peers exist
+	if [ -z "$timestamp" ]; then
+		timestamp=$(date +%s)000
+	fi
+}
+
+get_ethernet_clients() {
+	local bridgelist=$(brctl show | awk 'NF==4 {printf "%s ", $1}')
+	local first=1
+	local numchar=0
+
+	if [ -f "$tmpdir/active_mesh_ifname" ]; then
+		. "$tmpdir/active_mesh_ifname"
+	else
+		return 1
+	fi
+
+	for bridge in $bridgelist; do
+		net_device=$(uci show network | grep "name='$bridge'" | awk -F "." '{printf "%s.%s", $1, $2}')
+		bridge_ports=$(uci get "$net_device.ports")
+		local mac_if_list=$(brctl showmacs "$bridge" 2>/dev/null | tail -n +2 | grep "no" | awk '{printf "(%s),%s ", $1, $2}')
+
+		if [ -z "$mac_if_list" ]; then
+			continue
+		fi
+
+		for mac_if in $mac_if_list; do
+
+			local iface_id=$(echo "$mac_if" | awk -F "," '{print $1}')
+			local mac=$(echo "$mac_if" | awk -F "," '{print $2}')
+			local iface_name=$(brctl showstp "$bridge" | grep "$iface_id" | awk '{printf "%s", $1}')
+
+			if [ "$iface_name" = "vxlan$tun_id" ]; then
+				continue
+			fi
+
+			for port in $bridge_ports; do
+
+				if [ "$iface_name" = "$port" ]; then
+					eth_sta=1 # flag that we have some stations
+					get_eth_stats "$port"
+
+					if [ "$first" -eq 1 ]; then
+
+						if [ -z "$ap_sta" ] || [ "$ap_sta" -eq 0 ]; then
+							remove_last_char "$tmpdir/apmond/clients"
+							echo " {" >> $tmpdir/apmond/clients
+							echo -e "      \"$port@$bridge\": {" >> $tmpdir/apmond/clients
+						else
+							echo -e "\n      \"$port@$bridge\": {" >> $tmpdir/apmond/clients
+						fi
+
+						first=0
+					fi
+
+					echo "        \"$mac\": {" >> $tmpdir/apmond/clients
+					echo "          \"rx_bytes\": \"$rx_bytes\"," >> $tmpdir/apmond/clients
+					echo "          \"tx_bytes\": \"$tx_bytes\"," >> $tmpdir/apmond/clients
+					echo "          \"rx_bitrate\": \"$speed\"," >> $tmpdir/apmond/clients
+					echo "          \"tx_bitrate\": \"$speed\"," >> $tmpdir/apmond/clients
+
+					get_timestamp "$active_mesh_ifname"
+
+					echo "          \"timestamp\":\"$timestamp\"," >> $tmpdir/apmond/clients
+
+					local secs=$(echo "$timestamp" | head -c 10)
+					date_time="$(date -d "@$secs")"
+					# translate any spaces to underscores
+					date_time=$(echo ${date_time// /_})
+
+					echo "          \"date_time\": \"$date_time\"" >> $tmpdir/apmond/clients
+					echo "        }, " >> $tmpdir/apmond/clients
+				fi
+			done
+		done
+	done
+
+	if [ "$eth_sta" -eq 0 ]; then
+		numchar=3
+	else
+		numchar=1
+	fi
+	remove_last_char "$tmpdir/apmond/clients" "$numchar"
+}
+
+get_eth_stats() {
+	local iface="$1"
+
+	[ -z "$iface" ] && {
+		echo "Usage: get_eth_stats <interface>" >&2
+		return 1
+	}
+
+	[ ! -d "/sys/class/net/$iface" ] && {
+		echo "Interface $iface does not exist" >&2
+		return 1
+	}
+
+	# Link rate (Mb/s). -1 means link down / unknown
+	speed=$(cat "/sys/class/net/$iface/speed" 2>/dev/null)
+	[ -z "$speed" ] || [ "$speed" = "-1" ] && speed="down"
+
+	# RX / TX bytes from sysfs
+	rx_bytes=$(cat "/sys/class/net/$iface/statistics/rx_bytes" 2>/dev/null)
+	tx_bytes=$(cat "/sys/class/net/$iface/statistics/tx_bytes" 2>/dev/null)
+
+	# Fallback to ip -s if sysfs counters are missing
+	if [ -z "$rx_bytes" ] || [ -z "$tx_bytes" ]; then
+		local stats
+		stats=$(ip -s -o link show dev "$iface" 2>/dev/null)
+		rx_bytes=$(echo "$stats" | awk '{print $4}')
+		tx_bytes=$(echo "$stats" | awk '{print $6}')
+	fi
+
+	eth_stats=$(printf "%s, Speed: %s, RX: %s, TX: %s\n" "$iface" "${speed}Mb/s" "${rx_bytes:-0}" "${tx_bytes:-0}")
+}
+
 ##############
 # Start point
 ##############
@@ -6914,8 +7141,6 @@ if [ -f "/var/run/mesh11sd.pid" ]; then
 else
 	mesh11sdpid=$(pgrep -f "/bin/sh /usr/sbin/mesh11sd")
 fi
-
-get_current_setup 2> /dev/null
 
 if [ -z "$1" ] || [ "$1" = "-h" ] || [ $1 = "--help" ] || [ $1 = "help" ]; then
 	echo "
@@ -7146,11 +7371,16 @@ if [ -z "$1" ] || [ "$1" = "-h" ] || [ $1 = "--help" ] || [ $1 = "help" ]; then
   For further documentation, see: https://github.com/openNDS/mesh11sd#readme
 
 "
+	exit 0
 
 elif [ "$1" = "-v" ] || [ $1 = "--version" ] || [ $1 = "version" ]; then
 	echo "mesh11sd version $version"
+	exit 0
+fi
 
-elif [ "$1" = "debuglevel" ]; then
+get_current_setup 2> /dev/null
+
+if [ "$1" = "debuglevel" ]; then
 
 	if [ -z "$2" ];then
 		echo "$debuglevel"
@@ -8697,6 +8927,23 @@ elif [ "$1" = "get_metrics_from_ula" ]; then
 	echo "$metrics"
 	exit 0
 
+elif [ "$1" = "get_ethernet_clients" ]; then
+	mute=0
+	get_ethernet_clients
+	exit 0
+
+elif [ "$1" = "get_eth_stats" ]; then
+	mute=0
+	get_eth_stats "$2"
+	echo "$eth_stats"
+	exit 0
+
+elif [ "$1" = "remove_last_char" ]; then
+	mute=0
+	remove_last_char "$2" "$3"
+	cat "$2"
+	exit 0
+
 elif [ "$1" = "daemon" ]; then
 	mute=0
 	# Detect what we are running on - Write $tmpdir/wifidetect file with os, device wireless chipset and driver info
@@ -8773,11 +9020,6 @@ elif [ "$1" = "daemon" ]; then
 	#loop counter for Mesh Reactive Stabilsation Threshold:
 	mrstloopcount=0
 
-	refresh_bridgemac
-
-	/sbin/service odhcpd stop
-	/sbin/service network reload
-
 	set_led init
 
 	set_led on
@@ -8795,6 +9037,14 @@ elif [ "$1" = "daemon" ]; then
 
 	# unconditionally try to stop openNDS
 	manage_opennds stop
+
+	#configure mac addresses of intitial interfaces
+	set_gridge_mac_addresses
+
+	refresh_bridgemac
+
+	/sbin/service odhcpd stop
+	/sbin/service network reload
 
 	if [ -e "$tmpdir/auto_config_test" ] && [ "$auto_config" -eq 0 ]; then
 		autostartup=1
@@ -9491,7 +9741,6 @@ elif [ "$1" = "daemon" ]; then
 
 		move_ethernet_to_vxlan_bridge
 		set_bridge_mac_addresses
-		create_vxlan_if
 
 		if [ -f "$tmpdir/is_portal" ]; then
 			. $tmpdir/is_portal
@@ -9503,6 +9752,7 @@ elif [ "$1" = "daemon" ]; then
 			fi
 		fi
 
+		update_vxlan_for_active_portal
 		set_root_bridge_priority
 
 		block_bridge_loops
