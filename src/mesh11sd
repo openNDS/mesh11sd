@@ -3564,35 +3564,23 @@ check_path_changes() {
 							is_connected=$(iw dev $iface station dump | grep -q "$peermac"; echo -n $?)
 
 							if [ "$is_connected" -eq 0 ]; then
-								debugtype="debug"
-								syslogmessage="Station [ $peermac ] is [ $hop_count ] hops away, path_change_count [ $path_change_count ]"
-								write_to_syslog
-
-								debugtype="info"
-						syslogmessage="Path to [ $peermac ], changed, [ $hop_count ] hop(s) via [ $next_hop ], HWMP Sequence Lifetime [ $hwmp_update_period ] ms"
-								write_to_syslog
+								log_debug "Station [ $peermac ] is [ $hop_count ] hops away, path_change_count [ $path_change_count ]"
+								log_info "Path to [ $peermac ], changed, [ $hop_count ] hop(s) via [ $next_hop ], HWMP Sequence Lifetime [ $hwmp_update_period ] ms"
 
 								# Reactive path stabilisation:
 
 								if [ "$mesh_path_stabilisation" -eq 1 ] && [ "$detected_state" != "portal" ] ; then
-
-									debugtype="debug"
-									syslogmessage="Station [ $peermac ] has an incrementing path change count."
-									write_to_syslog
+									log_debug "Station [ $peermac ] has an incrementing path change count."
 
 									mrstloopcount=$(eval echo "\$node$peermac_id")
-									debugtype="debug"
-									syslogmessage="mrstloopcount [ $mrstloopcount ]"
-									write_to_syslog
+									log_debug "mrstloopcount [ $mrstloopcount ]"
 
 									if [ -z "$mrstloopcount"]; then
 										mrstloopcount=0
 									fi
 
 									if [ "$mrstloopcount" -ge "$reactive_path_stabilisation_threshold" ]; then
-										debugtype="notice"
-										syslogmessage="Stabilsing path to node [ $peermac ]"
-										write_to_syslog
+										log_notice "Stabilsing path to node [ $peermac ]"
 										iw dev $iface station del $peermac
 										eval "node$peermac_id"="0"
 
@@ -3601,9 +3589,7 @@ check_path_changes() {
 											echo "leechmode=$leechmode" > "$tmpdir/leechmode"
 										fi
 									else
-										debugtype="notice"
-								syslogmessage="Mesh Reactive Stabilisation Threshold counter [ $mrstloopcount/$reactive_path_stabilisation_threshold ]"
-										write_to_syslog
+										log_notice "Mesh Reactive Stabilisation Threshold counter [ $mrstloopcount/$reactive_path_stabilisation_threshold ]"
 										mrstloopcount="$((mrstloopcount + 1))"
 										eval "node$peermac_id"="$mrstloopcount"
 									fi
@@ -3611,29 +3597,20 @@ check_path_changes() {
 							fi
 
 						elif [ "$hop_count" -eq 1 ] && [ "$path_change_count" -gt 1 ]; then
-							debugtype="debug"
-							syslogmessage="Station [ $peermac ] is an immediate neighbour, but has had [ $path_change_count ] path_change(s) detected"
-							write_to_syslog
-							debugtype="info"
-							syslogmessage="Path to [ $peermac ], changed, [ $hop_count ] hop(s) via [ $next_hop ], HWMP Sequence Lifetime [ $hwmp_update_period ] ms"
-							write_to_syslog
+							log_debug "Station [ $peermac ] is an immediate neighbour, but has had [ $path_change_count ] path_change(s) detected"
+							log_info "Path to [ $peermac ], changed, [ $hop_count ] hop(s) via [ $next_hop ], HWMP Sequence Lifetime [ $hwmp_update_period ] ms"
 
 							if [ "$mesh_path_stabilisation" -eq 1 ]; then
-								debugtype="debug"
-								syslogmessage="Station [ $peermac ], consider its location or adjust txpower and/or rssi_threshold"
-								write_to_syslog
+								log_debug "Station [ $peermac ], consider its location or adjust txpower and/or rssi_threshold"
 
 								if [ "$detected_state" != "portal" ]; then
-									syslogmessage=" ..... or, if not already enabled, consider enabling mesh_leechmode on this node"
-									write_to_syslog
+									log_debug " ..... or, if not already enabled, consider setting a higher mesh mobility level on this node"
 								fi
 							fi
 						fi
 
 					else
-						debugtype="info"
-						syslogmessage="Path to [ $peermac ], stable, [ $hop_count ] hop(s) via [ $next_hop ], HWMP Sequence Lifetime [ $hwmp_update_period ] ms"
-						write_to_syslog
+						log_info "Path to [ $peermac ], stable, [ $hop_count ] hop(s) via [ $next_hop ], HWMP Sequence Lifetime [ $hwmp_update_period ] ms"
 					fi
 
 					echo "previous_path_change_count=$path_change_count; previous_sequence_number=$sequence_number; previous_time=$(date +%s)" > $tmpdir/$peermac_id
