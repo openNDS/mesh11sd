@@ -3357,31 +3357,40 @@ mobility_settings() {
 			mesh_rssi_threshold="-68";\
 			mesh_hwmp_max_preq_retries=4;;
 		2) rts=300; limit=750; quantum=4500; aql_threshold=1500; beacon_int=25; dtim_period=2;\
-			rootmode=2;\
+			rootmode=3;\
 			mesh_fwding=1;\
 			mesh_hwmp_rann_interval=1464;\
 			mesh_hwmp_preq_min_interval=488;\
 			mesh_hwmp_active_path_timeout=1074;\
 			mesh_max_peer_links=32;\
-			mesh_rssi_threshold="-74";\
+			mesh_rssi_threshold="-72";\
 			mesh_hwmp_max_preq_retries=3;;
 		3) rts=200; limit=500; quantum=6000; aql_threshold=1000; beacon_int=20; dtim_period=1;\
-			rootmode=0;\
+			rootmode=2;\
 			mesh_fwding=1;\
 			mesh_hwmp_rann_interval=977;\
 			mesh_hwmp_preq_min_interval=390;\
 			mesh_hwmp_active_path_timeout=684;\
 			mesh_max_peer_links=64;\
-			mesh_rssi_threshold="-80";\
+			mesh_rssi_threshold="-75";\
 			mesh_hwmp_max_preq_retries=2;;
 		4) rts=100; limit=250; quantum=9000; aql_threshold=500; beacon_int=15; dtim_period=1;\
-			rootmode=0;\
+			rootmode=2;\
 			mesh_fwding=1;\
 			mesh_hwmp_rann_interval=488;\
 			mesh_hwmp_preq_min_interval=293;\
-			mesh_hwmp_active_path_timeout=293;\
+			mesh_hwmp_active_path_timeout=433;\
+			mesh_max_peer_links=96;\
+			mesh_rssi_threshold="-78";\
+			mesh_hwmp_max_preq_retries=1;;
+		5) rts=50; limit=100; quantum=9500; aql_threshold=250; beacon_int=10; dtim_period=1;\
+			rootmode=0;\
+			mesh_fwding=1;\
+			mesh_hwmp_rann_interval=244;\
+			mesh_hwmp_preq_min_interval=198;\
+			mesh_hwmp_active_path_timeout=313;\
 			mesh_max_peer_links=128;\
-			mesh_rssi_threshold="-86";\
+			mesh_rssi_threshold="-81";\
 			mesh_hwmp_max_preq_retries=1;;
 		*) return 0;;
 	esac
@@ -5306,10 +5315,13 @@ get_ap_data() {
 		first_sta=1
 		ap_ifname=$(uci get wireless."$ap".ifname)
 		ap_ssid=$(uci get wireless."$ap".ssid)
+
 		iw dev "$ap_ifname" station dump 2>/dev/null > $tmpdir/stations
+		local stations=$(cat "$tmpdir/stations")
 
 		# if no stations, skip to next ap
-		if [ ! -s "$tmpdir/stations" ]; then
+		if [ -z "$stations" ]; then
+			rm "$tmpdir/stations"
 			continue
 		else
 			ap_sta=1 # flag that we have some stations
@@ -5385,8 +5397,14 @@ get_ap_data() {
 
 	remove_last_char "$tmpdir/apmond/clients" 2
 	echo -e "$end_json" >> $tmpdir/apmond/clients
-	usi_full
-	cat $tmpdir/apmond/clients
+
+	if [ "$ap_sta" -eq 0 ] && [ "$eth_sta" -eq 0 ]; then # don't output the json
+		log_debug "apmond - no clients detected"
+		rm "$tmpdir/apmond/clients"
+	else
+		usi_full
+		cat "$tmpdir/apmond/clients"
+	fi
 
 
 	# remove the lock file
