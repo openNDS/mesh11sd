@@ -1959,14 +1959,14 @@ get_portal_state() {
 						wait_for_interface "$br_zone"
 
 						if [ "$ifstatus" = "up" ]; then
-							default_ipv6_gw=$(ip -6 neigh | grep "$br_zone" | grep "router" | awk '{print $1}' | awk -F ":" '$1 != "fe80" {print $0}')
+							default_ipv6_gw=$(ip -6 neigh | grep "$br_zone" | grep "router" | awk '{print $1}' | awk -F ":" '$1 != "fe80" {printf "%s ", $0}')
 
 							if [ -z "$default_ipv6_gw" ]; then
 								get_portal_ula
 								scan_channel
 
 								dhcpdevice="$br_zone"
-								default_ipv6_gw=$(ip -6 neigh | grep "$br_zone" | grep "router" | awk '{print $1}' | awk -F ":" '$1 != "fe80" {print $0}')
+								default_ipv6_gw=$(ip -6 neigh | grep "$br_zone" | grep "router" | awk '{print $1}' | awk -F ":" '$1 != "fe80" {printf "%s ", $0}')
 							fi
 						fi
 
@@ -1974,7 +1974,7 @@ get_portal_state() {
 							# Portal detected
 							is_portal="backhaul"
 							debugtype="debug"
-							syslogmessage="Portal detected on backhaul [ $default_ipv6_gw ]"
+							syslogmessage="Portal(s) detected on backhaul [ $default_ipv6_gw ]"
 							mute=$muteorg
 							write_to_syslog
 							detected_state="peer"
@@ -3346,52 +3346,87 @@ mobility_settings() {
 	fi
 
 	case $mesh_node_mobility_level in
-		0) default_settings; return 0;;
-		1) rts=500; limit=1000; quantum=3000; aql_threshold=2000; beacon_int=50; dtim_period=2;\
-			rootmode=3;\
-			mesh_fwding=1;\
-			mesh_hwmp_rann_interval=1953;\
-			mesh_hwmp_preq_min_interval=586;\
-			mesh_hwmp_active_path_timeout=1465;\
-			mesh_max_peer_links=16;\
-			mesh_rssi_threshold="-68";\
+		0)	# Static – use kernel/driver defaults
+			default_settings; return 0;;
+
+		1)	# Low mobility (~1.5 m/s). Balanced latency + efficiency.
+			# Moderate RTS protection, modest AQL tightening, standard proactive root.
+			rts=500; limit=1000; quantum=3000; aql_threshold=2500;
+			beacon_int=50; dtim_period=2;
+			rootmode=3;
+			mesh_fwding=1;
+			mesh_hwmp_rann_interval=2000;		# ~2 s
+			mesh_hwmp_preq_min_interval=500;
+			mesh_hwmp_active_path_timeout=1500;
+			mesh_max_peer_links=16;
+			mesh_rssi_threshold="-68";
 			mesh_hwmp_max_preq_retries=4;;
-		2) rts=300; limit=750; quantum=4500; aql_threshold=1500; beacon_int=25; dtim_period=2;\
-			rootmode=3;\
-			mesh_fwding=1;\
-			mesh_hwmp_rann_interval=1464;\
-			mesh_hwmp_preq_min_interval=488;\
-			mesh_hwmp_active_path_timeout=1074;\
-			mesh_max_peer_links=32;\
-			mesh_rssi_threshold="-72";\
+
+		2)	# Medium mobility. Noticeably tighter queues, still good bulk throughput.
+			rts=300; limit=800; quantum=4500; aql_threshold=1800;
+			beacon_int=25; dtim_period=2;
+			rootmode=3;
+			mesh_fwding=1;
+			mesh_hwmp_rann_interval=1500;
+			mesh_hwmp_preq_min_interval=400;
+			mesh_hwmp_active_path_timeout=1100;
+			mesh_max_peer_links=32;
+			mesh_rssi_threshold="-72";
 			mesh_hwmp_max_preq_retries=3;;
-		3) rts=200; limit=500; quantum=6000; aql_threshold=1000; beacon_int=20; dtim_period=1;\
-			rootmode=2;\
-			mesh_fwding=1;\
-			mesh_hwmp_rann_interval=977;\
-			mesh_hwmp_preq_min_interval=390;\
-			mesh_hwmp_active_path_timeout=684;\
-			mesh_max_peer_links=64;\
-			mesh_rssi_threshold="-75";\
+
+		3)	# Higher mobility. Lower latency bias, more frequent path updates.
+			rts=200; limit=500; quantum=6000; aql_threshold=1200;
+			beacon_int=20; dtim_period=1;
+			rootmode=2;
+			mesh_fwding=1;
+			mesh_hwmp_rann_interval=1000;
+			mesh_hwmp_preq_min_interval=350;
+			mesh_hwmp_active_path_timeout=700;
+			mesh_max_peer_links=64;
+			mesh_rssi_threshold="-75";
 			mesh_hwmp_max_preq_retries=2;;
-		4) rts=100; limit=250; quantum=9000; aql_threshold=500; beacon_int=15; dtim_period=1;\
-			rootmode=2;\
-			mesh_fwding=1;\
-			mesh_hwmp_rann_interval=488;\
-			mesh_hwmp_preq_min_interval=293;\
-			mesh_hwmp_active_path_timeout=433;\
-			mesh_max_peer_links=96;\
-			mesh_rssi_threshold="-78";\
+
+		4)	# High mobility. Strong latency focus, higher control overhead accepted.
+			rts=120; limit=300; quantum=8000; aql_threshold=700;
+			beacon_int=15; dtim_period=1;
+			rootmode=2;
+			mesh_fwding=1;
+			mesh_hwmp_rann_interval=500;
+			mesh_hwmp_preq_min_interval=300;
+			mesh_hwmp_active_path_timeout=450;
+			mesh_max_peer_links=96;
+			mesh_rssi_threshold="-78";
 			mesh_hwmp_max_preq_retries=1;;
-		5) rts=50; limit=100; quantum=9500; aql_threshold=250; beacon_int=10; dtim_period=1;\
-			rootmode=0;\
-			mesh_fwding=1;\
-			mesh_hwmp_rann_interval=244;\
-			mesh_hwmp_preq_min_interval=198;\
-			mesh_hwmp_active_path_timeout=313;\
-			mesh_max_peer_links=128;\
-			mesh_rssi_threshold="-81";\
+
+		5)	# Extreme mobility. Maximum responsiveness, significant control-plane cost.
+			# beacon_int kept at 15 (10 was too aggressive for most hardware).
+			rts=80; limit=150; quantum=9000; aql_threshold=400;
+			beacon_int=15; dtim_period=1;
+			rootmode=0;
+			mesh_fwding=1;
+			mesh_hwmp_rann_interval=300;
+			mesh_hwmp_preq_min_interval=250;
+			mesh_hwmp_active_path_timeout=400;
+			mesh_max_peer_links=96;			# 128 only if really dense
+			mesh_rssi_threshold="-81";
 			mesh_hwmp_max_preq_retries=1;;
+
+		6)	# PA / voice optimised (push-to-talk announcement use-case).
+			# Priority: lowest possible latency + reliable short-path delivery.
+			# Accepts higher overhead and reduced bulk throughput.
+			# Tighter AQL than level 5, slightly more RTS protection,
+			# short path lifetimes, still allows reasonable peer count.
+			rts=60; limit=100; quantum=7000; aql_threshold=300;
+			beacon_int=15; dtim_period=1;
+			rootmode=0;				# or 4 on portals only
+			mesh_fwding=1;
+			mesh_hwmp_rann_interval=250;
+			mesh_hwmp_preq_min_interval=200;
+			mesh_hwmp_active_path_timeout=350;
+			mesh_max_peer_links=64;			# keep moderate – voice meshes are rarely huge
+			mesh_rssi_threshold="-79";		# slightly less permissive than pure extreme mobility
+			mesh_hwmp_max_preq_retries=1;;
+
 		*) return 0;;
 	esac
 
