@@ -4600,9 +4600,22 @@ get_portal_ula() {
 # get_metrics_from_ula()
 # Returns the mesh metrics for the portal candidate node, with the provided ULA
 # in the variables $metric $hops and $path_changes
+#
+# On some firmware-RC chipsets (notably mt7996e) a good 1-hop portal path can
+# be reported as ~8192 + real_metric (TEST_FRAME_LEN left in the airtime
+# calculation). That makes a 1-hop portal look worse than a 2-hop path.
+# If the portal is one hop, the metric is > 8192, and the peer TX bitrate is
+# still healthy, subtract 8192 for portal-selection only.
 # =============================================================================
 get_metrics_from_ula() {
 	local remote_ula="$1"
+	local ula_mac
+	local mpp_list
+	local mpath_list
+	local mpp_entry
+	local portal_mac
+	local metrics
+	local tx_mbps
 
 	if [ -z "$remote_ula" ]; then
 		return 1
@@ -4616,18 +4629,31 @@ get_metrics_from_ula() {
 		return 1
 	fi
 
-	local mpp_list=$(iw dev "$active_mesh_ifname" mpp dump)
+	mpp_list=$(iw dev "$active_mesh_ifname" mpp dump)
 
 	if [ -z "$mpp_list" ]; then
 		return 1
 	fi
 
-	local mpath_list=$(iw dev "$active_mesh_ifname" mpath dump)
-	local mpp_entry=$(echo "$mpp_list" | grep "$ula_mac")
-	local portal_mac=$(echo "$mpp_entry" | awk '{printf "%s", $2}')
+	mpath_list=$(iw dev "$active_mesh_ifname" mpath dump)
+	mpp_entry=$(echo "$mpp_list" | grep "$ula_mac")
+	portal_mac=$(echo "$mpp_entry" | awk '{printf "%s", $2}')
 	metrics=$(echo "$mpath_list" | grep "$portal_mac" | awk -v portal_mac="$portal_mac" 'portal_mac==$1 {printf "portal_mac=%s; metric=%s; hops=%s; path_change=%s ", portal_mac, $5, $11, $12}')
 	eval "$metrics"
 
+	# Portal-selection workaround: inflated 1-hop airtime metric
+	# A correct high-rate 1-hop link cannot have metric > 8192.
+	if [ -n "$metric" ] && [ -n "$hops" ] && \
+		[ "$hops" -eq 1 ] && [ "$metric" -gt 8192 ]; then
+
+		tx_mbps=$(iw dev "$active_mesh_ifname" station get "$portal_mac" 2>/dev/null | \
+			awk '/tx bitrate:/ { printf "%d", $3; exit }')
+
+		if [ -n "$tx_mbps" ] && [ "$tx_mbps" -ge 50 ]; then
+			metric=$((metric - 8192))
+			log_debug "Normalised mesh metric [ $metric ]"
+		fi
+	fi
 }
 
 str_to_hex() {
@@ -7770,7 +7796,14 @@ elif [ "$1" = "status" ]; then
 					echo "          \"path_change_count\":\"$path_change_count\","
 
 					metric=$(echo "$peer" | awk -F"/" '{printf "%s", $3}')
-					echo "          \"metric\":\"$metric\","
+
+					if [ "$metric" -gt 8192 ]; then
+						metric_normalised=$((metric - 8192))
+						echo "          \"metric_raw\":\"$metric\","
+						echo "          \"metric\":\"$metric_normalised\","
+					else
+						echo "          \"metric\":\"$metric\","
+					fi
 
 					sequence_number=$(echo "$peer" | awk -F"/" '{printf "%s", $6}')
 					echo "          \"sequence_number\":\"$sequence_number\","
