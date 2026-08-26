@@ -4045,13 +4045,13 @@ create_vxlan_if() {
 		vxlanstate="%ifstatus"
 
 		if [ "$ifstatus" = "down" ]; then
-			ip link set "vxlan_if" up
+			ip link set "vxlan$tun_id" up
 			sleep 1
 			continue
 		elif [ "$ifstatus" = "up" ]; then
 			ip link set "$active_mesh_ifname" mtu 1600
 			ip link set "$device" mtu 1600
-			ip link set "vxlan_if" mtu 1500
+			ip link set "vxlan$tun_id" mtu 1500
 			break
 		fi
 	done
