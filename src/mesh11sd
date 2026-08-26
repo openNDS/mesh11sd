@@ -9104,7 +9104,7 @@ elif [ "$1" = "daemon" ]; then
 	manage_opennds stop
 
 	#configure mac addresses of intitial interfaces
-	set_gridge_mac_addresses
+	set_bridge_mac_addresses
 
 	refresh_bridgemac
 
