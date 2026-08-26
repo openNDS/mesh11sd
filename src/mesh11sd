@@ -4561,7 +4561,7 @@ get_portal_ula() {
 			fi
 
 			# There is a current portal - apply threshold hysteresis
-			if [ "$candidate" = "$current_portal_ula" ]; then
+			if [ "$candidate" = "$current_portal_ula" ] && [ "$((current_metric - metric))" -gt "$mesh_metric_threshold" ]; then
 				# Always prefer current if it's still reachable (unless much worse)
 				best_metric="$metric"
 				best_ula="$candidate"
