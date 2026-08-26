@@ -4598,7 +4598,7 @@ get_portal_ula() {
 		log_warning "No responsive portal found"
 	fi
 
-	return "$pingstatus"
+	return "$best_ula_pingstatus"
 }
 
 # =============================================================================
@@ -4627,6 +4627,10 @@ get_metrics_from_ula() {
 	fi
 
 	ula_mac=$(ip -6 neigh | grep -w "$remote_ula" | awk '{print $5}')
+
+	if [ -z "$ula_mac" ]; then
+		return 1
+	fi
 
 	if [ -f "$tmpdir/active_mesh_ifname" ]; then
 		. "$tmpdir/active_mesh_ifname"
