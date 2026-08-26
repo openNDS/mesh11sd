@@ -472,10 +472,12 @@ get_current_setup() {
 	auto_mesh_network=$(uci get mesh11sd.setup.auto_mesh_network 2> /dev/null)
 
 	# Get the default lan mac address
-	auto_mesh_network="lan"
+	if [ -z "$auto_mesh_network" ]; then
+		auto_mesh_network="lan"
+	fi
+
 	refresh_bridgemac
 	. $tmpdir/devicemac
-
 
 	if [ -z "$auto_mesh_network" ]; then
 		auto_mesh_network="lan"
