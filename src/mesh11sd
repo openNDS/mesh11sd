@@ -4555,6 +4555,7 @@ get_portal_ula() {
 				if [ "$metric" -lt "$best_metric" ]; then
 					best_metric="$metric"
 					best_ula="$candidate"
+					best_ula_pingstatus=$pingstatus
 				fi
 				continue
 			fi
@@ -4562,13 +4563,15 @@ get_portal_ula() {
 			# There is a current portal - apply threshold hysteresis
 			if [ "$candidate" = "$current_portal_ula" ]; then
 				# Always prefer current if it's still reachable (unless much worse)
-				best_ula="$candidate"
 				best_metric="$metric"
+				best_ula="$candidate"
+				best_ula_pingstatus=$pingstatus
 			elif [ "$((current_metric - metric))" -gt "$mesh_metric_threshold" ]; then
 				# New portal is significantly better
 				if [ "$metric" -lt "$best_metric" ]; then
 					best_metric="$metric"
 					best_ula="$candidate"
+					best_ula_pingstatus=$pingstatus
 				fi
 			fi
 
@@ -4583,12 +4586,12 @@ get_portal_ula() {
 	fi
 
 	portal_ula="$best_ula"
-	link_to_portal=$pingstatus
+	link_to_portal=$best_ula_pingstatus
 
 	ula_subnet=$(echo "$portal_ula" | awk -F ":" '{printf "%s", $4}')
 	ula_base=$(echo "$portal_ula" | awk -F ":" '{printf "%s:%s:%s", $1, $2, $3}')
 
-	if [ "$pingstatus" -eq 0 ]; then
+	if [ "$best_ula_pingstatus" -eq 0 ]; then
 		log_debug "Selected portal: $portal_ula, mesh metric [ $best_metric ], mesh metric delta [ $mesh_metric_threshold ]"
 		echo "portal_ula=$portal_ula; metric=$best_metric" > "$tmpdir/active_portal"
 	else
