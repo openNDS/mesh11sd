@@ -3621,7 +3621,7 @@ check_path_changes() {
 									mrstloopcount=$(eval echo "\$node$peermac_id")
 									log_debug "mrstloopcount [ $mrstloopcount ]"
 
-									if [ -z "$mrstloopcount"]; then
+									if [ -z "$mrstloopcount" ]; then
 										mrstloopcount=0
 									fi
 
