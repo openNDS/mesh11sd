@@ -4360,7 +4360,7 @@ check_vtunnel() {
 
 check_dadfailed() {
 
-	for br_if in "br-$auto_mesh_network br-tun$tun_id"; do
+	for br_if in "br-$auto_mesh_network" "br-tun$tun_id"; do
 		dadfailed_list=$(ip addr show "$br_if" | grep "dadfailed" | awk '{printf "%s ", $2}')
 
 		if [ ! -z "$dadfailed_list" ]; then
