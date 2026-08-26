@@ -537,6 +537,18 @@ get_current_setup() {
 	write_to_syslog
 
 	#####
+	ssid_suffix_enable=$(uci get mesh11sd.setup.ssid_suffix_enable 2> /dev/null)
+
+	if [ -z "$ssid_suffix_enable" ]; then
+		ssid_suffix_enable="1"
+	fi
+
+	syslogmessage="option ssid_suffix_enable [ $ssid_suffix_enable ]"
+	debugtype="info"
+	mute="$mutestate"
+	write_to_syslog
+
+	#####
 	mesh_gate_base_ssid=$(uci get mesh11sd.setup.mesh_gate_base_ssid 2> /dev/null)
 
 	if [ "$ssid_suffix_enable" -eq 1 ]; then
@@ -622,18 +634,6 @@ get_current_setup() {
 		mute="$mutestate"
 		write_to_syslog
 	fi
-
-	#####
-	ssid_suffix_enable=$(uci get mesh11sd.setup.ssid_suffix_enable 2> /dev/null)
-
-	if [ -z "$ssid_suffix_enable" ]; then
-		ssid_suffix_enable="1"
-	fi
-
-	syslogmessage="option ssid_suffix_enable [ $ssid_suffix_enable ]"
-	debugtype="info"
-	mute="$mutestate"
-	write_to_syslog
 
 	####
 	# vxlan configs
