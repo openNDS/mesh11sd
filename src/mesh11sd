@@ -4012,7 +4012,7 @@ create_vxlan_if() {
 
 	link_local_addr=$(ip addr show "$device" | grep "inet6 fe80" | awk '{printf "%s", $2}' | awk -F "/" '{printf "%s", $1}')
 
-	if [ -z "$link_local_addr"]; then
+	if [ -z "$link_local_addr" ]; then
 		return 1
 	fi
 
