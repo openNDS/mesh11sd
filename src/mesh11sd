@@ -4021,7 +4021,7 @@ create_vxlan_if() {
 	echo "vxlan_if=\"vxlan$tun_id\"; id=\"$vni_decimal\"; address=\"$vxmac_indexed\"; link_local=\"$link_local_addr\"; group=\"$vxlan_group\"; device=\"$device\"" > $tmpdir/vxlan_conf
 
 
-	if [ ! -f "$tmpdir/active_mesh_ifname" ]; then
+	if [ -f "$tmpdir/active_mesh_ifname" ]; then
 		. $tmpdir/active_mesh_ifname
 	fi
 
