@@ -9602,7 +9602,7 @@ elif [ "$1" = "daemon" ]; then
 
 			if [ "$auto_config" -ne 0 ] || [ -e "$tmpdir/auto_config_test" ]; then
 
-				if [ "$portal_detect" -ne 0 ] || [ "$portal_detect" -ne 4 ] || [ "$portal_detect" -ne 5 ]; then
+				if [ "$portal_detect" -ne 0 ] && [ "$portal_detect" -ne 4 ] && [ "$portal_detect" -ne 5 ]; then
 					check_portal
 
 				elif [ "$portal_detect" -eq 0 ] || [ "$portal_detect" -eq 4 ]; then
