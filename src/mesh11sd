@@ -2071,17 +2071,17 @@ get_portal_type() {
 		return 1
 	fi
 
-	portal_ipv4=$(ip -4 neigh | grep "$device" | grep "$portal_mac" | awk '{printf "%s", $1}')
-	mrp_default_ipv4_gw=$(ip -4 route | grep -m 1 "default via $portal_ipv4 dev $device")
+	portal_ll=$(ip -6 neigh | grep "$device" | grep "$portal_mac" | grep -w "fe80:" | awk '{printf "%s", $1}')
+	mrp_default_ipv6_gw=$(ip -6 route | grep -m 1 "default via $portal_ll dev $device")
 
-	if [ -z "$mrp_default_ipv4_gw" ]; then
+	if [ -z "$mrp_default_ipv6_gw" ]; then
 		portal_type="MBP"
 	else
 		portal_type="MRP"
 	fi
 
 	log_info "Portal [ $portal_type@$portal_mac ]"
-	echo "portal_type=\"$portal_type\"; portal_mac=\"$portal_mac\"; portal_ipv4=\"$portal_ipv4\"; mrp_default_ipv4_gw=\"$mrp_default_ipv4_gw\"" > "$tmpdir/portal_type"
+	echo "portal_type=\"$portal_type\"; portal_mac=\"$portal_mac\"; portal_ll=\"$portal_ll\"; mrp_default_ipv6_gw=\"$mrp_default_ipv6_gw\"" > "$tmpdir/portal_type"
 	return 0
 }
 
@@ -8736,7 +8736,7 @@ elif [ "$1" = "get_portal_type" ]; then
 
 	if [ -f "$tmpdir/portal_type" ]; then
 		. "$tmpdir/portal_type"
-		echo "portal_type=\"$portal_type\"; portal_mac=\"$portal_mac\"; portal_ipv4=\"$portal_ipv4\"; mrp_default_ipv4_gw=\"$mrp_default_ipv4_gw\""
+		echo "portal_type=\"$portal_type\"; portal_mac=\"$portal_mac\"; portal_ll=\"$portal_ll\"; mrp_default_ipv6_gw=\"$mrp_default_ipv6_gw\""
 	else
 		echo "UNKNOWN"
 	fi
