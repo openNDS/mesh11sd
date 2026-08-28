@@ -4523,26 +4523,26 @@ get_portal_ula() {
 	fi
 
 	# Not a portal - evaluate candidates
-	local best_ula
-	local best_metric=999999
-	local candidate
-	local current_portal_ula=""
-	local current_metric=999999
-
-	# Read current active portal (if any)
-	if [ -f "$tmpdir/active_portal" ]; then
-		. "$tmpdir/active_portal" 2>/dev/null
-		current_portal_ula="$portal_ula"
-		current_metric="${metric:-999999}"
-	fi
-
 	if [ -f "$tmpdir/known_portal_ulas" ] && [ -s "$tmpdir/known_portal_ulas" ]; then
+		local best_ula
+		local best_metric=999999
+		local candidate
+		local current_portal_ula=""
+		local current_metric
+
+		# Read current active portal (if any)
+		if [ -f "$tmpdir/active_portal" ]; then
+			. "$tmpdir/active_portal" 2>/dev/null
+			current_portal_ula="$portal_ula"
+			current_metric="$metric"
+		fi
 
 		while read -r candidate; do
 			[ -z "$candidate" ] && break
 
 			# Populate NDP table
 			pingstatus=$(ping -q -c 2 "$candidate" &>/dev/null; echo -n $?)
+			log_info "Portal candidate [ $candidate ], response code [ $pingstatus ]"
 
 			if [ "$pingstatus" -eq 1 ]; then
 				continue
@@ -4550,29 +4550,39 @@ get_portal_ula() {
 
 			get_metrics_from_ula "$candidate"
 
+			log_info "Portal candidate [ $candidate ], metric [ $metric ]"
+
 			# First-run or no current portal: take the best
 			if [ -z "$current_portal_ula" ]; then
+
 				if [ "$metric" -lt "$best_metric" ]; then
 					best_metric="$metric"
 					best_ula="$candidate"
 					best_ula_pingstatus=$pingstatus
 				fi
+
 				continue
 			fi
 
-			# There is a current portal - apply threshold hysteresis
-			if [ "$candidate" = "$current_portal_ula" ] && [ "$((current_metric - metric))" -gt "$mesh_metric_threshold" ]; then
-				# Always prefer current if it's still reachable (unless much worse)
+			# Apply threshold hysteresis
+			if [ -z "$current_metric" ]; then
+				# This is the first proper loop
 				best_metric="$metric"
 				best_ula="$candidate"
 				best_ula_pingstatus=$pingstatus
-			elif [ "$((current_metric - metric))" -gt "$mesh_metric_threshold" ]; then
-				# New portal is significantly better
+
+			elif [ "$((current_metric - metric))" -lt "$mesh_metric_threshold" ]; then
+				# Is new portal significantly better?
 				if [ "$metric" -lt "$best_metric" ]; then
 					best_metric="$metric"
 					best_ula="$candidate"
 					best_ula_pingstatus=$pingstatus
 				fi
+			else
+				# fallback
+				best_metric="$metric"
+				best_ula="$candidate"
+				best_ula_pingstatus=$pingstatus
 			fi
 
 		done < "$tmpdir/known_portal_ulas"
@@ -4586,6 +4596,11 @@ get_portal_ula() {
 	fi
 
 	portal_ula="$best_ula"
+
+	if [ -z "$best_ula_pingstatus" ]; then
+		best_ula_pingstatus=1
+	fi
+
 	link_to_portal=$best_ula_pingstatus
 
 	ula_subnet=$(echo "$portal_ula" | awk -F ":" '{printf "%s", $4}')
@@ -4598,7 +4613,7 @@ get_portal_ula() {
 		log_warning "No responsive portal found"
 	fi
 
-	return "$best_ula_pingstatus"
+	return "$link_to_portal"
 }
 
 # =============================================================================
@@ -8713,8 +8728,8 @@ elif [ "$1" = "dhcp4_renew" ]; then
 
 elif [ "$1" = "get_portal_ula" ]; then
 	get_portal_ula
-	pingstatus="$?"
-	echo "portal_ula=\"$portal_ula\"; pingstatus=\"$pingstatus\"; ula_subnet=\"$ula_subnet\"; ula_vxsubnet=\"$ula_vxsubnet\""
+	link_to_portal="$?"
+	echo "portal_ula=\"$portal_ula\"; link_to_portal=\"$link_to_portal\"; ula_subnet=\"$ula_subnet\"; ula_vxsubnet=\"$ula_vxsubnet\""
 	exit 0
 
 elif [ "$1" = "get_portal_type" ]; then
@@ -9165,11 +9180,6 @@ elif [ "$1" = "daemon" ]; then
 
 		# Set default dhcp settings for lan
 		if [ "$portal_detect" -ne 4 ]; then
-
-			if [ -z "$portal_ula" ]; then
-				get_portal_ula
-			fi
-
 			uci set dhcp.$auto_mesh_network.dhcpv4='server'
 			uci set dhcp.$auto_mesh_network.dhcpv6='server'
 			uci set dhcp.$auto_mesh_network.ra='server'
@@ -9179,13 +9189,7 @@ elif [ "$1" = "daemon" ]; then
 			echo "del_list dhcp.$auto_mesh_network.ra_flags='other-config'" | uci batch 2> /dev/null
 			echo "add_list dhcp.$auto_mesh_network.ra_flags='managed-config'" | uci batch 2> /dev/null
 			echo "add_list dhcp.$auto_mesh_network.ra_flags='other-config'" | uci batch 2> /dev/null
-
-			#echo "set dhcp.$auto_mesh_network.ra_dns='1'" | uci batch
-			#echo "del dhcp.$auto_mesh_network.dns" | uci batch 2> /dev/null
-			#echo "add_list dhcp.$auto_mesh_network.dns='$portal_ula'" | uci batch 2> /dev/null
-
 			echo "set network.$auto_mesh_network.proto='static'" | uci batch
-
 			uci set dhcp.@dnsmasq[0].rebind_protection='1'
 		else
 			mbp_dhcp_lan_defaults
