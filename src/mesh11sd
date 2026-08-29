@@ -7320,11 +7320,22 @@ if [ -z "$1" ] || [ "$1" = "-h" ] || [ $1 = "--help" ] || [ $1 = "help" ]; then
   Option: mesh_node_mobility_level
   Usage: mesh11sd mesh_node_mobility_level [level]
   Sets the mesh node mobility level
-    Supported levels are 0, 1, 2, 3 and 4
+
+		echo "    where level can be 0, 1, 2, 3, 4, 5 and 6"
+		echo "    0 is for static nodes, 1 for nodes with low relative velocity"
+		echo "    and 2, 3, 4 and 5 for consecutively higher relative velocity"
+		echo "    level 1 corresponds to a relative velocity in the region of 1 metre per second"
+		echo "    level 4 corresponds to a relative velocity in the region of 5 metres per second"
+		echo "    level 5 - Extreme mobility. Maximum responsiveness, but with significant control-plane cost."
+		echo "    Level 6 is a special configuration, PA / voice optimised (push-to-talk announcement use-case)."
+		echo "    These are approximate values of achievable velative velocity"
+		echo
+    Supported levels are 0, 1, 2, 3, 4, 5 and 6
     Level 0 - not recommended for normal use - node must be stationary and carefully positioned
     Level 1 - Enables mesh_hwmp_rts for on air collision avoidance, enables transmit queue and aql_threshold to minimise latency, enables rapid path convergence
-    Level 1 supports inter node relative velocities up to 1.5 metres per second
-    Levels 2 to 4 support progressively higher relative inter node velocities at the expense of a larger and larger backhaul overhead
+    Level 2 supports inter node relative velocities up to 1.5 metres per second
+    Levels 3 to 5 support progressively higher relative inter node velocities at the expense of a larger and larger backhaul overhead.
+    Level 6 is a special configuration that is PA / voice optimised (push-to-talk announcement use-case)."
 
 ####
   Option: commit_changes
@@ -8320,11 +8331,13 @@ elif [ "$1" = "mesh_node_mobility_level" ]; then
 
 	if [ -z "$2" ]; then
 		echo "Usage: mesh11sd mesh_node_mobility_level <level>"
-		echo "    where level can be 0, 1, 2, 3, 4"
+		echo "    where level can be 0, 1, 2, 3, 4, 5 and 6"
 		echo "    0 is for static nodes, 1 for nodes with low relative velocity"
-		echo "    and 2, 3, 4 for consecutively higher relative velocity"
+		echo "    and 2, 3, 4 and 5 for consecutively higher relative velocity"
 		echo "    level 1 corresponds to a relative velocity in the region of 1 metre per second"
 		echo "    level 4 corresponds to a relative velocity in the region of 5 metres per second"
+		echo "    level 5 - Extreme mobility. Maximum responsiveness, but with significant control-plane cost."
+		echo "    Level 6 is a special configuration, PA / voice optimised (push-to-talk announcement use-case)."
 		echo "    These are approximate values of achievable velative velocity"
 		echo
 		echo "$warning_message"
@@ -8335,7 +8348,7 @@ elif [ "$1" = "mesh_node_mobility_level" ]; then
 			echo "Current level is [ $mesh_node_mobility_level ]"
 			echo
 		fi
-	elif [ "$2" -ge 0 ] && [ $2 -le 4 ]; then
+	elif [ "$2" -ge 0 ] && [ $2 -le 6 ]; then
 		echo
 		echo "$warning_message"
 		echo
