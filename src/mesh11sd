@@ -9341,7 +9341,7 @@ elif [ "$1" = "daemon" ]; then
 				echo "set network.wan6.delegate='1'" | uci batch
 				echo "set network.wan6.hostname='meshnode-$suffix'" | uci batch
 
-				echo "set network.lan.ipassign='64'" | uci batch
+				echo "set network.lan.ip6assign='64'" | uci batch
 
 				echo "set dhcp.lan.dhcpv6='server'" | uci batch
 				echo "set dhcp.lan.ra='server'" | uci batch
