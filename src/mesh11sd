@@ -4442,6 +4442,7 @@ update_known_portals_from_ras() {
 
 		if [ -z "$duplicate" ] || [ "$duplicate" -eq 0 ]; then
 			echo "$portal_ula" >> "$tmpdir/known_portal_ulas.tmp"
+			log_debug "Detected portal candidate [ $portal_ula ]"
 		fi
 	done
 
@@ -4673,9 +4674,11 @@ get_metrics_from_ula() {
 		tx_mbps=$(iw dev "$active_mesh_ifname" station get "$portal_mac" 2>/dev/null | \
 			awk '/tx bitrate:/ { printf "%d", $3; exit }')
 
+		log_debug "candidate [ $remote_ula ], hops [ $hops ], raw_metric [ $metric ], tx_bitrate [ $tx_mbps ]"
+
 		if [ -n "$tx_mbps" ] && [ "$tx_mbps" -ge 50 ]; then
 			metric=$((metric - 8192))
-			log_debug "Normalised mesh metric [ $metric ]"
+			log_debug "Normalised mesh metric for candidate [ $remote_ula ] is [ $metric ]"
 		fi
 	fi
 }
@@ -7320,22 +7323,12 @@ if [ -z "$1" ] || [ "$1" = "-h" ] || [ $1 = "--help" ] || [ $1 = "help" ]; then
   Option: mesh_node_mobility_level
   Usage: mesh11sd mesh_node_mobility_level [level]
   Sets the mesh node mobility level
-
-		echo "    where level can be 0, 1, 2, 3, 4, 5 and 6"
-		echo "    0 is for static nodes, 1 for nodes with low relative velocity"
-		echo "    and 2, 3, 4 and 5 for consecutively higher relative velocity"
-		echo "    level 1 corresponds to a relative velocity in the region of 1 metre per second"
-		echo "    level 4 corresponds to a relative velocity in the region of 5 metres per second"
-		echo "    level 5 - Extreme mobility. Maximum responsiveness, but with significant control-plane cost."
-		echo "    Level 6 is a special configuration, PA / voice optimised (push-to-talk announcement use-case)."
-		echo "    These are approximate values of achievable velative velocity"
-		echo
-    Supported levels are 0, 1, 2, 3, 4, 5 and 6
+    where level can be 0, 1, 2, 3, 4, 5 and 6
     Level 0 - not recommended for normal use - node must be stationary and carefully positioned
     Level 1 - Enables mesh_hwmp_rts for on air collision avoidance, enables transmit queue and aql_threshold to minimise latency, enables rapid path convergence
-    Level 2 supports inter node relative velocities up to 1.5 metres per second
-    Levels 3 to 5 support progressively higher relative inter node velocities at the expense of a larger and larger backhaul overhead.
-    Level 6 is a special configuration that is PA / voice optimised (push-to-talk announcement use-case)."
+    Level 2 - supports inter node relative velocities up to 1.5 metres per second
+    Levels 3 to 5 - support progressively higher relative inter node velocities at the expense of a larger and larger backhaul overhead.
+    Level 6 - is a special configuration that is PA / voice optimised (push-to-talk announcement use-case).
 
 ####
   Option: commit_changes
