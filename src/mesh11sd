@@ -1975,10 +1975,6 @@ get_portal_state() {
 						if [ ! -z "$default_ipv6_gw" ]; then
 							# Portal detected
 							is_portal="backhaul"
-							debugtype="debug"
-							syslogmessage="Portal(s) detected on backhaul [ $default_ipv6_gw ]"
-							mute=$muteorg
-							write_to_syslog
 							detected_state="peer"
 							break
 						fi
@@ -4543,7 +4539,6 @@ get_portal_ula() {
 
 			# Populate NDP table
 			pingstatus=$(ping -q -c 2 "$candidate" &>/dev/null; echo -n $?)
-			log_info "Portal candidate [ $candidate ], response code [ $pingstatus ]"
 
 			if [ "$pingstatus" -eq 1 ]; then
 				continue
@@ -4551,7 +4546,7 @@ get_portal_ula() {
 
 			get_metrics_from_ula "$candidate"
 
-			log_info "Portal candidate [ $candidate ], metric [ $metric ]"
+			log_info "Portal candidate [ $candidate ], metric [ $metric ], hops [ $hops ]"
 
 			# First-run or no current portal: take the best
 			if [ -z "$current_portal_ula" ]; then
@@ -4608,7 +4603,7 @@ get_portal_ula() {
 	ula_base=$(echo "$portal_ula" | awk -F ":" '{printf "%s:%s:%s", $1, $2, $3}')
 
 	if [ "$best_ula_pingstatus" -eq 0 ]; then
-		log_debug "Selected portal: $portal_ula, mesh metric [ $best_metric ], mesh metric delta [ $mesh_metric_threshold ]"
+		log_debug "Selected portal: $portal_ula, mesh metric delta [ $mesh_metric_threshold ], mesh airtime metric [ $best_metric ], hops [ $hops ]"
 		echo "portal_ula=$portal_ula; metric=$best_metric" > "$tmpdir/active_portal"
 	else
 		log_warning "No responsive portal found"
@@ -4668,18 +4663,98 @@ get_metrics_from_ula() {
 
 	# Portal-selection workaround: inflated 1-hop airtime metric
 	# A correct high-rate 1-hop link cannot have metric > 8192.
-	if [ -n "$metric" ] && [ -n "$hops" ] && \
-		[ "$hops" -eq 1 ] && [ "$metric" -gt 8192 ]; then
+	# So always call calc_airtime_metric
+	if [ -n "$metric" ] && [ -n "$hops" ] && [ "$hops" -eq 1 ]; then
+		calc_airtime_metric "$active_mesh_ifname" "$portal_mac"
 
-		tx_mbps=$(iw dev "$active_mesh_ifname" station get "$portal_mac" 2>/dev/null | \
-			awk '/tx bitrate:/ { printf "%d", $3; exit }')
-
-		log_debug "candidate [ $remote_ula ], hops [ $hops ], raw_metric [ $metric ], tx_bitrate [ $tx_mbps ]"
-
-		if [ -n "$tx_mbps" ] && [ "$tx_mbps" -ge 50 ]; then
-			metric=$((metric - 8192))
-			log_debug "Normalised mesh metric for candidate [ $remote_ula ] is [ $metric ]"
+		if [ "$?" -eq 1 ]; then
+			# peer is unusable
+			return 1
 		fi
+
+		mpath_metric=$metric
+		metric=$calc_metric
+	fi
+
+	log_debug "Airtime mesh metric for candidate [ $remote_ula ] [ $portal_mac ] is [ $metric ], hops [ $hops ]"
+}
+
+# =============================================================================
+# calc_airtime_metric()
+# Userspace replica of mac80211 airtime_link_metric_get() for portal selection.
+#
+# Sets $calc_metric. Returns 0 on success, 1 if the peer is unusable.
+#
+# On some firmware-RC chipsets (mt7996e) the kernel "mesh airtime link metric"
+# is stuck (often 8192 + small) and tx bitrate flaps between a real MCS and
+# 1 MBit/s. Do not use the kernel metric or expected throughput.
+# Prefer a real TX rate; if TX looks like a fallback, use RX rate when the
+# signal is strong.
+# =============================================================================
+calc_airtime_metric() {
+	local ifname="$1"
+	local peer="$2"
+	local sta tx_mbit rx_mbit sig tx_pkts tx_fail
+	local use_mbit fail_pct rate err tx_time retx denom
+
+	calc_metric=4294967295
+
+	if [ -z "$ifname" ] || [ -z "$peer" ]; then
+		return 1
+	fi
+
+	sta=$(iw dev "$ifname" station get "$peer" 2>/dev/null) || return 1
+
+	echo "$sta" | grep -q "mesh plink:[[:space:]]*ESTAB" || return 1
+
+	tx_mbit=$(echo "$sta" | awk '/tx bitrate:/ { printf "%d", $3; exit }')
+	rx_mbit=$(echo "$sta" | awk '/rx bitrate:/ { printf "%d", $3; exit }')
+	sig=$(echo "$sta" | awk '/^[[:space:]]*signal:/ { print $2; exit }')
+	tx_pkts=$(echo "$sta" | awk '/tx packets:/ { print $3; exit }')
+	tx_fail=$(echo "$sta" | awk '/tx failed:/ { print $3; exit }')
+
+	use_mbit=0
+
+	# Real TX rate
+	if [ -n "$tx_mbit" ] && [ "$tx_mbit" -ge 24 ]; then
+		use_mbit=$tx_mbit
+	# Fallback TX (1 or 6 MBit/s) on a strong link: RX rate is the usable PHY
+	elif [ -n "$rx_mbit" ] && [ "$rx_mbit" -ge 24 ] && \
+		[ -n "$sig" ] && [ "$sig" -ge -70 ]; then
+		use_mbit=$rx_mbit
+	fi
+
+	if [ "$use_mbit" -eq 0 ]; then
+		return 1
+	fi
+
+	fail_pct=0
+	if [ -n "$tx_pkts" ] && [ "$tx_pkts" -gt 20 ] && [ -n "$tx_fail" ]; then
+		fail_pct=$((tx_fail * 100 / tx_pkts))
+	fi
+	# Keep 1/(1-ef) defined and stop one bad sample dominating
+	if [ "$fail_pct" -gt 90 ]; then
+		fail_pct=90
+	fi
+
+	# mac80211 units: rate in 100 kbit/s, ARITH_SHIFT=8, TEST_FRAME_LEN=8192
+	rate=$((use_mbit * 10))
+	if [ "$rate" -le 0 ]; then
+		return 1
+	fi
+
+	err=$((fail_pct * 256 / 100))
+	denom=$((256 - err))
+	if [ "$denom" -le 0 ]; then
+		return 1
+	fi
+
+	tx_time=$((256 + 10 * 2097152 / rate))
+	retx=$((65536 / denom))
+	calc_metric=$((tx_time * retx / 65536))
+
+	if [ "$calc_metric" -le 0 ]; then
+		return 1
 	fi
 }
 
@@ -9035,6 +9110,15 @@ elif [ "$1" = "remove_last_char" ]; then
 	mute=0
 	remove_last_char "$2" "$3"
 	cat "$2"
+	exit 0
+
+elif [ "$1" = "calc_airtime_metric" ]; then
+	# calulate the mesh airtime metric
+	# $2 is the mesh if_name
+	# $3 is the peer mac
+	mute=0
+	calc_airtime_metric "$2" "$3"
+	echo -n "$calc_metric"
 	exit 0
 
 elif [ "$1" = "daemon" ]; then
