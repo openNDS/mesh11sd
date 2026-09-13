@@ -2622,7 +2622,8 @@ convert_from_la() {
 }
 
 wait_for_mesh() {
-	fixup1=1
+	fixup1=1 # Disable firest attempt at fixup for now, currently not needed
+
 	get_mesh_iflist
 
 	local retries=2
