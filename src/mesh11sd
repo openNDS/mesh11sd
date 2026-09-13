@@ -4128,7 +4128,7 @@ check_odhcpd() {
 		return 0
 	fi
 
-	if [ -z "odhcpd_check" ]; then
+	if [ -z "$odhcpd_check" ]; then
 		odhcpd_check=0
 
 	elif [ "$odhcpd_check" -eq 0 ]; then
