@@ -1673,7 +1673,8 @@ check_channel() {
 			if [ "$mode" = "mesh" ]; then
 				network=$(echo "get wireless.$iface.network" | uci batch)
 				device=$(echo "get network.$network.device" | uci batch)
-				get_portal_ula discover
+
+				get_portal_ula get
 
 				manage_fallback_ula_route
 
@@ -1756,6 +1757,26 @@ manage_fallback_ula_route() {
 			fi
 		else
 			log_debug "portal_ula_addr [ $portal_ula_addr ] is present"
+		fi
+	else
+		# not a portal, so assume it is a peer
+		log_debug "manage_fallback_ula_route - Node is a peer"
+		# Portal ULA = prefix:subnet::1 /64
+		portal_ula_addr="$portal_ula""/64"
+		log_debug "portal_ula_addr is [ $portal_ula_addr ], checking..."
+
+		# Check if present from previous portal state
+		if ip -6 addr show dev "$device" | grep -q "$portal_ula_addr"; then
+			log_info "Peer mode → deleting portal ULA $portal_ula_addr from bridge $device"
+
+			ip -6 addr del "$portal_ula_addr" dev "$device" 2>/dev/null
+
+			if [ $? -eq 0 ]; then
+				log_notice "Portal ULA $portal_ula_addr deleted from $device"
+			else
+				log_error "Failed to remove portal ULA $portal_ula_addr from $device"
+				log_debug "ip error: $(ip -6 addr del "$portal_ula_addr" dev "$device" 2>&1)"
+			fi
 		fi
 	fi
 
@@ -3454,7 +3475,7 @@ mobility_settings() {
 
 	start_marker="\"$mesh_band\""
 	end_marker="}"
-	mesh_driver=$(eval $(echo "sed -n '/$start_marker/,/$end_marker/{/$start_marker\|$end_marker/!p}' /tmp/mesh11sd/wifidetect") | grep "\"Driver\"" | awk -F "\"" '{print $4}')
+	mesh_driver=$(eval $(echo "sed -n '/$start_marker/,/$end_marker/{/$start_marker\|$end_marker/!p}' $tmpdir/mesh11sd/wifidetect") | grep "\"Driver\"" | awk -F "\"" '{print $4}')
 
 	if [ "$mesh_driver" = "ath11k" ]; then
 		beacon_int=100
@@ -4524,9 +4545,11 @@ get_portal_ula() {
 
 	# Not a portal - get current value if it exists
 	if [ -z "$mode" ] || [ "$mode" = "get" ]; then
+		mode="get"
 
 		if [ -f "$tmpdir/active_portal" ]; then
 			. "$tmpdir/active_portal" 2>/dev/null
+			log_debug "Active Portal - portal_ula [ $portal_ula ], ula_subnet [ $ula_subnet ], portal_mac [ $portal_mac ], metric [ $metric ], hops [ $hops ]"
 			return 0
 		else
 			mode="discover"
@@ -4534,8 +4557,15 @@ get_portal_ula() {
 
 	fi
 
+	if [ "$mode" = "discover" ]; then
+		log_debug "Discovering Portal"
+	else
+		log_debug "portal_ula - get"
+	fi
+
 	# Not a portal - evaluate candidates
-	if [ "$mode" = "discover" ] && [ -f "$tmpdir/known_portal_ulas" ] && [ -s "$tmpdir/known_portal_ulas" ]; then
+	if [ "$mode" = "discover" ]; then
+		update_known_portals_from_ras
 		local best_ula
 		local best_metric=0
 		local candidate
@@ -5546,7 +5576,7 @@ get_ap_data() {
 		fi
 
 		# Scan around stations on this ap
-		cat /tmp/mesh11sd/stations | while read line; do
+		cat $tmpdir/mesh11sd/stations | while read line; do
 
 			if [ -z "$line" ]; then
 				continue
@@ -6969,7 +6999,7 @@ increment_mac_octet() {
 		if [ "$ifcount" -ne 0 ]; then
 			# abort increment - mac address already assigned
 			# so get existing assignment
-			mac_indexed=$(grep "${devname}_mac" /tmp/mesh11sd/maclist | awk -F "=" '{printf "%s", $2}')
+			mac_indexed=$(grep "${devname}_mac" $tmpdir/mesh11sd/maclist | awk -F "=" '{printf "%s", $2}')
 			return 127
 		fi
 	fi
@@ -8866,7 +8896,12 @@ elif [ "$1" = "dhcp4_renew" ]; then
 
 elif [ "$1" = "get_portal_ula" ]; then
 	get_portal_ula "$2"
-	cat "$tmpdir/active_portal"
+	if [ "$detected_state" = "peer" ]; then
+		cat "$tmpdir/active_portal"
+	else
+		echo "$portal_ula"
+	fi
+
 	exit 0
 
 elif [ "$1" = "get_portal_type" ]; then
@@ -9983,8 +10018,6 @@ elif [ "$1" = "daemon" ]; then
 
 			if [ "$detected_state" = "portal" ]; then
 				manage_fallback_ula_route
-			else
-				update_known_portals_from_ras
 			fi
 		fi
 
