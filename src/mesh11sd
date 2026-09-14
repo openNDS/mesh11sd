@@ -4550,8 +4550,16 @@ get_portal_ula() {
 
 		if [ -f "$tmpdir/active_portal" ]; then
 			. "$tmpdir/active_portal" 2>/dev/null
-			log_debug "Active Portal - portal_ula [ $portal_ula ], ula_subnet [ $ula_subnet ], portal_mac [ $portal_mac ], metric [ $metric ], hops [ $hops ]"
-			return 0
+
+			# (Re)test link to selected portal
+			link_to_portal=$(ping -q -A -c 2 "$portal_ula" &>/dev/null; echo -n $?)
+
+			if [ "$link_to_portal" -eq 0 ]; then
+				log_debug "Active Portal - portal_ula [ $portal_ula ], ula_subnet [ $ula_subnet ], portal_mac [ $portal_mac ], metric [ $metric ], hops [ $hops ]"
+				return 0
+			else
+				mode="discover"
+			fi
 		else
 			mode="discover"
 		fi
@@ -4585,7 +4593,7 @@ get_portal_ula() {
 			[ -z "$candidate" ] && break
 
 			# Populate NDP table
-			link_to_portal=$(ping -q -c 2 "$candidate" &>/dev/null; echo -n $?)
+			link_to_portal=$(ping -q -A -c 4 "$candidate" &>/dev/null; echo -n $?)
 
 			if [ "$link_to_portal" -eq 1 ]; then
 				continue
@@ -4645,7 +4653,7 @@ get_portal_ula() {
 	portal_ula="$best_ula"
 
 	# (Re)test link to selected portal
-	link_to_portal=$(ping -q -c 2 "$portal_ula" &>/dev/null; echo -n $?)
+	link_to_portal=$(ping -q -A -c 2 "$portal_ula" &>/dev/null; echo -n $?)
 
 	if [ "$link_to_portal" -eq 0 ] && [ ! -z "$portal_ula" ]; then
 		ula_subnet=$(echo "$portal_ula" | awk -F ":" '{printf "%s", $4}')
