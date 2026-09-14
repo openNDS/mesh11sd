@@ -1633,9 +1633,6 @@ check_channel() {
 		return 0
 	fi
 
-	# Can we see the portal?
-	link_to_portal=0
-
 	# We need to scan for working channel if we cannot see a portal
 	# Check for portal every channel_tracking_checkinterval seconds
 
@@ -1674,7 +1671,8 @@ check_channel() {
 				network=$(echo "get wireless.$iface.network" | uci batch)
 				device=$(echo "get network.$network.device" | uci batch)
 
-				get_portal_ula get
+				# check if we can see a portal
+				get_portal_ula get # sets $link_to_portal
 
 				manage_fallback_ula_route
 
@@ -3476,7 +3474,7 @@ mobility_settings() {
 
 	start_marker="\"$mesh_band\""
 	end_marker="}"
-	mesh_driver=$(eval $(echo "sed -n '/$start_marker/,/$end_marker/{/$start_marker\|$end_marker/!p}' $tmpdir/mesh11sd/wifidetect") | grep "\"Driver\"" | awk -F "\"" '{print $4}')
+	mesh_driver=$(eval $(echo "sed -n '/$start_marker/,/$end_marker/{/$start_marker\|$end_marker/!p}' $tmpdir/wifidetect") | grep "\"Driver\"" | awk -F "\"" '{print $4}')
 
 	if [ "$mesh_driver" = "ath11k" ]; then
 		beacon_int=100
@@ -3613,6 +3611,8 @@ check_path_changes() {
 						. $tmpdir/$peermac_id
 					else
 						previous_path_change_count=1
+						previous_sequence_number=0
+						previous_time=$(date +%s)
 					fi
 
 					if [ "$previous_sequence_number" -lt "$sequence_number" ]; then
@@ -4615,7 +4615,7 @@ get_portal_ula() {
 				current_metric="$metric"
 				best_ula="$candidate"
 
-			elif [ "$portal_ula" = "$current_portal_ula" ]; then
+			elif [ "$candidate" = "$current_portal_ula" ]; then
 				# This is the current ula
 				best_metric="$metric"
 				best_ula="$candidate"
@@ -4643,14 +4643,21 @@ get_portal_ula() {
 	fi
 
 	portal_ula="$best_ula"
-	ula_subnet=$(echo "$portal_ula" | awk -F ":" '{printf "%s", $4}')
-	ula_base=$(echo "$portal_ula" | awk -F ":" '{printf "%s:%s:%s", $1, $2, $3}')
 
-	if [ "$link_to_portal" -eq 0 ]; then
+	# (Re)test link to selected portal
+	link_to_portal=$(ping -q -c 2 "$portal_ula" &>/dev/null; echo -n $?)
+
+	if [ "$link_to_portal" -eq 0 ] && [ ! -z "$portal_ula" ]; then
+		ula_subnet=$(echo "$portal_ula" | awk -F ":" '{printf "%s", $4}')
+		ula_base=$(echo "$portal_ula" | awk -F ":" '{printf "%s:%s:%s", $1, $2, $3}')
 		log_debug "Selected portal: [ $portal_ula ] [ $peer ], mesh metric delta [ $mesh_metric_threshold ], mesh airtime metric [ $best_metric ], hops [ $hops ]"
 		echo "portal_ula=\"$portal_ula\"; ula_subnet=\"$ula_subnet\"; portal_mac=\"$peer\"; metric=$best_metric; hops=$hops" > "$tmpdir/active_portal"
 	else
 		log_warning "No responsive portal found"
+
+		if [ -f "$tmpdir/active_portal" ]; then
+			rm "$tmpdir/active_portal"
+		fi
 	fi
 
 	return "$link_to_portal"
@@ -4762,7 +4769,6 @@ calc_airtime_metric() {
 
 	eval "$metrics"
 
-
 	sta=$(iw dev "$active_mesh_ifname" station get "$peer" 2>/dev/null)
 
 	if [ ! -z "$sta" ]; then
@@ -4770,6 +4776,9 @@ calc_airtime_metric() {
 
 		if [ "$sta_status" -eq 0 ]; then
 			# This is an established single hop
+			# To become established its signal strength must have been greater than this nodes mesh_rssi_threshold
+			# BUT signal strengths can change, so we should check that it is still greater than mesh_rssi_threshold
+			# If not still greater we should treat it as NOT ESTAB
 			sig=$(echo "$sta" | grep "signal avg:" | awk '{printf "%s", $3}')
 			mesh_rssi_threshold=$(uci get mesh11sd.mesh_params.mesh_rssi_threshold 2>/dev/null)
 
@@ -4782,6 +4791,8 @@ calc_airtime_metric() {
 		else
 			single_hop_status=1
 		fi
+	else
+		single_hop_status=1
 	fi
 
 	if [ "$single_hop_status" -eq 1 ]; then
@@ -5577,7 +5588,7 @@ get_ap_data() {
 		fi
 
 		# Scan around stations on this ap
-		cat $tmpdir/mesh11sd/stations | while read line; do
+		cat $tmpdir/stations | while read line; do
 
 			if [ -z "$line" ]; then
 				continue
@@ -7000,7 +7011,7 @@ increment_mac_octet() {
 		if [ "$ifcount" -ne 0 ]; then
 			# abort increment - mac address already assigned
 			# so get existing assignment
-			mac_indexed=$(grep "${devname}_mac" $tmpdir/mesh11sd/maclist | awk -F "=" '{printf "%s", $2}')
+			mac_indexed=$(grep "${devname}_mac" $tmpdir/maclist | awk -F "=" '{printf "%s", $2}')
 			return 127
 		fi
 	fi
@@ -7972,34 +7983,29 @@ elif [ "$1" = "status" ]; then
 				echo "      \"active_peers\":\"$peers\","
 				echo "      \"peers\":{"
 
-				for peer in $macrouting; do
+				for peer_in in $macrouting; do
 					peernum=$((peernum+1))
-					peermac=$(echo "$peer" | awk -F"/" '{printf "%s", $1}')
+					peermac=$(echo "$peer_in" | awk -F"/" '{printf "%s", $1}')
 					echo "        \"$peermac\":{"
 
-					next_hop=$(echo "$peer" | awk -F"/" '{printf "%s", $2}')
+					next_hop=$(echo "$peer_in" | awk -F"/" '{printf "%s", $2}')
 					echo "          \"next_hop\":\"$next_hop\","
 
-					hop_count=$(echo "$peer" | awk -F"/" '{printf "%s", $4}')
+					hop_count=$(echo "$peer_in" | awk -F"/" '{printf "%s", $4}')
 					echo "          \"hop_count\":\"$hop_count\","
 
-					path_change_count=$(echo "$peer" | awk -F"/" '{printf "%s", $5}')
+					path_change_count=$(echo "$peer_in" | awk -F"/" '{printf "%s", $5}')
 					echo "          \"path_change_count\":\"$path_change_count\","
 
-					metric=$(echo "$peer" | awk -F"/" '{printf "%s", $3}')
+					metric=$(echo "$peer_in" | awk -F"/" '{printf "%s", $3}')
+					calc_airtime_metric "$peermac"
+					echo "          \"airtime_metric\":\"$calc_metric\","
+					echo "          \"mpath_metric\":\"$metric\","
 
-					if [ "$metric" -gt 8192 ]; then
-						metric_normalised=$((metric - 8192))
-						echo "          \"metric_raw\":\"$metric\","
-						echo "          \"metric\":\"$metric_normalised\","
-					else
-						echo "          \"metric\":\"$metric\","
-					fi
-
-					sequence_number=$(echo "$peer" | awk -F"/" '{printf "%s", $6}')
+					sequence_number=$(echo "$peer_in" | awk -F"/" '{printf "%s", $6}')
 					echo "          \"sequence_number\":\"$sequence_number\","
 
-					flags_bitmask=$(echo "$peer" | awk -F"/" '{printf "%s", $7}')
+					flags_bitmask=$(echo "$peer_in" | awk -F"/" '{printf "%s", $7}')
 					echo "          \"hwmp_flags_bitmask\":\"$flags_bitmask\""
 
 					if [ "$peers" = "$peernum" ]; then
@@ -8615,7 +8621,11 @@ elif [ "$1" = "commit_changes" ]; then
 			echo "Mesh Mobility Level change committed"
 		fi
 
-		if [ "$debuglevel_change_flag" -eq 0 ] && [ "$rssi_change_flag" -eq 0 ] && [ "$txpower_change_flag" -eq 0 ] && [ "$mesh_gate_only_change_flag" -eq 0 ]; then
+		if [ "$debuglevel_change_flag" -eq 0 ] && \
+		[ "$rssi_change_flag" -eq 0 ] && \
+		[ "$txpower_change_flag" -eq 0 ] && \
+		[ "$mesh_gate_only_change_flag" -eq 0 ] && \
+		[ "$mesh_node_mobility_level_change_flag" -eq 0 ]; then
 			echo "No changes found"
 		fi
 
@@ -10007,7 +10017,7 @@ elif [ "$1" = "daemon" ]; then
 
 		get_portal_type
 
-		if [ "$portal_type" = "MBP" ] && [ ! -z "$portal_mac" ] && [ ! -z "$portal_ipv4" ] && [ ! -z "$mrp_default_ipv4_gw" ]; then
+		if [ "$portal_type" = "MBP" ] && [ ! -z "$portal_mac" ] && [ ! -z "$portal_ll" ] && [ ! -z "$mrp_default_ipv6_gw" ]; then
 			/sbin/service network restart
 		fi
 
