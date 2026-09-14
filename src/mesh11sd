@@ -4770,6 +4770,9 @@ calc_airtime_metric() {
 
 		if [ "$sta_status" -eq 0 ]; then
 			# This is an established single hop
+			# To become established its signal strength must have been greater than this nodes mesh_rssi_threshold
+			# BUT signal strengths can change, so we should check that it is still greater than mesh_rssi_threshold
+			# If not still greater we should treat it as NOT ESTAB
 			sig=$(echo "$sta" | grep "signal avg:" | awk '{printf "%s", $3}')
 			mesh_rssi_threshold=$(uci get mesh11sd.mesh_params.mesh_rssi_threshold 2>/dev/null)
 
