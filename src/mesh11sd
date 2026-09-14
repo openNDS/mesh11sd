@@ -472,10 +472,12 @@ get_current_setup() {
 	auto_mesh_network=$(uci get mesh11sd.setup.auto_mesh_network 2> /dev/null)
 
 	# Get the default lan mac address
-	auto_mesh_network="lan"
+	if [ -z "$auto_mesh_network" ]; then
+		auto_mesh_network="lan"
+	fi
+
 	refresh_bridgemac
 	. $tmpdir/devicemac
-
 
 	if [ -z "$auto_mesh_network" ]; then
 		auto_mesh_network="lan"
@@ -530,6 +532,18 @@ get_current_setup() {
 	fi
 
 	syslogmessage="option mesh_basename [ $mesh_basename ]"
+	debugtype="info"
+	mute="$mutestate"
+	write_to_syslog
+
+	#####
+	ssid_suffix_enable=$(uci get mesh11sd.setup.ssid_suffix_enable 2> /dev/null)
+
+	if [ -z "$ssid_suffix_enable" ]; then
+		ssid_suffix_enable="1"
+	fi
+
+	syslogmessage="option ssid_suffix_enable [ $ssid_suffix_enable ]"
 	debugtype="info"
 	mute="$mutestate"
 	write_to_syslog
@@ -620,18 +634,6 @@ get_current_setup() {
 		mute="$mutestate"
 		write_to_syslog
 	fi
-
-	#####
-	ssid_suffix_enable=$(uci get mesh11sd.setup.ssid_suffix_enable 2> /dev/null)
-
-	if [ -z "$ssid_suffix_enable" ]; then
-		ssid_suffix_enable="1"
-	fi
-
-	syslogmessage="option ssid_suffix_enable [ $ssid_suffix_enable ]"
-	debugtype="info"
-	mute="$mutestate"
-	write_to_syslog
 
 	####
 	# vxlan configs
@@ -801,7 +803,7 @@ get_current_setup() {
 		#####
 		vtun_isolate=$(uci get mesh11sd.setup.vtun_isolate 2> /dev/null)
 
-		if [ ! -z "$vtun_isolate" ] && [ "$vtun_isolate" -gt 1 ]; then
+		if [ ! -z "$vtun_isolate" ] && [ "$vtun_isolate" -gt 0 ]; then
 			vtun_isolate="1"
 		else
 			vtun_isolate="0"
@@ -1141,7 +1143,7 @@ get_current_setup() {
 
 	if [ -z "$apmon_verbose_debug_enable" ]; then
 		apmon_verbose_debug_enable="0"
-	else
+	elif [ "$apmon_verbose_debug_enable" -gt 1 ]; then
 		apmon_verbose_debug_enable="1"
 	fi
 
@@ -1671,7 +1673,8 @@ check_channel() {
 			if [ "$mode" = "mesh" ]; then
 				network=$(echo "get wireless.$iface.network" | uci batch)
 				device=$(echo "get network.$network.device" | uci batch)
-				get_portal_ula
+
+				get_portal_ula get
 
 				manage_fallback_ula_route
 
@@ -1720,7 +1723,7 @@ manage_fallback_ula_route() {
 	ula_base="${ula_prefix%%::*}"   # everything before the last ::
 	log_debug "ula_base [ $ula_base ]"
 
-	get_portal_ula
+	get_portal_ula get
 
 	if [ "$?" -eq 1 ]; then
 		return 1
@@ -1754,6 +1757,26 @@ manage_fallback_ula_route() {
 			fi
 		else
 			log_debug "portal_ula_addr [ $portal_ula_addr ] is present"
+		fi
+	else
+		# not a portal, so assume it is a peer
+		log_debug "manage_fallback_ula_route - Node is a peer"
+		# Portal ULA = prefix:subnet::1 /64
+		portal_ula_addr="$portal_ula""/64"
+		log_debug "portal_ula_addr is [ $portal_ula_addr ], checking..."
+
+		# Check if present from previous portal state
+		if ip -6 addr show dev "$device" | grep -q "$portal_ula_addr"; then
+			log_info "Peer mode → deleting portal ULA $portal_ula_addr from bridge $device"
+
+			ip -6 addr del "$portal_ula_addr" dev "$device" 2>/dev/null
+
+			if [ $? -eq 0 ]; then
+				log_notice "Portal ULA $portal_ula_addr deleted from $device"
+			else
+				log_error "Failed to remove portal ULA $portal_ula_addr from $device"
+				log_debug "ip error: $(ip -6 addr del "$portal_ula_addr" dev "$device" 2>&1)"
+			fi
 		fi
 	fi
 
@@ -1903,7 +1926,8 @@ get_portal_state() {
 		return 0
 	fi
 
-	local default_ipv6_gw=""
+	local default_ipv6_gw
+	local default_ipv4_gw
 	local muteorg=$mute
 
 
@@ -1962,7 +1986,7 @@ get_portal_state() {
 							default_ipv6_gw=$(ip -6 neigh | grep "$br_zone" | grep "router" | awk '{print $1}' | awk -F ":" '$1 != "fe80" {printf "%s ", $0}')
 
 							if [ -z "$default_ipv6_gw" ]; then
-								get_portal_ula
+								get_portal_ula discover
 								scan_channel
 
 								dhcpdevice="$br_zone"
@@ -1973,10 +1997,6 @@ get_portal_state() {
 						if [ ! -z "$default_ipv6_gw" ]; then
 							# Portal detected
 							is_portal="backhaul"
-							debugtype="debug"
-							syslogmessage="Portal(s) detected on backhaul [ $default_ipv6_gw ]"
-							mute=$muteorg
-							write_to_syslog
 							detected_state="peer"
 							break
 						fi
@@ -2052,7 +2072,7 @@ get_portal_type() {
 		return 0
 	fi
 
-	get_portal_ula
+	get_portal_ula get
 
 	if [ "$link_to_portal" -gt 0 ]; then
 		log_info "portal not accessible"
@@ -2069,17 +2089,17 @@ get_portal_type() {
 		return 1
 	fi
 
-	portal_ipv4=$(ip -4 neigh | grep "$device" | grep "$portal_mac" | awk '{printf "%s", $1}')
-	mrp_default_ipv4_gw=$(ip -4 route | grep -m 1 "default via $portal_ipv4 dev $device")
+	portal_ll=$(ip -6 neigh | grep "$device" | grep "$portal_mac" | grep -w "fe80:" | awk '{printf "%s", $1}')
+	mrp_default_ipv6_gw=$(ip -6 route | grep -m 1 "default via $portal_ll dev $device")
 
-	if [ -z "$mrp_default_ipv4_gw" ]; then
+	if [ -z "$mrp_default_ipv6_gw" ]; then
 		portal_type="MBP"
 	else
 		portal_type="MRP"
 	fi
 
 	log_info "Portal [ $portal_type@$portal_mac ]"
-	echo "portal_type=\"$portal_type\"; portal_mac=\"$portal_mac\"; portal_ipv4=\"$portal_ipv4\"; mrp_default_ipv4_gw=\"$mrp_default_ipv4_gw\"" > "$tmpdir/portal_type"
+	echo "portal_type=\"$portal_type\"; portal_mac=\"$portal_mac\"; portal_ll=\"$portal_ll\"; mrp_default_ipv6_gw=\"$mrp_default_ipv6_gw\"" > "$tmpdir/portal_type"
 	return 0
 }
 
@@ -2121,7 +2141,7 @@ portal_watchdog() {
 
 		log_debug "Portal Watchdog - checking status ...."
 
-		get_portal_ula
+		get_portal_ula discover
 
 		if [ "$link_to_portal" -eq 0 ]; then
 			log_debug "Portal Watchdog - portal detected ...."
@@ -2365,7 +2385,7 @@ check_portal() {
 				echo "set network.$auto_mesh_network.proto='dhcp'" | uci batch
 
 				if [ -z "$portal_ula" ]; then
-					get_portal_ula
+					get_portal_ula get
 				fi
 
 				uci set dhcp.@dnsmasq[0].authoritative='0'
@@ -2465,7 +2485,7 @@ check_portal() {
 				/sbin/service network reload
 
 				if [ -z "$portal_ula" ]; then
-					get_portal_ula
+					get_portal_ula get
 				fi
 
 				uci set dhcp.@dnsmasq[0].authoritative='1'
@@ -2494,7 +2514,7 @@ check_portal() {
 					uci set dhcp.vtunlan.ignore='0'
 
 					if [ -z "$portal_ula_vtun" ]; then
-						get_portal_ula
+						get_portal_ula get
 						portal_ula_vtun="${ula_base}${ula_vx_subnet}::1"
 					fi
 
@@ -2602,7 +2622,8 @@ convert_from_la() {
 }
 
 wait_for_mesh() {
-	fixup1=1
+	fixup1=1 # Disable firest attempt at fixup for now, currently not needed
+
 	get_mesh_iflist
 
 	local retries=2
@@ -3455,7 +3476,7 @@ mobility_settings() {
 
 	start_marker="\"$mesh_band\""
 	end_marker="}"
-	mesh_driver=$(eval $(echo "sed -n '/$start_marker/,/$end_marker/{/$start_marker\|$end_marker/!p}' /tmp/mesh11sd/wifidetect") | grep "\"Driver\"" | awk -F "\"" '{print $4}')
+	mesh_driver=$(eval $(echo "sed -n '/$start_marker/,/$end_marker/{/$start_marker\|$end_marker/!p}' $tmpdir/mesh11sd/wifidetect") | grep "\"Driver\"" | awk -F "\"" '{print $4}')
 
 	if [ "$mesh_driver" = "ath11k" ]; then
 		beacon_int=100
@@ -3619,7 +3640,7 @@ check_path_changes() {
 									mrstloopcount=$(eval echo "\$node$peermac_id")
 									log_debug "mrstloopcount [ $mrstloopcount ]"
 
-									if [ -z "$mrstloopcount"]; then
+									if [ -z "$mrstloopcount" ]; then
 										mrstloopcount=0
 									fi
 
@@ -3941,7 +3962,7 @@ update_vxlan_for_active_portal() {
 	vxlan_if="vxlan$tun_id"
 
 	# Ensure we have a current portal selection with ula_subnet
-	get_portal_ula
+	get_portal_ula get
 
 	if [ -z "$ula_subnet" ]; then
 		log_warning "update_vxlan_for_active_portal: No ula_subnet - using default group"
@@ -4010,7 +4031,7 @@ create_vxlan_if() {
 
 	link_local_addr=$(ip addr show "$device" | grep "inet6 fe80" | awk '{printf "%s", $2}' | awk -F "/" '{printf "%s", $1}')
 
-	if [ -z "$link_local_addr"]; then
+	if [ -z "$link_local_addr" ]; then
 		return 1
 	fi
 
@@ -4019,7 +4040,7 @@ create_vxlan_if() {
 	echo "vxlan_if=\"vxlan$tun_id\"; id=\"$vni_decimal\"; address=\"$vxmac_indexed\"; link_local=\"$link_local_addr\"; group=\"$vxlan_group\"; device=\"$device\"" > $tmpdir/vxlan_conf
 
 
-	if [ ! -f "$tmpdir/active_mesh_ifname" ]; then
+	if [ -f "$tmpdir/active_mesh_ifname" ]; then
 		. $tmpdir/active_mesh_ifname
 	fi
 
@@ -4043,13 +4064,13 @@ create_vxlan_if() {
 		vxlanstate="%ifstatus"
 
 		if [ "$ifstatus" = "down" ]; then
-			ip link set "vxlan_if" up
+			ip link set "vxlan$tun_id" up
 			sleep 1
 			continue
 		elif [ "$ifstatus" = "up" ]; then
 			ip link set "$active_mesh_ifname" mtu 1600
 			ip link set "$device" mtu 1600
-			ip link set "vxlan_if" mtu 1500
+			ip link set "vxlan$tun_id" mtu 1500
 			break
 		fi
 	done
@@ -4062,7 +4083,7 @@ create_vxlan_if() {
 		uci set dhcp.vtunlan.ignore='0'
 
 		if [ -z "$portal_ula_vtun" ]; then
-			get_portal_ula
+			get_portal_ula get
 			portal_ula_vtun="${ula_base}${ula_vx_subnet}::1"
 		fi
 
@@ -4107,7 +4128,7 @@ check_odhcpd() {
 		return 0
 	fi
 
-	if [ -z "odhcpd_check" ]; then
+	if [ -z "$odhcpd_check" ]; then
 		odhcpd_check=0
 
 	elif [ "$odhcpd_check" -eq 0 ]; then
@@ -4232,7 +4253,7 @@ check_vtunnel() {
 						uci set dhcp.vtunlan.ignore='0'
 
 						if [ -z "$portal_ula_vtun" ]; then
-							get_portal_ula
+							get_portal_ula get
 							portal_ula_vtun="${ula_base}${ula_vx_subnet}::1"
 						fi
 
@@ -4358,7 +4379,7 @@ check_vtunnel() {
 
 check_dadfailed() {
 
-	for br_if in "br-$auto_mesh_network br-tun$tun_id"; do
+	for br_if in "br-$auto_mesh_network" "br-tun$tun_id"; do
 		dadfailed_list=$(ip addr show "$br_if" | grep "dadfailed" | awk '{printf "%s ", $2}')
 
 		if [ ! -z "$dadfailed_list" ]; then
@@ -4440,6 +4461,7 @@ update_known_portals_from_ras() {
 
 		if [ -z "$duplicate" ] || [ "$duplicate" -eq 0 ]; then
 			echo "$portal_ula" >> "$tmpdir/known_portal_ulas.tmp"
+			log_debug "Detected portal candidate [ $portal_ula ], written to known_portal_ulas"
 		fi
 	done
 
@@ -4510,6 +4532,8 @@ get_portal_ula() {
 	# Calculate values and populate $ula_prefix, $ula_subnet and $ula_vxsubnet
 	set_ula_prefix "get"
 
+	local mode="$1"
+
 	# If this node is itself a portal
 	if [ -f "$tmpdir/is_portal" ]; then
 		. "$tmpdir/is_portal"
@@ -4520,54 +4544,92 @@ get_portal_ula() {
 		fi
 	fi
 
-	# Not a portal - evaluate candidates
-	local best_ula
-	local best_metric=999999
-	local candidate
-	local current_portal_ula=""
-	local current_metric=999999
+	# Not a portal - get current value if it exists
+	if [ -z "$mode" ] || [ "$mode" = "get" ]; then
+		mode="get"
 
-	# Read current active portal (if any)
-	if [ -f "$tmpdir/active_portal" ]; then
-		. "$tmpdir/active_portal" 2>/dev/null
-		current_portal_ula="$portal_ula"
-		current_metric="${metric:-999999}"
+		if [ -f "$tmpdir/active_portal" ]; then
+			. "$tmpdir/active_portal" 2>/dev/null
+			log_debug "Active Portal - portal_ula [ $portal_ula ], ula_subnet [ $ula_subnet ], portal_mac [ $portal_mac ], metric [ $metric ], hops [ $hops ]"
+			return 0
+		else
+			mode="discover"
+		fi
+
 	fi
 
-	if [ -f "$tmpdir/known_portal_ulas" ] && [ -s "$tmpdir/known_portal_ulas" ]; then
+	if [ "$mode" = "discover" ]; then
+		log_debug "Discovering Portal"
+	else
+		log_debug "portal_ula - get"
+	fi
+
+	# Not a portal - evaluate candidates
+	if [ "$mode" = "discover" ]; then
+		update_known_portals_from_ras
+		local best_ula
+		local best_metric=0
+		local candidate
+		local current_portal_ula=""
+		local current_metric
+
+		# Read current active portal (if any)
+		if [ -f "$tmpdir/active_portal" ]; then
+			. "$tmpdir/active_portal" 2>/dev/null
+			current_portal_ula="$portal_ula"
+			current_metric="$metric"
+			best_metric="$metric"
+		fi
 
 		while read -r candidate; do
 			[ -z "$candidate" ] && break
 
 			# Populate NDP table
-			pingstatus=$(ping -q -c 2 "$candidate" &>/dev/null; echo -n $?)
+			link_to_portal=$(ping -q -c 2 "$candidate" &>/dev/null; echo -n $?)
 
-			if [ "$pingstatus" -eq 1 ]; then
+			if [ "$link_to_portal" -eq 1 ]; then
 				continue
 			fi
 
 			get_metrics_from_ula "$candidate"
 
-			# First-run or no current portal: take the best
-			if [ -z "$current_portal_ula" ]; then
-				if [ "$metric" -lt "$best_metric" ]; then
-					best_metric="$metric"
-					best_ula="$candidate"
-				fi
+			if [ "$?" -eq 1 ]; then
+				log_debug "candidate [ $candidate ] is unusable"
 				continue
 			fi
 
-			# There is a current portal - apply threshold hysteresis
-			if [ "$candidate" = "$current_portal_ula" ]; then
-				# Always prefer current if it's still reachable (unless much worse)
-				best_ula="$candidate"
+			# First-run or no current portal:
+			if [ -z "$current_portal_ula" ]; then
+				current_portal_ula="$candidate"
+				continue
+			fi
+
+			if [ "$best_metric" -eq 0 ]; then
 				best_metric="$metric"
-			elif [ "$((current_metric - metric))" -gt "$mesh_metric_threshold" ]; then
-				# New portal is significantly better
+				best_ula="$candidate"
+			fi
+
+			# Apply threshold hysteresis
+			if [ -z "$current_metric" ]; then
+				# This is the first proper loop
+				current_metric="$metric"
+				best_ula="$candidate"
+
+			elif [ "$portal_ula" = "$current_portal_ula" ]; then
+				# This is the current ula
+				best_metric="$metric"
+				best_ula="$candidate"
+
+			elif [ "$((current_metric - metric))" -lt "$mesh_metric_threshold" ]; then
+				# Is new portal significantly better?
 				if [ "$metric" -lt "$best_metric" ]; then
 					best_metric="$metric"
 					best_ula="$candidate"
 				fi
+			else
+				# fallback
+				best_metric="$metric"
+				best_ula="$candidate"
 			fi
 
 		done < "$tmpdir/known_portal_ulas"
@@ -4581,19 +4643,17 @@ get_portal_ula() {
 	fi
 
 	portal_ula="$best_ula"
-	link_to_portal=$pingstatus
-
 	ula_subnet=$(echo "$portal_ula" | awk -F ":" '{printf "%s", $4}')
 	ula_base=$(echo "$portal_ula" | awk -F ":" '{printf "%s:%s:%s", $1, $2, $3}')
 
-	if [ "$pingstatus" -eq 0 ]; then
-		log_debug "Selected portal: $portal_ula, mesh metric [ $best_metric ], mesh metric delta [ $mesh_metric_threshold ]"
-		echo "portal_ula=$portal_ula; metric=$best_metric" > "$tmpdir/active_portal"
+	if [ "$link_to_portal" -eq 0 ]; then
+		log_debug "Selected portal: [ $portal_ula ] [ $peer ], mesh metric delta [ $mesh_metric_threshold ], mesh airtime metric [ $best_metric ], hops [ $hops ]"
+		echo "portal_ula=\"$portal_ula\"; ula_subnet=\"$ula_subnet\"; portal_mac=\"$peer\"; metric=$best_metric; hops=$hops" > "$tmpdir/active_portal"
 	else
 		log_warning "No responsive portal found"
 	fi
 
-	return "$pingstatus"
+	return "$link_to_portal"
 }
 
 # =============================================================================
@@ -4604,28 +4664,25 @@ get_portal_ula() {
 # On some firmware-RC chipsets (notably mt7996e) a good 1-hop portal path can
 # be reported as ~8192 + real_metric (TEST_FRAME_LEN left in the airtime
 # calculation). That makes a 1-hop portal look worse than a 2-hop path.
-# If the portal is one hop, the metric is > 8192, and the peer TX bitrate is
-# still healthy, subtract 8192 for portal-selection only.
+# So we will calulate the airtime metric ourselves for the purposes of portal selection.
 # =============================================================================
 get_metrics_from_ula() {
 	local remote_ula="$1"
-	local ula_mac
-	local mpp_list
-	local mpath_list
-	local mpp_entry
-	local portal_mac
-	local metrics
-	local tx_mbps
+	local mesh_mac
 
 	if [ -z "$remote_ula" ]; then
 		return 1
 	fi
 
-	ula_mac=$(ip -6 neigh | grep -w "$remote_ula" | awk '{print $5}')
-
 	if [ -f "$tmpdir/active_mesh_ifname" ]; then
 		. "$tmpdir/active_mesh_ifname"
 	else
+		return 1
+	fi
+
+	mesh_mac=$(ip -6 neigh | grep -w "$remote_ula" | awk '{print $5}')
+
+	if [ -z "$mesh_mac" ]; then
 		return 1
 	fi
 
@@ -4635,25 +4692,156 @@ get_metrics_from_ula() {
 		return 1
 	fi
 
+	mpp_entry=$(echo "$mpp_list" | grep "$mesh_mac")
+	device_mac=$(echo "$mpp_entry" | awk '{printf "%s", $2}')
+
+	calc_airtime_metric "$device_mac"
+	metrics="remote_ula=\"$remote_ula\"; $metrics"
+	eval "$metrics"
+	log_debug "Mesh airtime metric for [ $remote_ula ] [ $peer ] is [ $metric ], mpath [ $mpath_metric ], hops [ $hops ]"
+}
+
+
+# =============================================================================
+# get_metrics_from_mac()
+# Returns the mesh metrics for the portal candidate node, with the provided MAC
+# in the variables $metric $hops and $path_changes
+#
+# On some firmware-RC chipsets (notably mt7996e) a good 1-hop portal path can
+# be reported as ~8192 + real_metric (TEST_FRAME_LEN left in the airtime
+# calculation). That makes a 1-hop portal look worse than a 2-hop path.
+# So we will calulate the airtime metric ourselves for the purposes of portal selection.
+# =============================================================================
+get_metrics_from_mac() {
+
+	if [ -z "$1" ]; then
+		return 1
+	else
+		node_mac=$1
+	fi
+
+	calc_airtime_metric "$node_mac"
+}
+
+# =============================================================================
+# calc_airtime_metric()
+# Userspace replica of mac80211 airtime_link_metric_get() for portal selection.
+#
+# Sets $calc_metric. Returns 0 on success, 1 if the peer is unusable.
+#
+# On some firmware-RC chipsets (mt7996e) the kernel "mesh airtime link metric"
+# is stuck (often 8192 + small) and tx bitrate flaps between a real MCS and
+# 1 MBit/s. Do not use the kernel metric or expected throughput.
+# Prefer a real TX rate; if TX looks like a fallback, use RX rate when the
+# signal is strong ie closer to 0dBm than mesh_rssi_threshold,
+# commonly set between -75 to -60dBm.
+# =============================================================================
+calc_airtime_metric() {
+	peer="$1"
+	local sta_status
+	local single_hop_status
+	local sta tx_mbit rx_mbit sig tx_pkts tx_fail
+	local use_mbit fail_pct rate err tx_time retx denom
+
+	calc_metric=4294967295
+
+	if [ -f "$tmpdir/active_mesh_ifname" ]; then
+		. "$tmpdir/active_mesh_ifname"
+	else
+		return 1
+	fi
+
 	mpath_list=$(iw dev "$active_mesh_ifname" mpath dump)
-	mpp_entry=$(echo "$mpp_list" | grep "$ula_mac")
-	portal_mac=$(echo "$mpp_entry" | awk '{printf "%s", $2}')
-	metrics=$(echo "$mpath_list" | grep "$portal_mac" | awk -v portal_mac="$portal_mac" 'portal_mac==$1 {printf "portal_mac=%s; metric=%s; hops=%s; path_change=%s ", portal_mac, $5, $11, $12}')
+	nexthop=$(echo "$mpath_list" | awk -v p="$peer" '$1==p {print $2; exit}')
+	metrics=$(echo "$mpath_list" | grep "$peer" | awk -v peer="$peer" 'peer==$1 {printf "peer=%s; metric=%s; hops=%s; path_change=%s ", peer, $5, $11, $12}')
+
+	if [ -z "$metrics" ]; then
+		log_debug "node [ $peer ] not in mpath"
+		return 1
+	fi
+
 	eval "$metrics"
 
-	# Portal-selection workaround: inflated 1-hop airtime metric
-	# A correct high-rate 1-hop link cannot have metric > 8192.
-	if [ -n "$metric" ] && [ -n "$hops" ] && \
-		[ "$hops" -eq 1 ] && [ "$metric" -gt 8192 ]; then
 
-		tx_mbps=$(iw dev "$active_mesh_ifname" station get "$portal_mac" 2>/dev/null | \
-			awk '/tx bitrate:/ { printf "%d", $3; exit }')
+	sta=$(iw dev "$active_mesh_ifname" station get "$peer" 2>/dev/null)
 
-		if [ -n "$tx_mbps" ] && [ "$tx_mbps" -ge 50 ]; then
-			metric=$((metric - 8192))
-			log_debug "Normalised mesh metric [ $metric ]"
+	if [ ! -z "$sta" ]; then
+		sta_status=$(echo "$sta" | grep -q "mesh plink:[[:space:]]*ESTAB"; echo -n $?)
+
+		if [ "$sta_status" -eq 0 ]; then
+			# This is an established single hop
+			sig=$(echo "$sta" | grep "signal avg:" | awk '{printf "%s", $3}')
+			mesh_rssi_threshold=$(uci get mesh11sd.mesh_params.mesh_rssi_threshold 2>/dev/null)
+
+			if [ ! -z "$mesh_rssi_threshold" ] && [ "$sig" -gt "$mesh_rssi_threshold" ]; then
+				# Signal is above rssi threshold so useable
+				single_hop_status=0
+			else
+				single_hop_status=1
+			fi
+		else
+			single_hop_status=1
 		fi
 	fi
+
+	if [ "$single_hop_status" -eq 1 ]; then
+		# This is a multi hop sta
+		sta=$(iw dev "$active_mesh_ifname" station get "$nexthop" 2>/dev/null)
+	fi
+
+	tx_mbit=$(echo "$sta" | awk '/tx bitrate:/ { printf "%d", $3; exit }')
+	rx_mbit=$(echo "$sta" | awk '/rx bitrate:/ { printf "%d", $3; exit }')
+	tx_pkts=$(echo "$sta" | awk '/tx packets:/ { print $3; exit }')
+	tx_fail=$(echo "$sta" | awk '/tx failed:/ { print $3; exit }')
+	use_mbit=0
+
+	# Real TX rate
+	if [ -n "$tx_mbit" ] && [ "$tx_mbit" -ge 24 ]; then
+		use_mbit=$tx_mbit
+	# Fallback TX (1 or 6 MBit/s) on a strong link: RX rate is the usable PHY
+	elif [ -n "$rx_mbit" ] && [ "$rx_mbit" -ge 24 ]; then
+		use_mbit=$rx_mbit
+	fi
+
+	if [ "$use_mbit" -eq 0 ]; then
+		use_mbit=20
+	fi
+
+	fail_pct=0
+	if [ -n "$tx_pkts" ] && [ "$tx_pkts" -gt 20 ] && [ -n "$tx_fail" ]; then
+		fail_pct=$((tx_fail * 100 / tx_pkts))
+	fi
+
+	# Keep 1/(1-ef) defined and stop one bad sample dominating
+	if [ "$fail_pct" -gt 90 ]; then
+		fail_pct=90
+	fi
+
+	# mac80211 units: rate in 100 kbit/s, ARITH_SHIFT=8, TEST_FRAME_LEN=8192
+	rate=$((use_mbit * 10))
+
+	if [ "$rate" -le 0 ]; then
+		return 1
+	fi
+
+
+	err=$((fail_pct * 256 / 100))
+	denom=$((256 - err))
+
+	if [ "$denom" -le 0 ]; then
+		return 1
+	fi
+
+	tx_time=$((256 + 10 * 2097152 / rate))
+	retx=$((65536 / denom))
+	calc_metric=$((tx_time * retx / 65536))
+	nexthop_metric="$calc_metric"
+	calc_metric=$(awk -v calc_metric="$calc_metric" -v hops="$hops" 'BEGIN { printf "%.0f\n", calc_metric * hops^1.6 }')
+
+	if [ "$calc_metric" -le 0 ]; then
+		return 1
+	fi
+	metrics="peer=\"$peer\"; metric=$calc_metric; mpath_metric=$metric; hops=$hops; nexthop=\"$nexthop\"; nexthop_metric=$nexthop_metric; path_change=$path_change"
 }
 
 str_to_hex() {
@@ -5163,7 +5351,7 @@ send_ap_data() {
 	debugtype="debug"
 	log_info "apmond connecting to portal"
 
-	get_portal_ula
+	get_portal_ula get
 
 	while true; do
 		# get a chunk
@@ -5389,7 +5577,7 @@ get_ap_data() {
 		fi
 
 		# Scan around stations on this ap
-		cat /tmp/mesh11sd/stations | while read line; do
+		cat $tmpdir/mesh11sd/stations | while read line; do
 
 			if [ -z "$line" ]; then
 				continue
@@ -6812,7 +7000,7 @@ increment_mac_octet() {
 		if [ "$ifcount" -ne 0 ]; then
 			# abort increment - mac address already assigned
 			# so get existing assignment
-			mac_indexed=$(grep "${devname}_mac" /tmp/mesh11sd/maclist | awk -F "=" '{printf "%s", $2}')
+			mac_indexed=$(grep "${devname}_mac" $tmpdir/mesh11sd/maclist | awk -F "=" '{printf "%s", $2}')
 			return 127
 		fi
 	fi
@@ -7296,11 +7484,12 @@ if [ -z "$1" ] || [ "$1" = "-h" ] || [ $1 = "--help" ] || [ $1 = "help" ]; then
   Option: mesh_node_mobility_level
   Usage: mesh11sd mesh_node_mobility_level [level]
   Sets the mesh node mobility level
-    Supported levels are 0, 1, 2, 3 and 4
+    where level can be 0, 1, 2, 3, 4, 5 and 6
     Level 0 - not recommended for normal use - node must be stationary and carefully positioned
     Level 1 - Enables mesh_hwmp_rts for on air collision avoidance, enables transmit queue and aql_threshold to minimise latency, enables rapid path convergence
-    Level 1 supports inter node relative velocities up to 1.5 metres per second
-    Levels 2 to 4 support progressively higher relative inter node velocities at the expense of a larger and larger backhaul overhead
+    Level 2 - supports inter node relative velocities up to 1.5 metres per second
+    Levels 3 to 5 - support progressively higher relative inter node velocities at the expense of a larger and larger backhaul overhead.
+    Level 6 - is a special configuration that is PA / voice optimised (push-to-talk announcement use-case).
 
 ####
   Option: commit_changes
@@ -7342,8 +7531,10 @@ if [ -z "$1" ] || [ "$1" = "-h" ] || [ $1 = "--help" ] || [ $1 = "help" ]; then
 
 ####
   Option: get_portal_ula
-  Usage: mesh11sd get_portal_ula
-    Gets the portal unique local ipv6 address (ula)
+  Usage: mesh11sd get_portal_ula <mode>
+    where mode is:
+    1. get or not set - Gets the current portal unique local ipv6 address (ula)
+    2. discover - Selects the best portal unique local ipv6 address (ula)
 
 ####
   Option: set_ula_prefix
@@ -7970,7 +8161,7 @@ elif [ "$1" = "connect" ]; then
 	if [ ! -z "$peerlist" ]; then
 		# peerlist is a list of mac addresses of peers, both la and non la
 
-		get_portal_ula
+		get_portal_ula get
 
 		for connectto in $connectlist; do
 			linklocal="${connectto%,*}"
@@ -8108,7 +8299,7 @@ elif [ "$1" = "copy" ]; then
 	if [ ! -z "$peerlist" ]; then
 		# peerlist is a list of mac addresses of peers, both la and non la
 
-		get_portal_ula
+		get_portal_ula get
 
 		for connectto in $connectlist; do
 			linklocal="${connectto%,*}"
@@ -8296,11 +8487,13 @@ elif [ "$1" = "mesh_node_mobility_level" ]; then
 
 	if [ -z "$2" ]; then
 		echo "Usage: mesh11sd mesh_node_mobility_level <level>"
-		echo "    where level can be 0, 1, 2, 3, 4"
+		echo "    where level can be 0, 1, 2, 3, 4, 5 and 6"
 		echo "    0 is for static nodes, 1 for nodes with low relative velocity"
-		echo "    and 2, 3, 4 for consecutively higher relative velocity"
+		echo "    and 2, 3, 4 and 5 for consecutively higher relative velocity"
 		echo "    level 1 corresponds to a relative velocity in the region of 1 metre per second"
 		echo "    level 4 corresponds to a relative velocity in the region of 5 metres per second"
+		echo "    level 5 - Extreme mobility. Maximum responsiveness, but with significant control-plane cost."
+		echo "    Level 6 is a special configuration, PA / voice optimised (push-to-talk announcement use-case)."
 		echo "    These are approximate values of achievable velative velocity"
 		echo
 		echo "$warning_message"
@@ -8311,7 +8504,7 @@ elif [ "$1" = "mesh_node_mobility_level" ]; then
 			echo "Current level is [ $mesh_node_mobility_level ]"
 			echo
 		fi
-	elif [ "$2" -ge 0 ] && [ $2 -le 4 ]; then
+	elif [ "$2" -ge 0 ] && [ $2 -le 6 ]; then
 		echo
 		echo "$warning_message"
 		echo
@@ -8703,16 +8896,20 @@ elif [ "$1" = "dhcp4_renew" ]; then
 	exit 0
 
 elif [ "$1" = "get_portal_ula" ]; then
-	get_portal_ula
-	pingstatus="$?"
-	echo "portal_ula=\"$portal_ula\"; pingstatus=\"$pingstatus\"; ula_subnet=\"$ula_subnet\"; ula_vxsubnet=\"$ula_vxsubnet\""
+	get_portal_ula "$2"
+	if [ "$detected_state" = "peer" ]; then
+		cat "$tmpdir/active_portal"
+	else
+		echo "$portal_ula"
+	fi
+
 	exit 0
 
 elif [ "$1" = "get_portal_type" ]; then
 
 	if [ -f "$tmpdir/portal_type" ]; then
 		. "$tmpdir/portal_type"
-		echo "portal_type=\"$portal_type\"; portal_mac=\"$portal_mac\"; portal_ipv4=\"$portal_ipv4\"; mrp_default_ipv4_gw=\"$mrp_default_ipv4_gw\""
+		echo "portal_type=\"$portal_type\"; portal_mac=\"$portal_mac\"; portal_ll=\"$portal_ll\"; mrp_default_ipv6_gw=\"$mrp_default_ipv6_gw\""
 	else
 		echo "UNKNOWN"
 	fi
@@ -8987,6 +9184,29 @@ elif [ "$1" = "get_metrics_from_ula" ]; then
 	mute=0
 	get_metrics_from_ula "$2"
 
+	if [ "$?" -ne 0 ]; then
+		exit 1
+	fi
+
+	echo "$metrics"
+	exit 0
+
+elif [ "$1" = "get_metrics_from_mac" ]; then
+	mute=0
+	get_metrics_from_mac "$2"
+
+	if [ "$?" -ne 0 ]; then
+		exit 1
+	fi
+
+	echo "$metrics"
+	exit 0
+
+elif [ "$1" = "calc_airtime_metric" ]; then
+	# calulate the mesh airtime metric
+	# $2 is the peer mac
+	mute=0
+	calc_airtime_metric "$2"
 	echo "$metrics"
 	exit 0
 
@@ -9102,7 +9322,7 @@ elif [ "$1" = "daemon" ]; then
 	manage_opennds stop
 
 	#configure mac addresses of intitial interfaces
-	set_gridge_mac_addresses
+	set_bridge_mac_addresses
 
 	refresh_bridgemac
 
@@ -9156,11 +9376,6 @@ elif [ "$1" = "daemon" ]; then
 
 		# Set default dhcp settings for lan
 		if [ "$portal_detect" -ne 4 ]; then
-
-			if [ -z "$portal_ula" ]; then
-				get_portal_ula
-			fi
-
 			uci set dhcp.$auto_mesh_network.dhcpv4='server'
 			uci set dhcp.$auto_mesh_network.dhcpv6='server'
 			uci set dhcp.$auto_mesh_network.ra='server'
@@ -9170,13 +9385,7 @@ elif [ "$1" = "daemon" ]; then
 			echo "del_list dhcp.$auto_mesh_network.ra_flags='other-config'" | uci batch 2> /dev/null
 			echo "add_list dhcp.$auto_mesh_network.ra_flags='managed-config'" | uci batch 2> /dev/null
 			echo "add_list dhcp.$auto_mesh_network.ra_flags='other-config'" | uci batch 2> /dev/null
-
-			#echo "set dhcp.$auto_mesh_network.ra_dns='1'" | uci batch
-			#echo "del dhcp.$auto_mesh_network.dns" | uci batch 2> /dev/null
-			#echo "add_list dhcp.$auto_mesh_network.dns='$portal_ula'" | uci batch 2> /dev/null
-
 			echo "set network.$auto_mesh_network.proto='static'" | uci batch
-
 			uci set dhcp.@dnsmasq[0].rebind_protection='1'
 		else
 			mbp_dhcp_lan_defaults
@@ -9322,7 +9531,7 @@ elif [ "$1" = "daemon" ]; then
 				echo "set network.wan6.delegate='1'" | uci batch
 				echo "set network.wan6.hostname='meshnode-$suffix'" | uci batch
 
-				echo "set network.lan.ipassign='64'" | uci batch
+				echo "set network.lan.ip6assign='64'" | uci batch
 
 				echo "set dhcp.lan.dhcpv6='server'" | uci batch
 				echo "set dhcp.lan.ra='server'" | uci batch
@@ -9436,7 +9645,7 @@ elif [ "$1" = "daemon" ]; then
 	log_debug "Initial setup [ luci_add_custom ]"
 	luci_add_custom
 
-	get_portal_ula
+	get_portal_ula discover
 	log_debug "portal ula [ $portal_ula ], link to portal [ $link_to_portal ]"
 
 	# Start the main loop
@@ -9600,7 +9809,7 @@ elif [ "$1" = "daemon" ]; then
 
 			if [ "$auto_config" -ne 0 ] || [ -e "$tmpdir/auto_config_test" ]; then
 
-				if [ "$portal_detect" -ne 0 ] || [ "$portal_detect" -ne 4 ] || [ "$portal_detect" -ne 5 ]; then
+				if [ "$portal_detect" -ne 0 ] && [ "$portal_detect" -ne 4 ] && [ "$portal_detect" -ne 5 ]; then
 					check_portal
 
 				elif [ "$portal_detect" -eq 0 ] || [ "$portal_detect" -eq 4 ]; then
@@ -9775,7 +9984,7 @@ elif [ "$1" = "daemon" ]; then
 		fi
 
 		if [ "$portal_detect" -eq 4 ] && [ "$link_to_portal" -eq 1 ]; then
-			get_portal_ula
+			get_portal_ula discover
 
 			if [ "$link_to_portal" -eq 1 ]; then
 				/sbin/service network reload
@@ -9810,8 +10019,6 @@ elif [ "$1" = "daemon" ]; then
 
 			if [ "$detected_state" = "portal" ]; then
 				manage_fallback_ula_route
-			else
-				update_known_portals_from_ras
 			fi
 		fi
 
