@@ -4615,7 +4615,7 @@ get_portal_ula() {
 				current_metric="$metric"
 				best_ula="$candidate"
 
-			elif [ "$portal_ula" = "$current_portal_ula" ]; then
+			elif [ "$candidate" = "$current_portal_ula" ]; then
 				# This is the current ula
 				best_metric="$metric"
 				best_ula="$candidate"
