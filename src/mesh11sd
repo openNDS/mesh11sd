@@ -7981,34 +7981,29 @@ elif [ "$1" = "status" ]; then
 				echo "      \"active_peers\":\"$peers\","
 				echo "      \"peers\":{"
 
-				for peer in $macrouting; do
+				for peer_in in $macrouting; do
 					peernum=$((peernum+1))
-					peermac=$(echo "$peer" | awk -F"/" '{printf "%s", $1}')
+					peermac=$(echo "$peer_in" | awk -F"/" '{printf "%s", $1}')
 					echo "        \"$peermac\":{"
 
-					next_hop=$(echo "$peer" | awk -F"/" '{printf "%s", $2}')
+					next_hop=$(echo "$peer_in" | awk -F"/" '{printf "%s", $2}')
 					echo "          \"next_hop\":\"$next_hop\","
 
-					hop_count=$(echo "$peer" | awk -F"/" '{printf "%s", $4}')
+					hop_count=$(echo "$peer_in" | awk -F"/" '{printf "%s", $4}')
 					echo "          \"hop_count\":\"$hop_count\","
 
-					path_change_count=$(echo "$peer" | awk -F"/" '{printf "%s", $5}')
+					path_change_count=$(echo "$peer_in" | awk -F"/" '{printf "%s", $5}')
 					echo "          \"path_change_count\":\"$path_change_count\","
 
-					metric=$(echo "$peer" | awk -F"/" '{printf "%s", $3}')
+					metric=$(echo "$peer_in" | awk -F"/" '{printf "%s", $3}')
+					calc_airtime_metric "$peermac"
+					echo "          \"airtime_metric\":\"$calc_metric\","
+					echo "          \"mpath_metric\":\"$metric\","
 
-					if [ "$metric" -gt 8192 ]; then
-						metric_normalised=$((metric - 8192))
-						echo "          \"metric_raw\":\"$metric\","
-						echo "          \"metric\":\"$metric_normalised\","
-					else
-						echo "          \"metric\":\"$metric\","
-					fi
-
-					sequence_number=$(echo "$peer" | awk -F"/" '{printf "%s", $6}')
+					sequence_number=$(echo "$peer_in" | awk -F"/" '{printf "%s", $6}')
 					echo "          \"sequence_number\":\"$sequence_number\","
 
-					flags_bitmask=$(echo "$peer" | awk -F"/" '{printf "%s", $7}')
+					flags_bitmask=$(echo "$peer_in" | awk -F"/" '{printf "%s", $7}')
 					echo "          \"hwmp_flags_bitmask\":\"$flags_bitmask\""
 
 					if [ "$peers" = "$peernum" ]; then
