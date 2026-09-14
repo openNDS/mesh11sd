@@ -3476,7 +3476,7 @@ mobility_settings() {
 
 	start_marker="\"$mesh_band\""
 	end_marker="}"
-	mesh_driver=$(eval $(echo "sed -n '/$start_marker/,/$end_marker/{/$start_marker\|$end_marker/!p}' $tmpdir/mesh11sd/wifidetect") | grep "\"Driver\"" | awk -F "\"" '{print $4}')
+	mesh_driver=$(eval $(echo "sed -n '/$start_marker/,/$end_marker/{/$start_marker\|$end_marker/!p}' $tmpdir/wifidetect") | grep "\"Driver\"" | awk -F "\"" '{print $4}')
 
 	if [ "$mesh_driver" = "ath11k" ]; then
 		beacon_int=100
@@ -4643,10 +4643,10 @@ get_portal_ula() {
 	fi
 
 	portal_ula="$best_ula"
-	ula_subnet=$(echo "$portal_ula" | awk -F ":" '{printf "%s", $4}')
-	ula_base=$(echo "$portal_ula" | awk -F ":" '{printf "%s:%s:%s", $1, $2, $3}')
 
-	if [ "$link_to_portal" -eq 0 ]; then
+	if [ "$link_to_portal" -eq 0 ] && [ ! -z "$portal_ula" ]; then
+		ula_subnet=$(echo "$portal_ula" | awk -F ":" '{printf "%s", $4}')
+		ula_base=$(echo "$portal_ula" | awk -F ":" '{printf "%s:%s:%s", $1, $2, $3}')
 		log_debug "Selected portal: [ $portal_ula ] [ $peer ], mesh metric delta [ $mesh_metric_threshold ], mesh airtime metric [ $best_metric ], hops [ $hops ]"
 		echo "portal_ula=\"$portal_ula\"; ula_subnet=\"$ula_subnet\"; portal_mac=\"$peer\"; metric=$best_metric; hops=$hops" > "$tmpdir/active_portal"
 	else
@@ -5577,7 +5577,7 @@ get_ap_data() {
 		fi
 
 		# Scan around stations on this ap
-		cat $tmpdir/mesh11sd/stations | while read line; do
+		cat $tmpdir/stations | while read line; do
 
 			if [ -z "$line" ]; then
 				continue
@@ -7000,7 +7000,7 @@ increment_mac_octet() {
 		if [ "$ifcount" -ne 0 ]; then
 			# abort increment - mac address already assigned
 			# so get existing assignment
-			mac_indexed=$(grep "${devname}_mac" $tmpdir/mesh11sd/maclist | awk -F "=" '{printf "%s", $2}')
+			mac_indexed=$(grep "${devname}_mac" $tmpdir/maclist | awk -F "=" '{printf "%s", $2}')
 			return 127
 		fi
 	fi
