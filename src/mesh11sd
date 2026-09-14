@@ -1633,9 +1633,6 @@ check_channel() {
 		return 0
 	fi
 
-	# Can we see the portal?
-	link_to_portal=0
-
 	# We need to scan for working channel if we cannot see a portal
 	# Check for portal every channel_tracking_checkinterval seconds
 
@@ -1674,7 +1671,8 @@ check_channel() {
 				network=$(echo "get wireless.$iface.network" | uci batch)
 				device=$(echo "get network.$network.device" | uci batch)
 
-				get_portal_ula get
+				# check if we can see a portal
+				get_portal_ula get # sets $link_to_portal
 
 				manage_fallback_ula_route
 
