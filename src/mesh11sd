@@ -4767,7 +4767,6 @@ calc_airtime_metric() {
 
 	eval "$metrics"
 
-
 	sta=$(iw dev "$active_mesh_ifname" station get "$peer" 2>/dev/null)
 
 	if [ ! -z "$sta" ]; then
@@ -4790,6 +4789,8 @@ calc_airtime_metric() {
 		else
 			single_hop_status=1
 		fi
+	else
+		single_hop_status=1
 	fi
 
 	if [ "$single_hop_status" -eq 1 ]; then
