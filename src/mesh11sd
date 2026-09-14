@@ -8621,7 +8621,11 @@ elif [ "$1" = "commit_changes" ]; then
 			echo "Mesh Mobility Level change committed"
 		fi
 
-		if [ "$debuglevel_change_flag" -eq 0 ] && [ "$rssi_change_flag" -eq 0 ] && [ "$txpower_change_flag" -eq 0 ] && [ "$mesh_gate_only_change_flag" -eq 0 ]; then
+		if [ "$debuglevel_change_flag" -eq 0 ] && \
+		[ "$rssi_change_flag" -eq 0 ] && \
+		[ "$txpower_change_flag" -eq 0 ] && \
+		[ "$mesh_gate_only_change_flag" -eq 0 ] && \
+		[ "$mesh_node_mobility_level_change_flag" -eq 0 ]; then
 			echo "No changes found"
 		fi
 
