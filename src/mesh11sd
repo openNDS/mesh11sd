@@ -3611,6 +3611,8 @@ check_path_changes() {
 						. $tmpdir/$peermac_id
 					else
 						previous_path_change_count=1
+						previous_sequence_number=0
+						previous_time=$(date +%s)
 					fi
 
 					if [ "$previous_sequence_number" -lt "$sequence_number" ]; then
