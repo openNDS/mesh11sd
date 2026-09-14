@@ -10016,7 +10016,7 @@ elif [ "$1" = "daemon" ]; then
 
 		get_portal_type
 
-		if [ "$portal_type" = "MBP" ] && [ ! -z "$portal_mac" ] && [ ! -z "$portal_ipv4" ] && [ ! -z "$mrp_default_ipv4_gw" ]; then
+		if [ "$portal_type" = "MBP" ] && [ ! -z "$portal_mac" ] && [ ! -z "$portal_ll" ] && [ ! -z "$mrp_default_ipv6_gw" ]; then
 			/sbin/service network restart
 		fi
 
