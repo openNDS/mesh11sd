@@ -5587,9 +5587,11 @@ get_ap_data() {
 	local timeout=4
 
 	# create a lock file
+	local locked=0
 	for i in $(seq $timeout); do
 		if [ ! -e $tmpdir/apmond/clients.loc ]; then
 			touch $tmpdir/apmond/clients.loc
+			locked=1
 			break
 		else
 			sleep 1
@@ -5597,7 +5599,7 @@ get_ap_data() {
 	done
 
 	# abort if unable to lock
-	if [ "$i" -eq $timeout ]; then
+	if [ "$locked" -eq 0 ]; then
 		return 0
 	fi
 
