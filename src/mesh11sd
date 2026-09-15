@@ -2089,13 +2089,17 @@ get_portal_type() {
 		return 1
 	fi
 
-	portal_ll=$(ip -6 neigh | grep "$device" | grep "$portal_mac" | grep -w "fe80:" | awk '{printf "%s", $1}')
+	portal_neigh=$(ip -6 neigh | grep "$device" | grep "$portal_mac" | grep -w "fe80:")
+	portal_ll=$(echo "$portal_neigh" | awk '{printf "%s", $1}')
 	mrp_default_ipv6_gw=$(ip -6 route | grep -m 1 "default via $portal_ll dev $device")
 
-	if [ -z "$mrp_default_ipv6_gw" ]; then
-		portal_type="MBP"
-	else
+	# Classify from NDP IsRouter, not from the default-via. An MBP should
+	# stop sending RA on the mesh, so the leftover MRP default can still be
+	# present while the neighbour is no longer a router.
+	if echo "$portal_neigh" | grep -qw "router"; then
 		portal_type="MRP"
+	else
+		portal_type="MBP"
 	fi
 
 	log_info "Portal [ $portal_type@$portal_mac ]"
@@ -4579,6 +4583,8 @@ get_portal_ula() {
 		update_known_portals_from_ras
 		local best_ula
 		local best_metric=0
+		local best_peer
+		local best_hops
 		local candidate
 		local current_portal_ula=""
 		local current_metric
@@ -4589,6 +4595,9 @@ get_portal_ula() {
 			current_portal_ula="$portal_ula"
 			current_metric="$metric"
 			best_metric="$metric"
+			best_ula="$portal_ula"
+			best_peer="$portal_mac"
+			best_hops="$hops"
 		fi
 
 		while read -r candidate; do
@@ -4614,12 +4623,16 @@ get_portal_ula() {
 				current_metric="$metric"
 				best_ula="$candidate"
 				best_metric="$metric"
+				best_peer="$peer"
+				best_hops="$hops"
 				continue
 			fi
 
 			if [ "$best_metric" -eq 0 ]; then
 				best_metric="$metric"
 				best_ula="$candidate"
+				best_peer="$peer"
+				best_hops="$hops"
 			fi
 
 			# Apply threshold hysteresis
@@ -4627,22 +4640,30 @@ get_portal_ula() {
 				# This is the first proper loop
 				current_metric="$metric"
 				best_ula="$candidate"
+				best_peer="$peer"
+				best_hops="$hops"
 
 			elif [ "$candidate" = "$current_portal_ula" ]; then
 				# This is the current ula
 				best_metric="$metric"
 				best_ula="$candidate"
+				best_peer="$peer"
+				best_hops="$hops"
 
 			elif [ "$((current_metric - metric))" -lt "$mesh_metric_threshold" ]; then
 				# Is new portal significantly better?
 				if [ "$metric" -lt "$best_metric" ]; then
 					best_metric="$metric"
 					best_ula="$candidate"
+					best_peer="$peer"
+					best_hops="$hops"
 				fi
 			else
 				# fallback
 				best_metric="$metric"
 				best_ula="$candidate"
+				best_peer="$peer"
+				best_hops="$hops"
 			fi
 
 		done < "$tmpdir/known_portal_ulas"
@@ -4663,8 +4684,8 @@ get_portal_ula() {
 	if [ "$link_to_portal" -eq 0 ] && [ ! -z "$portal_ula" ]; then
 		ula_subnet=$(echo "$portal_ula" | awk -F ":" '{printf "%s", $4}')
 		ula_base=$(echo "$portal_ula" | awk -F ":" '{printf "%s:%s:%s", $1, $2, $3}')
-		log_debug "Selected portal: [ $portal_ula ] [ $peer ], mesh metric delta [ $mesh_metric_threshold ], mesh airtime metric [ $best_metric ], hops [ $hops ]"
-		echo "portal_ula=\"$portal_ula\"; ula_subnet=\"$ula_subnet\"; portal_mac=\"$peer\"; metric=$best_metric; hops=$hops" > "$tmpdir/active_portal"
+		log_debug "Selected portal: [ $portal_ula ] [ $best_peer ], mesh metric delta [ $mesh_metric_threshold ], mesh airtime metric [ $best_metric ], hops [ $best_hops ]"
+		echo "portal_ula=\"$portal_ula\"; ula_subnet=\"$ula_subnet\"; portal_mac=\"$best_peer\"; metric=$best_metric; hops=$best_hops" > "$tmpdir/active_portal"
 	else
 		log_warning "No responsive portal found"
 
@@ -9337,6 +9358,7 @@ elif [ "$1" = "daemon" ]; then
 
 	cpe_conf=0
 	forced_portal_conf=0
+	mrp_mbp_restart=0
 
 	if [ -f "$tmpdir/active_mesh_ifname" ]; then
 		rm "$tmpdir/active_mesh_ifname"
@@ -10004,7 +10026,12 @@ elif [ "$1" = "daemon" ]; then
 		get_portal_type
 
 		if [ "$portal_type" = "MBP" ] && [ ! -z "$portal_mac" ] && [ ! -z "$portal_ll" ] && [ ! -z "$mrp_default_ipv6_gw" ]; then
-			/sbin/service network restart
+			if [ "$mrp_mbp_restart" -eq 0 ]; then
+				mrp_mbp_restart=1
+				/sbin/service network restart
+			fi
+		elif [ "$portal_type" = "MRP" ]; then
+			mrp_mbp_restart=0
 		fi
 
 		move_ethernet_to_vxlan_bridge
