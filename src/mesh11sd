@@ -4611,6 +4611,9 @@ get_portal_ula() {
 			# First-run or no current portal:
 			if [ -z "$current_portal_ula" ]; then
 				current_portal_ula="$candidate"
+				current_metric="$metric"
+				best_ula="$candidate"
+				best_metric="$metric"
 				continue
 			fi
 
