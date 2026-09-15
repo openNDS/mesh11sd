@@ -4546,6 +4546,7 @@ get_portal_ula() {
 		if [ "$detected_state" = "portal" ]; then
 			ula_base=$(echo "$ula_prefix" | awk -F"::/" '{print $1}')
 			portal_ula="$ula_base:$ula_subnet::1"
+			link_to_portal=0
 			return 0
 		fi
 	fi
@@ -10004,10 +10005,16 @@ elif [ "$1" = "daemon" ]; then
 		fi
 
 		if [ "$portal_detect" -eq 4 ] && [ "$link_to_portal" -eq 1 ]; then
-			get_portal_ula discover
+			if [ -f "$tmpdir/is_portal" ]; then
+				. "$tmpdir/is_portal"
+			fi
 
-			if [ "$link_to_portal" -eq 1 ]; then
-				/sbin/service network reload
+			if [ "$detected_state" != "portal" ]; then
+				get_portal_ula discover
+
+				if [ "$link_to_portal" -eq 1 ]; then
+					/sbin/service network reload
+				fi
 			fi
 		fi
 
