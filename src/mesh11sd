@@ -5039,6 +5039,12 @@ write_node_data() {
 			return 1
 		fi
 
+		if ! is_hex "$node_mac" || [ "${#node_mac}" -ne 12 ]; then
+			mute=0
+			log_warning "apmond - Invalid node mac - rejecting attempted apmond server access"
+			return 1
+		fi
+
 		mute=0
 		log_debug "apmond - node type validated for [ $node_hostname ]"
 
