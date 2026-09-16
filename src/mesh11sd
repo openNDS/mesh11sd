@@ -5260,9 +5260,8 @@ luci_cgi() {
 	echo "printf \"%s\n%s\n\n\" \"Content-type: text/html\"" >> "$cgi"
 	echo -e "status=\$(mesh11sd -v)" >> "$cgi"
 	echo -e "hostname=\$(uci get system.@system[0].hostname)" >> "$cgi"
-
-	eval "$(mesh11sd get_portal_ula)"
-	echo -e "portal_ula=\$portal_ula" >> "$cgi"
+	echo -e "portal_ula=\$(mesh11sd get_portal_ula)" >> "$cgi"
+	echo -e "eval \"\$portal_ula\" 2>/dev/null" >> "$cgi"
 	echo -e "active_nodecount=\$(mesh11sd active_nodecount)" >> "$cgi"
 	echo -e "current_time=\$(date)" >> "$cgi"
 	echo -e "host=\"\$HTTP_HOST\"" >> "$cgi"
