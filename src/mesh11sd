@@ -4613,12 +4613,15 @@ get_portal_ula() {
 		# Read current active portal (if any)
 		if [ -f "$tmpdir/active_portal" ]; then
 			. "$tmpdir/active_portal" 2>/dev/null
-			current_portal_ula="$portal_ula"
-			current_metric="$metric"
-			best_metric="$metric"
-			best_ula="$portal_ula"
-			best_peer="$portal_mac"
-			best_hops="$hops"
+			current_reachable=$(ping -q -A -c 2 "$portal_ula" &>/dev/null; echo -n $?)
+			if [ "$current_reachable" -eq 0 ]; then
+				current_portal_ula="$portal_ula"
+				current_metric="$metric"
+				best_metric="$metric"
+				best_ula="$portal_ula"
+				best_peer="$portal_mac"
+				best_hops="$hops"
+			fi
 		fi
 
 		while read -r candidate; do
