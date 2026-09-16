@@ -4096,7 +4096,13 @@ create_vxlan_if() {
 	done
 
 	# Set default dhcp settings
-	if [ "$portal_detect" -ne 4 ]; then
+	if [ -f "$tmpdir/is_portal" ]; then
+		. "$tmpdir/is_portal"
+	fi
+
+	# Routed portal on the trunk only (forced MRP, or auto-detect portal).
+	# CPE (3), MBP (4), TPN (5) and peers must not serve DHCPv4/RA here.
+	if [ "$portal_detect" -eq 0 ] || [ "$portal_detect" -eq 1 -a "$detected_state" = "portal" ]; then
 		uci set dhcp.vtunlan.dhcpv4='server'
 		uci set dhcp.vtunlan.dhcpv6='server'
 		uci set dhcp.vtunlan.ra='server'
