@@ -3826,8 +3826,8 @@ get_kernel_version() {
 }
 
 probe_interface_mac() {
-	# Create a wireless probe interface
-	wifi down
+	# Temporary mesh vif to read the phy MAC. Do not wifi down; the caller
+	# has usually just brought radios up (and CLI probe must not drop the mesh).
 	get_wiphys
 	dsa_mesh_maclist=""
 
@@ -9417,7 +9417,6 @@ elif [ "$1" = "daemon" ]; then
 	refresh_bridgemac
 
 	/sbin/service odhcpd stop
-	/sbin/service network reload
 
 	if [ -e "$tmpdir/auto_config_test" ] && [ "$auto_config" -eq 0 ]; then
 		autostartup=1
@@ -9449,10 +9448,9 @@ elif [ "$1" = "daemon" ]; then
 
 		done
 
-		# Set ula prefix for forced portal modes
+		# Set ula prefix for forced portal modes (applied by network restart below)
 		if [ "$portal_detect" -eq 0 ] || [ "$portal_detect" -eq 4 ]; then
 			set_ula_prefix "set"
-			/sbin/service network reload
 		fi
 
 		# Force a restart of ethernet ports - some built in switch chips do not initialise on reboot, only on cold start
