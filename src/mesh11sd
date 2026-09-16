@@ -4737,7 +4737,15 @@ get_metrics_from_ula() {
 	mpp_entry=$(echo "$mpp_list" | grep "$mesh_mac")
 	device_mac=$(echo "$mpp_entry" | awk '{printf "%s", $2}')
 
+	if [ -z "$device_mac" ]; then
+		return 1
+	fi
+
 	calc_airtime_metric "$device_mac"
+	if [ "$?" -ne 0 ]; then
+		return 1
+	fi
+
 	metrics="remote_ula=\"$remote_ula\"; $metrics"
 	eval "$metrics"
 	log_debug "Mesh airtime metric for [ $remote_ula ] [ $peer ] is [ $metric ], mpath [ $mpath_metric ], hops [ $hops ]"
