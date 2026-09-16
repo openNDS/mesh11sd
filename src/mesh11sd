@@ -2502,7 +2502,11 @@ check_portal() {
 				echo "set network.$auto_mesh_network.proto='static'" | uci batch
 
 				set_ula_prefix "set"
-				/sbin/service network reload
+				# If vxlan is about to be created, check_vtunnel will network restart.
+				vxlan_pending=$(ip link show vxlan$tun_id &> /dev/null; echo $?)
+				if [ "$vtun_enable" -ne 1 ] || [ "$vxlan_pending" -eq 0 ]; then
+					/sbin/service network reload
+				fi
 
 				if [ -z "$portal_ula" ]; then
 					get_portal_ula get
@@ -4267,7 +4271,6 @@ check_vtunnel() {
 					fi
 
 					vtunnel="configured"
-					/sbin/service network reload
 					/sbin/service firewall restart
 					get_indexed_mac "vxlan$tun_id"
 					vxmac_indexed="$mac_indexed"
@@ -4338,7 +4341,6 @@ check_vtunnel() {
 				echo "add_list network.vtunnel.ports='$wanif'" | uci batch
 			fi
 
-			wifi down
 			/sbin/service firewall restart
 			/sbin/service network restart
 			wait_for_interface "$device"
