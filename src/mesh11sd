@@ -4636,31 +4636,21 @@ get_portal_ula() {
 				best_hops="$hops"
 			fi
 
-			# Apply threshold hysteresis
 			if [ -z "$current_metric" ]; then
-				# This is the first proper loop
 				current_metric="$metric"
-				best_ula="$candidate"
-				best_peer="$peer"
-				best_hops="$hops"
+			fi
 
-			elif [ "$candidate" = "$current_portal_ula" ]; then
-				# This is the current ula
-				best_metric="$metric"
-				best_ula="$candidate"
-				best_peer="$peer"
-				best_hops="$hops"
-
-			elif [ "$((current_metric - metric))" -lt "$mesh_metric_threshold" ]; then
-				# Is new portal significantly better?
-				if [ "$metric" -lt "$best_metric" ]; then
+			if [ "$candidate" = "$current_portal_ula" ]; then
+				# Refresh live metric; do not clobber a better candidate already chosen.
+				current_metric="$metric"
+				if [ "$best_ula" = "$candidate" ] || [ "$metric" -lt "$best_metric" ]; then
 					best_metric="$metric"
 					best_ula="$candidate"
 					best_peer="$peer"
 					best_hops="$hops"
 				fi
-			else
-				# fallback
+			elif [ "$((current_metric - metric))" -ge "$mesh_metric_threshold" ] && [ "$metric" -lt "$best_metric" ]; then
+				# Switch only if better than current by the threshold, and best so far.
 				best_metric="$metric"
 				best_ula="$candidate"
 				best_peer="$peer"
