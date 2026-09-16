@@ -2018,8 +2018,10 @@ get_portal_state() {
 	fi
 
 	# If is_portal is empty, portal detect has failed
+	# Forced portal (portal_detect=0) has no upstream neighbour to probe;
+	# grep -w "" would otherwise clobber is_portal="forced".
 
-	if [ ! -z "$is_portal" ]; then
+	if [ ! -z "$is_portal" ] && [ "$portal_detect" -ne 0 ]; then
 		gwstatus=$(ip neigh | grep -w "$default_ipv6_gw" | awk 'NR==1 {printf "%s", $NF}')
 
 		if [ -z "$gwstatus" ]; then
@@ -2087,13 +2089,17 @@ get_portal_type() {
 		return 1
 	fi
 
-	portal_ll=$(ip -6 neigh | grep "$device" | grep "$portal_mac" | grep -w "fe80:" | awk '{printf "%s", $1}')
+	portal_neigh=$(ip -6 neigh | grep "$device" | grep "$portal_mac" | grep -w "fe80:")
+	portal_ll=$(echo "$portal_neigh" | awk '{printf "%s", $1}')
 	mrp_default_ipv6_gw=$(ip -6 route | grep -m 1 "default via $portal_ll dev $device")
 
-	if [ -z "$mrp_default_ipv6_gw" ]; then
-		portal_type="MBP"
-	else
+	# Classify from NDP IsRouter, not from the default-via. An MBP should
+	# stop sending RA on the mesh, so the leftover MRP default can still be
+	# present while the neighbour is no longer a router.
+	if echo "$portal_neigh" | grep -qw "router"; then
 		portal_type="MRP"
+	else
+		portal_type="MBP"
 	fi
 
 	log_info "Portal [ $portal_type@$portal_mac ]"
@@ -2348,6 +2354,20 @@ check_portal() {
 
 			if [ "$vxlan_status" -eq 1 ]; then
 				log_debug "MBP - checking vtunnel"
+				check_vtunnel
+			fi
+
+			return 0
+		fi
+
+		if [ "$portal_detect" -eq 5 ]; then
+			log_debug "Checking TPN (Trunk Peer) status"
+			wait_for_mesh
+			vxlan_status=$(ip link show vxlan$tun_id &> /dev/null; echo $?)
+			log_debug "vxlan_status [ $vxlan_status ]"
+
+			if [ "$vxlan_status" -eq 1 ]; then
+				log_debug "TPN - checking vtunnel"
 				check_vtunnel
 			fi
 
@@ -4076,7 +4096,13 @@ create_vxlan_if() {
 	done
 
 	# Set default dhcp settings
-	if [ "$portal_detect" -ne 4 ]; then
+	if [ -f "$tmpdir/is_portal" ]; then
+		. "$tmpdir/is_portal"
+	fi
+
+	# Routed portal on the trunk only (forced MRP, or auto-detect portal).
+	# CPE (3), MBP (4), TPN (5) and peers must not serve DHCPv4/RA here.
+	if [ "$portal_detect" -eq 0 ] || [ "$portal_detect" -eq 1 -a "$detected_state" = "portal" ]; then
 		uci set dhcp.vtunlan.dhcpv4='server'
 		uci set dhcp.vtunlan.dhcpv6='server'
 		uci set dhcp.vtunlan.ra='server'
@@ -4540,6 +4566,7 @@ get_portal_ula() {
 		if [ "$detected_state" = "portal" ]; then
 			ula_base=$(echo "$ula_prefix" | awk -F"::/" '{print $1}')
 			portal_ula="$ula_base:$ula_subnet::1"
+			link_to_portal=0
 			return 0
 		fi
 	fi
@@ -4550,8 +4577,16 @@ get_portal_ula() {
 
 		if [ -f "$tmpdir/active_portal" ]; then
 			. "$tmpdir/active_portal" 2>/dev/null
-			log_debug "Active Portal - portal_ula [ $portal_ula ], ula_subnet [ $ula_subnet ], portal_mac [ $portal_mac ], metric [ $metric ], hops [ $hops ]"
-			return 0
+
+			# (Re)test link to selected portal
+			link_to_portal=$(ping -q -A -c 2 "$portal_ula" &>/dev/null; echo -n $?)
+
+			if [ "$link_to_portal" -eq 0 ]; then
+				log_debug "Active Portal - portal_ula [ $portal_ula ], ula_subnet [ $ula_subnet ], portal_mac [ $portal_mac ], metric [ $metric ], hops [ $hops ]"
+				return 0
+			else
+				mode="discover"
+			fi
 		else
 			mode="discover"
 		fi
@@ -4569,6 +4604,8 @@ get_portal_ula() {
 		update_known_portals_from_ras
 		local best_ula
 		local best_metric=0
+		local best_peer
+		local best_hops
 		local candidate
 		local current_portal_ula=""
 		local current_metric
@@ -4576,16 +4613,22 @@ get_portal_ula() {
 		# Read current active portal (if any)
 		if [ -f "$tmpdir/active_portal" ]; then
 			. "$tmpdir/active_portal" 2>/dev/null
-			current_portal_ula="$portal_ula"
-			current_metric="$metric"
-			best_metric="$metric"
+			current_reachable=$(ping -q -A -c 2 "$portal_ula" &>/dev/null; echo -n $?)
+			if [ "$current_reachable" -eq 0 ]; then
+				current_portal_ula="$portal_ula"
+				current_metric="$metric"
+				best_metric="$metric"
+				best_ula="$portal_ula"
+				best_peer="$portal_mac"
+				best_hops="$hops"
+			fi
 		fi
 
 		while read -r candidate; do
 			[ -z "$candidate" ] && break
 
 			# Populate NDP table
-			link_to_portal=$(ping -q -c 2 "$candidate" &>/dev/null; echo -n $?)
+			link_to_portal=$(ping -q -A -c 4 "$candidate" &>/dev/null; echo -n $?)
 
 			if [ "$link_to_portal" -eq 1 ]; then
 				continue
@@ -4601,35 +4644,40 @@ get_portal_ula() {
 			# First-run or no current portal:
 			if [ -z "$current_portal_ula" ]; then
 				current_portal_ula="$candidate"
+				current_metric="$metric"
+				best_ula="$candidate"
+				best_metric="$metric"
+				best_peer="$peer"
+				best_hops="$hops"
 				continue
 			fi
 
 			if [ "$best_metric" -eq 0 ]; then
 				best_metric="$metric"
 				best_ula="$candidate"
+				best_peer="$peer"
+				best_hops="$hops"
 			fi
 
-			# Apply threshold hysteresis
 			if [ -z "$current_metric" ]; then
-				# This is the first proper loop
 				current_metric="$metric"
-				best_ula="$candidate"
+			fi
 
-			elif [ "$candidate" = "$current_portal_ula" ]; then
-				# This is the current ula
-				best_metric="$metric"
-				best_ula="$candidate"
-
-			elif [ "$((current_metric - metric))" -lt "$mesh_metric_threshold" ]; then
-				# Is new portal significantly better?
-				if [ "$metric" -lt "$best_metric" ]; then
+			if [ "$candidate" = "$current_portal_ula" ]; then
+				# Refresh live metric; do not clobber a better candidate already chosen.
+				current_metric="$metric"
+				if [ "$best_ula" = "$candidate" ] || [ "$metric" -lt "$best_metric" ]; then
 					best_metric="$metric"
 					best_ula="$candidate"
+					best_peer="$peer"
+					best_hops="$hops"
 				fi
-			else
-				# fallback
+			elif [ "$((current_metric - metric))" -ge "$mesh_metric_threshold" ] && [ "$metric" -lt "$best_metric" ]; then
+				# Switch only if better than current by the threshold, and best so far.
 				best_metric="$metric"
 				best_ula="$candidate"
+				best_peer="$peer"
+				best_hops="$hops"
 			fi
 
 		done < "$tmpdir/known_portal_ulas"
@@ -4645,13 +4693,13 @@ get_portal_ula() {
 	portal_ula="$best_ula"
 
 	# (Re)test link to selected portal
-	link_to_portal=$(ping -q -c 2 "$portal_ula" &>/dev/null; echo -n $?)
+	link_to_portal=$(ping -q -A -c 2 "$portal_ula" &>/dev/null; echo -n $?)
 
 	if [ "$link_to_portal" -eq 0 ] && [ ! -z "$portal_ula" ]; then
 		ula_subnet=$(echo "$portal_ula" | awk -F ":" '{printf "%s", $4}')
 		ula_base=$(echo "$portal_ula" | awk -F ":" '{printf "%s:%s:%s", $1, $2, $3}')
-		log_debug "Selected portal: [ $portal_ula ] [ $peer ], mesh metric delta [ $mesh_metric_threshold ], mesh airtime metric [ $best_metric ], hops [ $hops ]"
-		echo "portal_ula=\"$portal_ula\"; ula_subnet=\"$ula_subnet\"; portal_mac=\"$peer\"; metric=$best_metric; hops=$hops" > "$tmpdir/active_portal"
+		log_debug "Selected portal: [ $portal_ula ] [ $best_peer ], mesh metric delta [ $mesh_metric_threshold ], mesh airtime metric [ $best_metric ], hops [ $best_hops ]"
+		echo "portal_ula=\"$portal_ula\"; ula_subnet=\"$ula_subnet\"; portal_mac=\"$best_peer\"; metric=$best_metric; hops=$best_hops" > "$tmpdir/active_portal"
 	else
 		log_warning "No responsive portal found"
 
@@ -4702,7 +4750,15 @@ get_metrics_from_ula() {
 	mpp_entry=$(echo "$mpp_list" | grep "$mesh_mac")
 	device_mac=$(echo "$mpp_entry" | awk '{printf "%s", $2}')
 
+	if [ -z "$device_mac" ]; then
+		return 1
+	fi
+
 	calc_airtime_metric "$device_mac"
+	if [ "$?" -ne 0 ]; then
+		return 1
+	fi
+
 	metrics="remote_ula=\"$remote_ula\"; $metrics"
 	eval "$metrics"
 	log_debug "Mesh airtime metric for [ $remote_ula ] [ $peer ] is [ $metric ], mpath [ $mpath_metric ], hops [ $hops ]"
@@ -4986,6 +5042,12 @@ write_node_data() {
 			return 1
 		fi
 
+		if ! is_hex "$node_mac" || [ "${#node_mac}" -ne 12 ]; then
+			mute=0
+			log_warning "apmond - Invalid node mac - rejecting attempted apmond server access"
+			return 1
+		fi
+
 		mute=0
 		log_debug "apmond - node type validated for [ $node_hostname ]"
 
@@ -5198,9 +5260,8 @@ luci_cgi() {
 	echo "printf \"%s\n%s\n\n\" \"Content-type: text/html\"" >> "$cgi"
 	echo -e "status=\$(mesh11sd -v)" >> "$cgi"
 	echo -e "hostname=\$(uci get system.@system[0].hostname)" >> "$cgi"
-
-	eval "$(mesh11sd get_portal_ula)"
-	echo -e "portal_ula=\$portal_ula" >> "$cgi"
+	echo -e "portal_ula=\$(mesh11sd get_portal_ula)" >> "$cgi"
+	echo -e "eval \"\$portal_ula\" 2>/dev/null" >> "$cgi"
 	echo -e "active_nodecount=\$(mesh11sd active_nodecount)" >> "$cgi"
 	echo -e "current_time=\$(date)" >> "$cgi"
 	echo -e "host=\"\$HTTP_HOST\"" >> "$cgi"
@@ -5553,9 +5614,11 @@ get_ap_data() {
 	local timeout=4
 
 	# create a lock file
+	local locked=0
 	for i in $(seq $timeout); do
 		if [ ! -e $tmpdir/apmond/clients.loc ]; then
 			touch $tmpdir/apmond/clients.loc
+			locked=1
 			break
 		else
 			sleep 1
@@ -5563,7 +5626,7 @@ get_ap_data() {
 	done
 
 	# abort if unable to lock
-	if [ "$i" -eq $timeout ]; then
+	if [ "$locked" -eq 0 ]; then
 		return 0
 	fi
 
@@ -9323,6 +9386,8 @@ elif [ "$1" = "daemon" ]; then
 	mount -t debugfs debugfs /sys/kernel/debug 2>/dev/null
 
 	cpe_conf=0
+	forced_portal_conf=0
+	mrp_mbp_restart=0
 
 	if [ -f "$tmpdir/active_mesh_ifname" ]; then
 		rm "$tmpdir/active_mesh_ifname"
@@ -9819,80 +9884,59 @@ elif [ "$1" = "daemon" ]; then
 
 			if [ "$auto_config" -ne 0 ] || [ -e "$tmpdir/auto_config_test" ]; then
 
-				if [ "$portal_detect" -ne 0 ] && [ "$portal_detect" -ne 4 ] && [ "$portal_detect" -ne 5 ]; then
-					check_portal
+				# portal_detect=0 (forced MRP) must use check_portal so last_state
+				# latches the one-shot portal bring-up, the same as detect=1.
+				# Skipping it left is_portal unset; set_bridge_mac_addresses then
+				# took br-lan down every checkinterval.
+				check_portal
 
-				elif [ "$portal_detect" -eq 0 ] || [ "$portal_detect" -eq 4 ]; then
+				if [ "$portal_detect" -eq 4 ] && [ "$commit_all" -eq 0 ] && [ "$forced_portal_conf" -eq 0 ]; then
+					# MBP: check_portal returns before DHCP/ULA setup
+					authoritative=$(uci get dhcp.@dnsmasq[0].authoritative 2>/dev/null | awk '{printf "%d", $1}')
 
-					if [ "$commit_all" -eq 0 ]; then
-						# portal_detect is not enabled - force portal mode:
-						authoritative=$(uci get dhcp.@dnsmasq[0].authoritative 2>/dev/null | awk '{printf "%d", $1}')
-
-						if [ -z "$authoritative" ]; then
-							authoritative=0
-						fi
-
-						uci set mesh11sd.mesh_params.mesh_connected_to_as='1'
-
-						debugtype="notice"
-						syslogmessage="Portal detection is disabled, forcing portal mode"
-						write_to_syslog
-
-						if [ -f "/var/run/udhcpc-$device.pid" ]; then
-							kill $(cat /var/run/udhcpc-$device.pid)
-						fi
-
-						if [ "$portal_detect" -eq 0 ]; then
-							echo "set dhcp.$auto_mesh_network.dhcpv4='server'" | uci batch
-							echo "set dhcp.$auto_mesh_network.dhcpv6='server'" | uci batch
-							echo "set dhcp.$auto_mesh_network.ignore='0'" | uci batch
-							restore_ipv4
-
-							uci set dhcp.@dnsmasq[0].authoritative='1'
-							echo "set dhcp.$auto_mesh_network.ra_default='2'" | uci batch
-							echo "set dhcp.$auto_mesh_network.ra='server'" | uci batch
-							uci set dhcp.@dnsmasq[0].logfacility='-'
-							uci set dhcp.@dnsmasq[0].quietdhcp='1'
-
-							if [ "$vtunnel" = "configured" ]; then
-								uci set dhcp.vtunlan.dhcpv4='server'
-								uci set dhcp.vtunlan.dhcpv6='server'
-								uci set dhcp.vtunlan.ra='server'
-								uci set dhcp.vtunlan.ignore='0'
-							fi
-
-						else
-							mbp_dhcp_lan_defaults
-
-							uci set dhcp.@dnsmasq[0].authoritative='1'
-							uci set dhcp.@dnsmasq[0].logfacility='-'
-							uci set dhcp.@dnsmasq[0].quietdhcp='1'
-							echo "set dhcp.$auto_mesh_network.ignore='1'" | uci batch
-
-							if [ "$vtunnel" = "configured" ]; then
-								uci set dhcp.vtunlan.dhcpv4='disabled'
-								uci set dhcp.vtunlan.dhcpv6='disabled'
-								uci set dhcp.vtunlan.ra='disabled'
-								uci set dhcp.vtunlan.ignore='1'
-								echo "del_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
-								echo "del_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
-								echo "add_list dhcp.vtunlan.ra_flags='none'" | uci batch
-								echo "del dhcp.vtunlan.ra_dns" | uci batch 2> /dev/null
-								uci set dhcp.@dnsmasq[0].rebind_protection='0'
-							fi
-
-						fi
-
-						if [ "$mesh_gate_only" -eq 0 ]; then
-							mesh_hwmp_rootmode="4"
-						else
-							mesh_hwmp_rootmode="0"
-						fi
-
-						/sbin/service dnsmasq restart
-						/sbin/service odhcpd restart
-						restart_mesh
+					if [ -z "$authoritative" ]; then
+						authoritative=0
 					fi
+
+					uci set mesh11sd.mesh_params.mesh_connected_to_as='1'
+
+					debugtype="notice"
+					syslogmessage="Portal detection is disabled, forcing portal mode"
+					write_to_syslog
+
+					if [ -f "/var/run/udhcpc-$device.pid" ]; then
+						kill $(cat /var/run/udhcpc-$device.pid)
+					fi
+
+					mbp_dhcp_lan_defaults
+
+					uci set dhcp.@dnsmasq[0].authoritative='1'
+					uci set dhcp.@dnsmasq[0].logfacility='-'
+					uci set dhcp.@dnsmasq[0].quietdhcp='1'
+					echo "set dhcp.$auto_mesh_network.ignore='1'" | uci batch
+
+					if [ "$vtunnel" = "configured" ]; then
+						uci set dhcp.vtunlan.dhcpv4='disabled'
+						uci set dhcp.vtunlan.dhcpv6='disabled'
+						uci set dhcp.vtunlan.ra='disabled'
+						uci set dhcp.vtunlan.ignore='1'
+						echo "del_list dhcp.vtunlan.ra_flags='managed-config'" | uci batch 2> /dev/null
+						echo "del_list dhcp.vtunlan.ra_flags='other-config'" | uci batch 2> /dev/null
+						echo "add_list dhcp.vtunlan.ra_flags='none'" | uci batch
+						echo "del dhcp.vtunlan.ra_dns" | uci batch 2> /dev/null
+						uci set dhcp.@dnsmasq[0].rebind_protection='0'
+					fi
+
+					if [ "$mesh_gate_only" -eq 0 ]; then
+						mesh_hwmp_rootmode="4"
+					else
+						mesh_hwmp_rootmode="0"
+					fi
+
+					/sbin/service dnsmasq restart
+					/sbin/service odhcpd restart
+					restart_mesh
+					forced_portal_conf=1
 
 				elif [ "$portal_detect" -eq 3 ] && [ "$commit_all" -eq 0 ]; then
 
@@ -9932,15 +9976,6 @@ elif [ "$1" = "daemon" ]; then
 						restart_mesh
 						manage_opennds restart
 						cpe_conf=1
-					fi
-
-				elif [ "$portal_detect" -eq 0 ]; then
-					/sbin/service dnsmasq restart
-					/sbin/service odhcpd restart
-
-					if [ -z "$opennds_conf" ] || [ "$opennds_conf" -eq 0 ]; then
-						opennds_conf=1
-						manage_opennds restart
 					fi
 				fi
 
@@ -9994,10 +10029,16 @@ elif [ "$1" = "daemon" ]; then
 		fi
 
 		if [ "$portal_detect" -eq 4 ] && [ "$link_to_portal" -eq 1 ]; then
-			get_portal_ula discover
+			if [ -f "$tmpdir/is_portal" ]; then
+				. "$tmpdir/is_portal"
+			fi
 
-			if [ "$link_to_portal" -eq 1 ]; then
-				/sbin/service network reload
+			if [ "$detected_state" != "portal" ]; then
+				get_portal_ula discover
+
+				if [ "$link_to_portal" -eq 1 ]; then
+					/sbin/service network reload
+				fi
 			fi
 		fi
 
@@ -10018,7 +10059,12 @@ elif [ "$1" = "daemon" ]; then
 		get_portal_type
 
 		if [ "$portal_type" = "MBP" ] && [ ! -z "$portal_mac" ] && [ ! -z "$portal_ll" ] && [ ! -z "$mrp_default_ipv6_gw" ]; then
-			/sbin/service network restart
+			if [ "$mrp_mbp_restart" -eq 0 ]; then
+				mrp_mbp_restart=1
+				/sbin/service network restart
+			fi
+		elif [ "$portal_type" = "MRP" ]; then
+			mrp_mbp_restart=0
 		fi
 
 		move_ethernet_to_vxlan_bridge
