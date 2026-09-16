@@ -2360,6 +2360,20 @@ check_portal() {
 			return 0
 		fi
 
+		if [ "$portal_detect" -eq 5 ]; then
+			log_debug "Checking TPN (Trunk Peer) status"
+			wait_for_mesh
+			vxlan_status=$(ip link show vxlan$tun_id &> /dev/null; echo $?)
+			log_debug "vxlan_status [ $vxlan_status ]"
+
+			if [ "$vxlan_status" -eq 1 ]; then
+				log_debug "TPN - checking vtunnel"
+				check_vtunnel
+			fi
+
+			return 0
+		fi
+
 		if [ "$detected_state" != "portal" ]; then
 			# This IS NOT a layer 3 mesh portal
 			log_debug "This IS NOT a layer 3 mesh portal"
@@ -9860,9 +9874,7 @@ elif [ "$1" = "daemon" ]; then
 				# latches the one-shot portal bring-up, the same as detect=1.
 				# Skipping it left is_portal unset; set_bridge_mac_addresses then
 				# took br-lan down every checkinterval.
-				if [ "$portal_detect" -ne 5 ]; then
-					check_portal
-				fi
+				check_portal
 
 				if [ "$portal_detect" -eq 4 ] && [ "$commit_all" -eq 0 ] && [ "$forced_portal_conf" -eq 0 ]; then
 					# MBP: check_portal returns before DHCP/ULA setup
