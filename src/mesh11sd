@@ -1723,7 +1723,7 @@ manage_fallback_ula_route() {
 
 	get_portal_ula get
 
-	if [ "$?" -eq 1 ]; then
+	if [ "$?" -ne 0 ]; then
 		return 1
 	fi
 
@@ -1735,45 +1735,47 @@ manage_fallback_ula_route() {
 		. "$tmpdir/is_portal"
 	fi
 
-	if [ ! -z "$detected_state" ] && [ "$detected_state" = "portal" ]; then
-		log_debug "manage_fallback_ula_route - Node is a portal"
-		# Portal ULA = prefix:subnet::1 /64
-		portal_ula_addr="$portal_ula""/64"
-		log_debug "portal_ula_addr is [ $portal_ula_addr ], checking..."
+	if [ -n "$portal_ula" ]; then
+		if [ ! -z "$detected_state" ] && [ "$detected_state" = "portal" ]; then
+			log_debug "manage_fallback_ula_route - Node is a portal"
+			# Portal ULA = prefix:subnet::1 /64
+			portal_ula_addr="$portal_ula""/64"
+			log_debug "portal_ula_addr is [ $portal_ula_addr ], checking..."
 
-		# Check if already present
-		if ! ip -6 addr show dev "$device" | grep -q "$portal_ula_addr"; then
-			log_info "Portal mode → adding portal ULA $portal_ula_addr to bridge $device"
+			# Check if already present
+			if ! ip -6 addr show dev "$device" | grep -q "$portal_ula_addr"; then
+				log_info "Portal mode → adding portal ULA $portal_ula_addr to bridge $device"
 
-			ip -6 addr add "$portal_ula_addr" dev "$device" 2>/dev/null
+				ip -6 addr add "$portal_ula_addr" dev "$device" 2>/dev/null
 
-			if [ $? -eq 0 ]; then
-				log_notice "Portal ULA $portal_ula_addr added to $device"
+				if [ $? -eq 0 ]; then
+					log_notice "Portal ULA $portal_ula_addr added to $device"
+				else
+					log_error "Failed to add portal ULA $portal_ula_addr to $device"
+					log_debug "ip error: $(ip -6 addr add "$portal_ula_addr" dev "$device" 2>&1)"
+				fi
 			else
-				log_error "Failed to add portal ULA $portal_ula_addr to $device"
-				log_debug "ip error: $(ip -6 addr add "$portal_ula_addr" dev "$device" 2>&1)"
+				log_debug "portal_ula_addr [ $portal_ula_addr ] is present"
 			fi
 		else
-			log_debug "portal_ula_addr [ $portal_ula_addr ] is present"
-		fi
-	else
-		# not a portal, so assume it is a peer
-		log_debug "manage_fallback_ula_route - Node is a peer"
-		# Portal ULA = prefix:subnet::1 /64
-		portal_ula_addr="$portal_ula""/64"
-		log_debug "portal_ula_addr is [ $portal_ula_addr ], checking..."
+			# not a portal, so assume it is a peer
+			log_debug "manage_fallback_ula_route - Node is a peer"
+			# Portal ULA = prefix:subnet::1 /64
+			portal_ula_addr="$portal_ula""/64"
+			log_debug "portal_ula_addr is [ $portal_ula_addr ], checking..."
 
-		# Check if present from previous portal state
-		if ip -6 addr show dev "$device" | grep -q "$portal_ula_addr"; then
-			log_info "Peer mode → deleting portal ULA $portal_ula_addr from bridge $device"
+			# Check if present from previous portal state
+			if ip -6 addr show dev "$device" | grep -q "$portal_ula_addr"; then
+				log_info "Peer mode → deleting portal ULA $portal_ula_addr from bridge $device"
 
-			ip -6 addr del "$portal_ula_addr" dev "$device" 2>/dev/null
+				ip -6 addr del "$portal_ula_addr" dev "$device" 2>/dev/null
 
-			if [ $? -eq 0 ]; then
-				log_notice "Portal ULA $portal_ula_addr deleted from $device"
-			else
-				log_error "Failed to remove portal ULA $portal_ula_addr from $device"
-				log_debug "ip error: $(ip -6 addr del "$portal_ula_addr" dev "$device" 2>&1)"
+				if [ $? -eq 0 ]; then
+					log_notice "Portal ULA $portal_ula_addr deleted from $device"
+				else
+					log_error "Failed to remove portal ULA $portal_ula_addr from $device"
+					log_debug "ip error: $(ip -6 addr del "$portal_ula_addr" dev "$device" 2>&1)"
+				fi
 			fi
 		fi
 	fi
@@ -4630,7 +4632,7 @@ get_portal_ula() {
 			# Populate NDP table
 			link_to_portal=$(ping -q -A -c 4 "$candidate" &>/dev/null; echo -n $?)
 
-			if [ "$link_to_portal" -eq 1 ]; then
+			if [ "$link_to_portal" -ne 0 ]; then
 				continue
 			fi
 
@@ -4692,23 +4694,36 @@ get_portal_ula() {
 
 	portal_ula="$best_ula"
 
-	# (Re)test link to selected portal
-	link_to_portal=$(ping -q -A -c 2 "$portal_ula" &>/dev/null; echo -n $?)
-
-	if [ "$link_to_portal" -eq 0 ] && [ ! -z "$portal_ula" ]; then
-		ula_subnet=$(echo "$portal_ula" | awk -F ":" '{printf "%s", $4}')
-		ula_base=$(echo "$portal_ula" | awk -F ":" '{printf "%s:%s:%s", $1, $2, $3}')
-		log_debug "Selected portal: [ $portal_ula ] [ $best_peer ], mesh metric delta [ $mesh_metric_threshold ], mesh airtime metric [ $best_metric ], hops [ $best_hops ]"
-		echo "portal_ula=\"$portal_ula\"; ula_subnet=\"$ula_subnet\"; portal_mac=\"$best_peer\"; metric=$best_metric; hops=$best_hops" > "$tmpdir/active_portal"
-	else
+	if [ -z "$portal_ula" ]; then
 		log_warning "No responsive portal found"
 
 		if [ -f "$tmpdir/active_portal" ]; then
 			rm "$tmpdir/active_portal"
 		fi
+
+		link_to_portal=1
+		return 1
 	fi
 
-	return "$link_to_portal"
+	# (Re)test link to selected portal
+	link_to_portal=$(ping -q -A -c 2 "$portal_ula" &>/dev/null; echo -n $?)
+
+	if [ "$link_to_portal" -eq 0 ]; then
+		ula_subnet=$(echo "$portal_ula" | awk -F ":" '{printf "%s", $4}')
+		ula_base=$(echo "$portal_ula" | awk -F ":" '{printf "%s:%s:%s", $1, $2, $3}')
+		log_debug "Selected portal: [ $portal_ula ] [ $best_peer ], mesh metric delta [ $mesh_metric_threshold ], mesh airtime metric [ $best_metric ], hops [ $best_hops ]"
+		echo "portal_ula=\"$portal_ula\"; ula_subnet=\"$ula_subnet\"; portal_mac=\"$best_peer\"; metric=$best_metric; hops=$best_hops" > "$tmpdir/active_portal"
+		return 0
+	fi
+
+	log_warning "No responsive portal found"
+
+	if [ -f "$tmpdir/active_portal" ]; then
+		rm "$tmpdir/active_portal"
+	fi
+
+	link_to_portal=1
+	return 1
 }
 
 # =============================================================================
