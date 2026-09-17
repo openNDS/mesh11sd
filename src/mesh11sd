@@ -3987,20 +3987,30 @@ update_vxlan_for_active_portal() {
 
 	vxlan_if="vxlan$tun_id"
 
-	# Ensure we have a current portal selection with ula_subnet
 	get_portal_ula get
 
-	if [ -z "$ula_subnet" ]; then
-		log_warning "update_vxlan_for_active_portal: No ula_subnet - using default group"
-		unset vxlan_group
+	# No portal yet: ula_subnet from set_ula_prefix is this node's hint, not a
+	# portal. Keep (or once-create) dummy vxlan so TPN/br-tun stays up; do not
+	# treat that as a portal change every checkinterval.
+	if [ "$?" -ne 0 ] || [ -z "$portal_ula" ]; then
 		create_vxlan_if
-		return 1
+		return 0
+	fi
+
+	if [ -z "$ula_subnet" ]; then
+		ula_subnet=$(echo "$portal_ula" | awk -F ":" '{printf "%s", $4}')
 	fi
 
 	local new_group="ff02::$ula_subnet"
 
-	# Check current group
-	current_group=$(ip -d link show type vxlan | grep -w "vxlan" | awk -F "group" '{print $2}' | awk '{printf "%s", $1}')
+	current_group=""
+	if [ -f "$tmpdir/vxlan_conf" ]; then
+		. "$tmpdir/vxlan_conf"
+		current_group="$group"
+	fi
+	if [ -z "$current_group" ]; then
+		current_group=$(ip -d link show "$vxlan_if" 2>/dev/null | awk -F "group " '{print $2}' | awk '{printf "%s", $1}')
+	fi
 
 	if [ "$current_group" = "$new_group" ]; then
 		log_debug "VXLAN already using correct group $new_group"
@@ -4337,6 +4347,7 @@ check_vtunnel() {
 				echo "set network.wan.disabled='1'" | uci batch
 				echo "set network.wan6.disabled='1'" | uci batch
 				wanif=$(uci get network.wan.device)
+
 				echo "del_list network.vtunnel.ports='$wanif'" | uci batch 2>/dev/null
 				echo "add_list network.vtunnel.ports='$wanif'" | uci batch
 			fi
@@ -4400,6 +4411,17 @@ check_vtunnel() {
 
 		device="br-tun$tun_id"
 		set_iface_path_cost "$vtun_path_cost" "$device" "vxlan$tun_id"
+
+		# WAN add used to sit only in the vxlan_status==1 block. Dummy vxlan
+		# is created later in the same loop, so that block never runs again.
+		if [ "$portal_detect" -eq 4 ] || [ "$portal_detect" -eq 5 ]; then
+			echo "set network.wan.disabled='1'" | uci batch
+			echo "set network.wan6.disabled='1'" | uci batch
+			wanif=$(uci get network.wan.device)
+			echo "del_list network.vtunnel.ports='$wanif'" | uci batch 2>/dev/null
+			echo "add_list network.vtunnel.ports='$wanif'" | uci batch
+		fi
+
 		. $tmpdir/devicemac
 	fi
 
