@@ -1920,15 +1920,15 @@ scan_channel() {
 	fi
 }
 
-# MBP upstream is on LAN (existing ISP/LAN router). WAN is the vxlan trunk.
-# Do not use first ARP neighbour, do not drop fe80 routers, do not look at br-tun.
-detect_mbp_upstream() {
+# One L3 upstream on $up_zone. Prefer the RA router (fe80 default / proto ra);
+# GUA is optional. IPv4 is independent, so IPv4-only upstream still counts.
+# Do not use first ARP neighbour, do not dump every non-fe80 router.
+detect_l3_upstream() {
 	default_ipv6_gw=""
 	default_ipv4_gw=""
-	up_zone=$(echo "get network.lan.device" | uci batch | awk '{printf "%s", $1}')
 
 	if [ -z "$up_zone" ]; then
-		up_zone="br-$auto_mesh_network"
+		return 1
 	fi
 
 	if [ $(ip link show "$up_zone" 2> /dev/null | grep -c -w "state UP") -eq 0 ] && [ $(ip link show "$up_zone" 2> /dev/null | grep -c -w "state UNKNOWN") -eq 0 ]; then
@@ -1937,10 +1937,43 @@ detect_mbp_upstream() {
 
 	local own_mac
 	local router_mac
+	local v6routes
 	own_mac=$(ip link show "$up_zone" 2> /dev/null | awk '/link\/ether/ {printf "%s", $2; exit}')
+	v6routes=$(ip -6 route show default dev "$up_zone" 2> /dev/null)
 
-	# Prefer the kernel's LAN default (proto ra / dhcp). Never use br-tun.
-	default_ipv6_gw=$(ip -6 route show default dev "$up_zone" 2> /dev/null | awk '/via/ {printf "%s", $3; exit}')
+	# "default from <src> via <hop>" puts the GUA in $3; always take the token after via.
+	# Prefer a global default (no "from") and fe80 / proto ra (the RA router).
+	default_ipv6_gw=$(echo "$v6routes" | awk '
+		/ from / { next }
+		/via fe80:/ {
+			for (i = 1; i <= NF; i++) if ($i == "via") { print $(i + 1); exit }
+		}')
+	if [ -z "$default_ipv6_gw" ]; then
+		default_ipv6_gw=$(echo "$v6routes" | awk '
+			/ from / { next }
+			/proto ra/ && /via/ {
+				for (i = 1; i <= NF; i++) if ($i == "via") { print $(i + 1); exit }
+			}')
+	fi
+	if [ -z "$default_ipv6_gw" ]; then
+		default_ipv6_gw=$(echo "$v6routes" | awk '
+			/ from / { next }
+			/via/ {
+				for (i = 1; i <= NF; i++) if ($i == "via") { print $(i + 1); exit }
+			}')
+	fi
+	if [ -z "$default_ipv6_gw" ]; then
+		default_ipv6_gw=$(echo "$v6routes" | awk '
+			/via fe80:/ {
+				for (i = 1; i <= NF; i++) if ($i == "via") { print $(i + 1); exit }
+			}')
+	fi
+	if [ -z "$default_ipv6_gw" ]; then
+		default_ipv6_gw=$(echo "$v6routes" | awk '
+			/via/ {
+				for (i = 1; i <= NF; i++) if ($i == "via") { print $(i + 1); exit }
+			}')
+	fi
 
 	if [ -n "$default_ipv6_gw" ]; then
 		router_mac=$(ip -6 neigh show dev "$up_zone" 2> /dev/null | awk -v gw="$default_ipv6_gw" '
@@ -1950,18 +1983,25 @@ detect_mbp_upstream() {
 	fi
 
 	if [ -z "$router_mac" ]; then
-		# NDP IsRouter on LAN, including fe80; skip this bridge's MAC
+		# NDP IsRouter, prefer fe80; skip this bridge's MAC
 		router_mac=$(ip -6 neigh show dev "$up_zone" 2> /dev/null | awk -v own="$own_mac" '
 			/router/ && !/FAILED/ && !/INCOMPLETE/ {
 				mac = ""
 				for (i = 1; i <= NF; i++) if ($i == "lladdr") mac = $(i + 1)
-				if (mac != "" && mac != own) { print mac; exit }
-			}')
+				if (mac == "" || mac == own) next
+				if ($1 ~ /^fe80:/) { print mac; exit }
+				if (saved == "") saved = mac
+			}
+			END { if (saved != "") print saved }')
 		if [ -z "$default_ipv6_gw" ] && [ -n "$router_mac" ]; then
 			default_ipv6_gw=$(ip -6 neigh show dev "$up_zone" 2> /dev/null | awk -v mac="$router_mac" '
 				/router/ {
-					for (i = 1; i <= NF; i++) if ($i == "lladdr" && $(i + 1) == mac) { print $1; exit }
-				}')
+					for (i = 1; i <= NF; i++) if ($i == "lladdr" && $(i + 1) == mac) {
+						if ($1 ~ /^fe80:/) { print $1; exit }
+						if (gua == "") gua = $1
+					}
+				}
+				END { if (gua != "") print gua }')
 		fi
 	fi
 
@@ -1981,6 +2021,28 @@ detect_mbp_upstream() {
 	fi
 
 	return 1
+}
+
+# MBP upstream is on LAN (existing ISP/LAN router). WAN is the vxlan trunk.
+detect_mbp_upstream() {
+	up_zone=$(echo "get network.lan.device" | uci batch | awk '{printf "%s", $1}')
+
+	if [ -z "$up_zone" ]; then
+		up_zone="br-$auto_mesh_network"
+	fi
+
+	detect_l3_upstream
+}
+
+# CPE upstream is the mesh on br-wan (Starlink via the MBP), not the trunk.
+detect_cpe_upstream() {
+	up_zone=$(echo "get network.wan.device" | uci batch | awk '{printf "%s", $1}')
+
+	if [ -z "$up_zone" ]; then
+		up_zone="br-wan"
+	fi
+
+	detect_l3_upstream
 }
 
 # MBP/CPE trunk is L2: static, no gateway, no default, no RA. Keep a non-.1
@@ -2172,7 +2234,30 @@ get_portal_state() {
 			is_portal=""
 		fi
 
-	elif [ "$portal_detect" -eq 1 ] || [ "$portal_detect" -eq 3 ] || [ "$portal_detect" -eq 5 ]; then
+	elif [ "$portal_detect" -eq 3 ]; then
+		if detect_cpe_upstream; then
+			is_portal="detected"
+			debugtype="debug"
+			syslogmessage="Node has upstream gateway(s), zone [ $up_zone ], [ $default_ipv6_gw ], [ $default_ipv4_gw ]"
+			mute=$muteorg
+			write_to_syslog
+			probe="$default_ipv6_gw"
+			if [ -z "$probe" ]; then
+				probe="$default_ipv4_gw"
+			fi
+			if [ -n "$probe" ]; then
+				gwstatus=$(ip neigh show 2> /dev/null | grep -w "$probe" | awk '{printf "%s", $NF; exit}')
+				if [ "$gwstatus" = "FAILED" ] || [ "$gwstatus" = "INCOMPLETE" ]; then
+					is_portal=""
+				elif [ -n "$gwstatus" ]; then
+					is_portal="$gwstatus"
+				fi
+			fi
+		else
+			is_portal=""
+		fi
+
+	elif [ "$portal_detect" -eq 1 ] || [ "$portal_detect" -eq 5 ]; then
 
 		if [ "$firstloop" -eq 0 ]; then
 			#Check if portal - try to get the upstream default ipv4 gateway
@@ -2250,7 +2335,7 @@ get_portal_state() {
 	# Forced portal (portal_detect=0) has no upstream neighbour to probe;
 	# grep -w "" would otherwise clobber is_portal="forced".
 
-	if [ ! -z "$is_portal" ] && [ "$portal_detect" -ne 0 ] && [ "$portal_detect" -ne 4 ]; then
+	if [ ! -z "$is_portal" ] && [ "$portal_detect" -ne 0 ] && [ "$portal_detect" -ne 4 ] && [ "$portal_detect" -ne 3 ]; then
 		gwstatus=$(ip neigh | grep -w "$default_ipv6_gw" | awk 'NR==1 {printf "%s", $NF}')
 
 		if [ -z "$gwstatus" ]; then
@@ -4395,7 +4480,9 @@ create_vxlan_if() {
 
 	log_info "vxlan_if created"
 	log_debug "dnsmasq restarting"
-	/sbin/service dnsmasq restart
+	# Must not block the daemon: with br-lan down, `service dnsmasq restart`
+	# waits on the lan interface and never returns.
+	/sbin/service dnsmasq restart >/dev/null 2>&1 &
 	vxlan_if="created"
 	. $tmpdir/devicemac
 }
@@ -7132,6 +7219,47 @@ radiophy() {
 	return 0
 }
 
+# Set a bridge MAC without bouncing wireless ports. Try while UP first.
+# $1 = bridge, $2 = mac, $3 = optional uci interface (e.g. network.lan)
+apply_bridge_mac() {
+	local br="$1"
+	local mac="$2"
+	local uciname="$3"
+	local current_mac
+	local config_mac
+
+	if [ -z "$br" ] || [ -z "$mac" ] || [ ! -d "/sys/class/net/$br" ]; then
+		return 1
+	fi
+
+	ip link set "$br" up 2>/dev/null || true
+	current_mac=$(ip link show "$br" 2>/dev/null | grep -o 'link/ether [^ ]*' | awk '{printf "%s", $2}')
+
+	if [ "$current_mac" != "$mac" ]; then
+		log_debug "Setting $br MAC to $mac"
+		ip link set "$br" address "$mac" 2>/dev/null || true
+		current_mac=$(ip link show "$br" 2>/dev/null | grep -o 'link/ether [^ ]*' | awk '{printf "%s", $2}')
+		if [ "$current_mac" != "$mac" ]; then
+			ip link set "$br" down 2>/dev/null || true
+			ip link set "$br" address "$mac" 2>/dev/null || true
+			ip link set "$br" up 2>/dev/null || true
+			current_mac=$(ip link show "$br" 2>/dev/null | grep -o 'link/ether [^ ]*' | awk '{printf "%s", $2}')
+		fi
+		if [ "$current_mac" != "$mac" ]; then
+			log_debug "Failed to set mac [ $mac ] on [ $br ]"
+			return 1
+		fi
+	fi
+
+	if [ -n "$uciname" ]; then
+		config_mac=$(uci get "$uciname.macaddr" 2>/dev/null)
+		if [ "$config_mac" != "$mac" ]; then
+			echo "set $uciname.macaddr='$mac'" | uci batch
+		fi
+	fi
+	return 0
+}
+
 # =============================================================================
 # set_bridge_mac_addresses()
 # Ensure br-lan and br-tun$X have different MAC addresses
@@ -7181,37 +7309,14 @@ set_bridge_mac_addresses() {
 		fi
 	fi
 
-	# Set CPE bridge a locally administered, indexed MAC
-
+	# Set CPE LAN bridge a locally administered, indexed MAC.
+	# Must persist in UCI: without network.lan.macaddr, netifd/kernel
+	# re-inherits the first port (eth1) and SLAAC/EUI-64 addresses change.
 	if [ "$portal_detect" -eq 3 ]; then
 		get_indexed_mac "$cpe_bridge"
 		brcpe_mac="$mac_indexed"
-
-		wait_for_interface "$cpe_bridge"
-
-		if [ "$ifstatus" = "down" ]; then
-			# interface is not ready - abort
-			log_debug "[ $cpe_bridge ] is not ready"
-		else
-
-			current_mac=$(ip link show "$cpe_bridge" | grep -o 'link/ether [^ ]*' | awk '{printf "%s", $2}')
-
-			if [ -z "$brcpedone" ] && [ "$current_mac" != "$brcpe_mac" ]; then
-				log_debug "Setting $cpe_bridge MAC to $brcpe_mac"
-				ip link set "$cpe_bridge" down 2>/dev/null || true
-				ip link set "$cpe_bridge" address "$brcpe_mac" 2>/dev/null || true
-				ip link set "$cpe_bridge" up 2>/dev/null || true
-
-				achieved_mac=$(ip link show "$cpe_bridge" | grep -o 'link/ether [^ ]*' | awk '{printf "%s", $2}')
-
-				if [ "$achieved_mac" = "$brcpe_mac" ]; then
-					echo "brcpe_mac=\"$brcpe_mac\"" > $tmpdir/brcpe_mac
-					brcpedone=1
-				else
-					log_debug "Failed to set mac [ $brcpe_mac ] on [ $cpe_bridge ]"
-				fi
-			fi
-		fi
+		ip link set "$cpe_bridge" up 2>/dev/null || true
+		apply_bridge_mac "$cpe_bridge" "$brcpe_mac" "network.lan"
 	fi
 
 	# Skip if VXLAN is not active
@@ -7236,27 +7341,78 @@ set_bridge_mac_addresses() {
 
 	# Set mac addresses of all bridge interfaces, all bridges.
 	local bridge_interfaces=$(brctl show 2>/dev/null | awk 'NR>1 {printf "%s ", $NF}')
+	local factory_mac=""
+	local want_mac=""
+	local is_mesh_vif=0
 
 	if [ -f "$tmpdir/active_mesh_ifname" ]; then
 		. $tmpdir/active_mesh_ifname
 	fi
 
+	if [ -f "$tmpdir/factory_mac" ]; then
+		. "$tmpdir/factory_mac"
+	fi
+
 	for briface in $bridge_interfaces; do
 
-		if [ "$briface" = "$active_mesh_ifname" ] || [ "$briface" = "no" ] || [ "$briface" = "yes" ]; then
+		if [ "$briface" = "no" ] || [ "$briface" = "yes" ]; then
 			continue
 		fi
 
-		get_indexed_mac "$briface"
-		current_mac=$(ip link show "$briface" | grep -o 'link/ether [^ ]*' | awk '{printf "%s", $2}')
+		current_mac=$(ip link show "$briface" 2>/dev/null | grep -o 'link/ether [^ ]*' | awk '{printf "%s", $2}')
+		[ -z "$current_mac" ] && continue
 
-		if [ "$current_mac" != "$mac_indexed" ]; then
-			log_debug "Setting $briface MAC to $mac_indexed"
-			ip link set "$briface" down 2>/dev/null || true
-			ip link set "$briface" address "$mac_indexed" 2>/dev/null || true
-			ip link set "$briface" up 2>/dev/null || true
+		# Mesh vif: label/factory MAC (get_factory_mac), not indexed.
+		is_mesh_vif=0
+		if [ -n "$active_mesh_ifname" ] && [ "$briface" = "$active_mesh_ifname" ]; then
+			is_mesh_vif=1
+		fi
+		case "$briface" in
+			m-11s-*)
+				is_mesh_vif=1
+				;;
+		esac
+
+		if [ "$is_mesh_vif" -eq 1 ]; then
+			want_mac="$factory_mac"
+			if [ -z "$want_mac" ]; then
+				continue
+			fi
+		else
+			# All other netdevs: indexed locally administered MAC (DSA dupes).
+			get_indexed_mac "$briface"
+			want_mac="$mac_indexed"
+		fi
+
+		if [ "$current_mac" != "$want_mac" ]; then
+			log_debug "Setting $briface MAC to $want_mac"
+			ip link set "$briface" address "$want_mac" 2>/dev/null || true
+			current_mac=$(ip link show "$briface" 2>/dev/null | grep -o 'link/ether [^ ]*' | awk '{printf "%s", $2}')
+			if [ "$current_mac" != "$want_mac" ]; then
+				ip link set "$briface" down 2>/dev/null || true
+				ip link set "$briface" address "$want_mac" 2>/dev/null || true
+				ip link set "$briface" up 2>/dev/null || true
+			fi
 		fi
 	done
+
+	# Kernel leaves a bridge DOWN if all members were bounced. Bring them back,
+	# then re-apply each bridge's own indexed MAC so it does not inherit a port.
+	ip link set "$mesh_bridge" up 2>/dev/null || true
+	ip link set "$cpe_bridge" up 2>/dev/null || true
+	if [ "$vtun_enable" -eq 1 ] && [ -n "$tun_id" ] && [ "$tun_id" -ne 0 ]; then
+		ip link set "$vxlan_bridge" up 2>/dev/null || true
+	fi
+
+	if [ -n "$brmesh_mac" ]; then
+		apply_bridge_mac "$mesh_bridge" "$brmesh_mac" "network.$auto_mesh_network"
+	fi
+	if [ "$portal_detect" -eq 3 ] && [ -n "$brcpe_mac" ]; then
+		apply_bridge_mac "$cpe_bridge" "$brcpe_mac" "network.lan"
+	fi
+	if [ "$vtun_enable" -eq 1 ] && [ -n "$tun_id" ] && [ "$tun_id" -ne 0 ] && [ -n "$vxlan_mac" ]; then
+		apply_bridge_mac "$vxlan_bridge" "$vxlan_mac"
+	fi
 }
 
 # =============================================================================
@@ -10284,6 +10440,16 @@ elif [ "$1" = "daemon" ]; then
 						echo "set dhcp.lan.ra_default='2'" | uci batch
 						echo "set dhcp.lan.dhcpv6='server'" | uci batch
 						echo "set dhcp.lan.ra='server'" | uci batch
+						echo "set dhcp.lan.dhcpv4='server'" | uci batch
+						echo "set network.lan.proto='static'" | uci batch
+						echo "set network.lan.ip6assign='64'" | uci batch
+						if [ -f "$tmpdir/devicemac" ]; then
+							. "$tmpdir/devicemac"
+							generate_ipv4_base "$devicemac"
+							echo "set network.lan.ipaddr='$newipaddr'" | uci batch
+							echo "set network.lan.netmask='255.255.255.0'" | uci batch
+						fi
+						ip link set br-lan up 2>/dev/null
 						echo "set network.wan.proto='dhcp'" | uci batch
 						echo "set network.wan.defaultroute='1'" | uci batch
 						echo "set network.wan.disabled='0'" | uci batch
@@ -10300,10 +10466,10 @@ elif [ "$1" = "daemon" ]; then
 							fi
 						done
 
-						/sbin/service dnsmasq restart
-						/sbin/service odhcpd restart
 						/sbin/service firewall restart
 						restart_mesh
+						/sbin/service dnsmasq restart >/dev/null 2>&1 &
+						/sbin/service odhcpd restart >/dev/null 2>&1 &
 						manage_opennds restart
 						cpe_conf=1
 					fi
