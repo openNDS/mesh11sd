@@ -2428,18 +2428,20 @@ portal_watchdog() {
 		return 0
 	fi
 
+	log_info "Portal Watchdog...."
+
 	# Set auto_detect state
 	case $portal_detect in
 		"0") auto_detect="0";;
 		"1") auto_detect="1";;
 		"3") auto_detect="1";;
 		"4") auto_detect="0";;
-		"5") auto_detect="0";;
+		"5") auto_detect="1";;
 		*) auto_detect="0";;
 	esac
 
 	if [ "$auto_detect" -eq 0 ]; then
-		log_debug "Portal auto_detect [ $auto_detect ]"
+		log_debug "Watchdog: Portal auto_detect [ $auto_detect ]"
 		return 0
 	fi
 
@@ -2618,6 +2620,54 @@ dhcp4_renew() {
 	fi
 }
 
+# Peers/CPE keep stale DHCPv4/DHCPv6/RA across MBP<->MRP or portal ULA change
+# until T1. Same node can keep the vxlan group, so this is not the vxlan switch.
+refresh_uplink_on_portal_change() {
+	local prev_type=""
+	local prev_ula=""
+	local cur_type="$portal_type"
+	local cur_ula="$portal_ula"
+
+	if [ "$detected_state" = "portal" ]; then
+		return 0
+	fi
+
+	if [ -z "$cur_type" ] || [ "$cur_type" = "UNKNOWN" ]; then
+		return 0
+	fi
+
+	if [ -f "$tmpdir/last_portal_identity" ]; then
+		. "$tmpdir/last_portal_identity"
+	fi
+
+	echo "prev_type=\"$cur_type\"; prev_ula=\"$cur_ula\"" > "$tmpdir/last_portal_identity"
+
+	if [ -z "$prev_type" ]; then
+		return 0
+	fi
+
+	if [ "$prev_type" = "$cur_type" ] && [ "$prev_ula" = "$cur_ula" ]; then
+		return 0
+	fi
+
+	dhcpdevice=$(echo "get network.$auto_mesh_network.device" | uci batch | awk '{printf "%s", $1}')
+	log_notice "Portal change [ $prev_type $prev_ula ] -> [ $cur_type $cur_ula ], renewing uplink leases on [ $dhcpdevice ]"
+
+	if [ -n "$dhcpdevice" ]; then
+		dhcp4_renew
+	fi
+
+	# DHCPv6: SIGUSR1 = renew. Do not use ubus (it reads committed /etc/config).
+	for pid in $(pidof odhcp6c 2> /dev/null); do
+		kill -USR1 "$pid" 2> /dev/null
+	done
+
+	if [ -n "$device" ] && [ -f "/proc/sys/net/ipv6/conf/$device/accept_ra" ]; then
+		echo 0 > "/proc/sys/net/ipv6/conf/$device/accept_ra"
+		echo 2 > "/proc/sys/net/ipv6/conf/$device/accept_ra"
+	fi
+}
+
 check_dns_server() {
 	# nothing to do, dummy function
 	default_gw=""
@@ -2656,8 +2706,6 @@ check_portal() {
 				log_debug "CPE - checking vtunnel"
 				check_vtunnel
 			fi
-
-			return 0
 		fi
 
 		if [ "$portal_detect" -eq 4 ]; then
@@ -2686,18 +2734,19 @@ check_portal() {
 			fi
 
 			# TPN lan is a mesh peer; check_portal returns before the peer DHCP path
-			echo "set dhcp.$auto_mesh_network.dhcpv4='disabled'" | uci batch
-			echo "set dhcp.$auto_mesh_network.dhcpv6='disabled'" | uci batch
-			echo "set dhcp.$auto_mesh_network.ra='disabled'" | uci batch
-			echo "set dhcp.$auto_mesh_network.ignore='1'" | uci batch
-			echo "del_list dhcp.$auto_mesh_network.ra_flags='managed-config'" | uci batch 2> /dev/null
-			echo "del_list dhcp.$auto_mesh_network.ra_flags='other-config'" | uci batch 2> /dev/null
-			echo "add_list dhcp.$auto_mesh_network.ra_flags='none'" | uci batch
-			echo "set network.$auto_mesh_network.proto='dhcp'" | uci batch
-			uci set dhcp.@dnsmasq[0].authoritative='0'
-			uci set dhcp.@dnsmasq[0].rebind_protection='0'
-
-			return 0
+			if [ "$cpe_dhcp_set" -eq 0 ]; then
+				echo "set dhcp.$auto_mesh_network.dhcpv4='disabled'" | uci batch
+				echo "set dhcp.$auto_mesh_network.dhcpv6='disabled'" | uci batch
+				echo "set dhcp.$auto_mesh_network.ra='disabled'" | uci batch
+				echo "set dhcp.$auto_mesh_network.ignore='1'" | uci batch
+				echo "del_list dhcp.$auto_mesh_network.ra_flags='managed-config'" | uci batch 2> /dev/null
+				echo "del_list dhcp.$auto_mesh_network.ra_flags='other-config'" | uci batch 2> /dev/null
+				echo "add_list dhcp.$auto_mesh_network.ra_flags='none'" | uci batch
+				echo "set network.$auto_mesh_network.proto='dhcp'" | uci batch
+				uci set dhcp.@dnsmasq[0].authoritative='0'
+				uci set dhcp.@dnsmasq[0].rebind_protection='0'
+				cpe_dhcp_set=1
+			fi
 		fi
 
 		if [ "$detected_state" != "portal" ]; then
@@ -5064,7 +5113,7 @@ get_portal_ula() {
 	if [ "$link_to_portal" -eq 0 ]; then
 		ula_subnet=$(echo "$portal_ula" | awk -F ":" '{printf "%s", $4}')
 		ula_base=$(echo "$portal_ula" | awk -F ":" '{printf "%s:%s:%s", $1, $2, $3}')
-		log_debug "Selected portal: [ $portal_ula ] [ $best_peer ], mesh metric delta [ $mesh_metric_threshold ], mesh airtime metric [ $best_metric ], hops [ $best_hops ]"
+		log_info "Selected portal: [ $portal_ula ] [ $best_peer ], mesh metric delta [ $mesh_metric_threshold ], mesh airtime metric [ $best_metric ], hops [ $best_hops ]"
 		echo "portal_ula=\"$portal_ula\"; ula_subnet=\"$ula_subnet\"; portal_mac=\"$best_peer\"; metric=$best_metric; hops=$best_hops" > "$tmpdir/active_portal"
 		return 0
 	fi
@@ -9793,6 +9842,7 @@ elif [ "$1" = "daemon" ]; then
 	enabled=1 #bit 0
 
 	# Initial conditions
+	cpe_dhcp_set=0
 	link_to_portal=1
 	statusmode=0
 	changed=0
@@ -9952,10 +10002,8 @@ elif [ "$1" = "daemon" ]; then
 		if [ "$portal_use_default_ipv4" -eq 0 ]; then
 
 			if [ "$portal_detect" -eq 3 ]; then
-				# Set the cpe gateway ipv4 address based on mac address
-				. $tmpdir/devicemac
-
-				seedvalue="$devicemac"
+				# Set the cpe gateway ipv4 address based on factory mac address
+				seedvalue="$(get_factory_mac)"
 			else
 				seedvalue="$auto_mesh_id"
 			fi
@@ -10562,6 +10610,7 @@ elif [ "$1" = "daemon" ]; then
 		fi
 
 		get_portal_type
+		refresh_uplink_on_portal_change
 
 		if [ "$portal_type" = "MBP" ] && [ ! -z "$portal_mac" ] && [ ! -z "$portal_ll" ] && [ ! -z "$mrp_default_ipv6_gw" ]; then
 			if [ "$mrp_mbp_restart" -eq 0 ]; then
