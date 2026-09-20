@@ -2941,6 +2941,9 @@ check_portal() {
 				/sbin/service dnsmasq restart
 				/sbin/service odhcpd restart
 				/sbin/service system restart
+				# Immediate odhcpd restart often races set_ula_prefix / netifd.
+				# check_odhcpd retries after a full checkinterval once the ULA is on lan.
+				odhcpd_check=0
 
 				if [ "$daemon_startup" -eq 1 ]; then
 					daemon_startup=0
@@ -4537,14 +4540,36 @@ create_vxlan_if() {
 }
 
 check_odhcpd() {
-	# We need to wait for dnsmasq to finish setting up dhcpv4 before restarting odhcpd
-	# If we don't wait long enough, RA will fail on vxlan
-	# So wait one full cycle of the service daemon
-	# Only do this if this is a dhcp server
+	# Wait one checkinterval after becoming a portal (or after vxlan dhcp
+	# server comes up) before restarting odhcpd. Immediate restart in
+	# check_portal races set_ula_prefix / netifd, so portal_ula is not
+	# advertised until a later odhcpd restart. Do not use ubus.
 
-	dhcpserver=$(uci get dhcp.vtunlan.ignore 2>/dev/null)
+	local lan_ra
+	local vtun_ignore
+	local need_ra=0
 
-	if [ -z "$dhcpserver" ] || [ "$dhcpserver" -eq 1 ]; then
+	if [ -f "$tmpdir/is_portal" ]; then
+		. "$tmpdir/is_portal"
+	fi
+
+	if [ "$detected_state" != "portal" ]; then
+		odhcpd_check=0
+		return 0
+	fi
+
+	lan_ra=$(uci get dhcp.$auto_mesh_network.ra 2>/dev/null)
+	vtun_ignore=$(uci get dhcp.vtunlan.ignore 2>/dev/null)
+
+	if [ "$lan_ra" = "server" ]; then
+		need_ra=1
+	fi
+
+	if [ "$vtun_ignore" = "0" ]; then
+		need_ra=1
+	fi
+
+	if [ "$need_ra" -eq 0 ]; then
 		return 0
 	fi
 
@@ -7195,7 +7220,7 @@ mbp_dhcp_lan_defaults() {
 		echo "set network.$auto_mesh_network.proto='dhcp'" | uci batch
 		echo "set network.$auto_mesh_network.defaultroute='1'" | uci batch
 		echo "set network.$auto_mesh_network.peerdns='1'" | uci batch
-
+		/sbin/service odhcpd restart
 		log_notice "MBP portal: odhcpd now advertising mesh ULA $ula_base:$ula_subnet::/64 with low preference (non-default)"
 	else
 		echo "set dhcp.$auto_mesh_network.dhcpv4='disabled'" | uci batch
