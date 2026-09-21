@@ -1723,7 +1723,7 @@ manage_fallback_ula_route() {
 
 	get_portal_ula get
 
-	if [ "$?" -eq 1 ]; then
+	if [ "$?" -ne 0 ]; then
 		return 1
 	fi
 
@@ -1735,45 +1735,47 @@ manage_fallback_ula_route() {
 		. "$tmpdir/is_portal"
 	fi
 
-	if [ ! -z "$detected_state" ] && [ "$detected_state" = "portal" ]; then
-		log_debug "manage_fallback_ula_route - Node is a portal"
-		# Portal ULA = prefix:subnet::1 /64
-		portal_ula_addr="$portal_ula""/64"
-		log_debug "portal_ula_addr is [ $portal_ula_addr ], checking..."
+	if [ -n "$portal_ula" ]; then
+		if [ ! -z "$detected_state" ] && [ "$detected_state" = "portal" ]; then
+			log_debug "manage_fallback_ula_route - Node is a portal"
+			# Portal ULA = prefix:subnet::1 /64
+			portal_ula_addr="$portal_ula""/64"
+			log_debug "portal_ula_addr is [ $portal_ula_addr ], checking..."
 
-		# Check if already present
-		if ! ip -6 addr show dev "$device" | grep -q "$portal_ula_addr"; then
-			log_info "Portal mode → adding portal ULA $portal_ula_addr to bridge $device"
+			# Check if already present
+			if ! ip -6 addr show dev "$device" | grep -q "$portal_ula_addr"; then
+				log_info "Portal mode → adding portal ULA $portal_ula_addr to bridge $device"
 
-			ip -6 addr add "$portal_ula_addr" dev "$device" 2>/dev/null
+				ip -6 addr add "$portal_ula_addr" dev "$device" 2>/dev/null
 
-			if [ $? -eq 0 ]; then
-				log_notice "Portal ULA $portal_ula_addr added to $device"
+				if [ $? -eq 0 ]; then
+					log_notice "Portal ULA $portal_ula_addr added to $device"
+				else
+					log_error "Failed to add portal ULA $portal_ula_addr to $device"
+					log_debug "ip error: $(ip -6 addr add "$portal_ula_addr" dev "$device" 2>&1)"
+				fi
 			else
-				log_error "Failed to add portal ULA $portal_ula_addr to $device"
-				log_debug "ip error: $(ip -6 addr add "$portal_ula_addr" dev "$device" 2>&1)"
+				log_debug "portal_ula_addr [ $portal_ula_addr ] is present"
 			fi
 		else
-			log_debug "portal_ula_addr [ $portal_ula_addr ] is present"
-		fi
-	else
-		# not a portal, so assume it is a peer
-		log_debug "manage_fallback_ula_route - Node is a peer"
-		# Portal ULA = prefix:subnet::1 /64
-		portal_ula_addr="$portal_ula""/64"
-		log_debug "portal_ula_addr is [ $portal_ula_addr ], checking..."
+			# not a portal, so assume it is a peer
+			log_debug "manage_fallback_ula_route - Node is a peer"
+			# Portal ULA = prefix:subnet::1 /64
+			portal_ula_addr="$portal_ula""/64"
+			log_debug "portal_ula_addr is [ $portal_ula_addr ], checking..."
 
-		# Check if present from previous portal state
-		if ip -6 addr show dev "$device" | grep -q "$portal_ula_addr"; then
-			log_info "Peer mode → deleting portal ULA $portal_ula_addr from bridge $device"
+			# Check if present from previous portal state
+			if ip -6 addr show dev "$device" | grep -q "$portal_ula_addr"; then
+				log_info "Peer mode → deleting portal ULA $portal_ula_addr from bridge $device"
 
-			ip -6 addr del "$portal_ula_addr" dev "$device" 2>/dev/null
+				ip -6 addr del "$portal_ula_addr" dev "$device" 2>/dev/null
 
-			if [ $? -eq 0 ]; then
-				log_notice "Portal ULA $portal_ula_addr deleted from $device"
-			else
-				log_error "Failed to remove portal ULA $portal_ula_addr from $device"
-				log_debug "ip error: $(ip -6 addr del "$portal_ula_addr" dev "$device" 2>&1)"
+				if [ $? -eq 0 ]; then
+					log_notice "Portal ULA $portal_ula_addr deleted from $device"
+				else
+					log_error "Failed to remove portal ULA $portal_ula_addr from $device"
+					log_debug "ip error: $(ip -6 addr del "$portal_ula_addr" dev "$device" 2>&1)"
+				fi
 			fi
 		fi
 	fi
@@ -1918,6 +1920,278 @@ scan_channel() {
 	fi
 }
 
+# One L3 upstream on $up_zone. Prefer the RA router (fe80 default / proto ra);
+# GUA is optional. IPv4 is independent, so IPv4-only upstream still counts.
+# Do not use first ARP neighbour, do not dump every non-fe80 router.
+detect_l3_upstream() {
+	default_ipv6_gw=""
+	default_ipv4_gw=""
+
+	if [ -z "$up_zone" ]; then
+		return 1
+	fi
+
+	if [ $(ip link show "$up_zone" 2> /dev/null | grep -c -w "state UP") -eq 0 ] && [ $(ip link show "$up_zone" 2> /dev/null | grep -c -w "state UNKNOWN") -eq 0 ]; then
+		return 1
+	fi
+
+	local own_mac
+	local router_mac
+	local v6routes
+	own_mac=$(ip link show "$up_zone" 2> /dev/null | awk '/link\/ether/ {printf "%s", $2; exit}')
+	v6routes=$(ip -6 route show default dev "$up_zone" 2> /dev/null)
+
+	# "default from <src> via <hop>" puts the GUA in $3; always take the token after via.
+	# Prefer a global default (no "from") and fe80 / proto ra (the RA router).
+	default_ipv6_gw=$(echo "$v6routes" | awk '
+		/ from / { next }
+		/via fe80:/ {
+			for (i = 1; i <= NF; i++) if ($i == "via") { print $(i + 1); exit }
+		}')
+	if [ -z "$default_ipv6_gw" ]; then
+		default_ipv6_gw=$(echo "$v6routes" | awk '
+			/ from / { next }
+			/proto ra/ && /via/ {
+				for (i = 1; i <= NF; i++) if ($i == "via") { print $(i + 1); exit }
+			}')
+	fi
+	if [ -z "$default_ipv6_gw" ]; then
+		default_ipv6_gw=$(echo "$v6routes" | awk '
+			/ from / { next }
+			/via/ {
+				for (i = 1; i <= NF; i++) if ($i == "via") { print $(i + 1); exit }
+			}')
+	fi
+	if [ -z "$default_ipv6_gw" ]; then
+		default_ipv6_gw=$(echo "$v6routes" | awk '
+			/via fe80:/ {
+				for (i = 1; i <= NF; i++) if ($i == "via") { print $(i + 1); exit }
+			}')
+	fi
+	if [ -z "$default_ipv6_gw" ]; then
+		default_ipv6_gw=$(echo "$v6routes" | awk '
+			/via/ {
+				for (i = 1; i <= NF; i++) if ($i == "via") { print $(i + 1); exit }
+			}')
+	fi
+
+	if [ -n "$default_ipv6_gw" ]; then
+		router_mac=$(ip -6 neigh show dev "$up_zone" 2> /dev/null | awk -v gw="$default_ipv6_gw" '
+			$1 == gw {
+				for (i = 1; i <= NF; i++) if ($i == "lladdr") { print $(i + 1); exit }
+			}')
+	fi
+
+	if [ -z "$router_mac" ]; then
+		# NDP IsRouter, prefer fe80; skip this bridge's MAC
+		router_mac=$(ip -6 neigh show dev "$up_zone" 2> /dev/null | awk -v own="$own_mac" '
+			/router/ && !/FAILED/ && !/INCOMPLETE/ {
+				mac = ""
+				for (i = 1; i <= NF; i++) if ($i == "lladdr") mac = $(i + 1)
+				if (mac == "" || mac == own) next
+				if ($1 ~ /^fe80:/) { print mac; exit }
+				if (saved == "") saved = mac
+			}
+			END { if (saved != "") print saved }')
+		if [ -z "$default_ipv6_gw" ] && [ -n "$router_mac" ]; then
+			default_ipv6_gw=$(ip -6 neigh show dev "$up_zone" 2> /dev/null | awk -v mac="$router_mac" '
+				/router/ {
+					for (i = 1; i <= NF; i++) if ($i == "lladdr" && $(i + 1) == mac) {
+						if ($1 ~ /^fe80:/) { print $1; exit }
+						if (gua == "") gua = $1
+					}
+				}
+				END { if (gua != "") print gua }')
+		fi
+	fi
+
+	if [ -n "$router_mac" ] && [ "$router_mac" != "$own_mac" ]; then
+		default_ipv4_gw=$(ip -4 neigh show dev "$up_zone" 2> /dev/null | awk -v mac="$router_mac" '
+			!/FAILED/ && !/INCOMPLETE/ {
+				for (i = 1; i <= NF; i++) if ($i == "lladdr" && $(i + 1) == mac) { print $1; exit }
+			}')
+	fi
+
+	if [ -z "$default_ipv4_gw" ]; then
+		default_ipv4_gw=$(ip -4 route show default dev "$up_zone" 2> /dev/null | awk '/via/ {printf "%s", $3; exit}')
+	fi
+
+	if [ -n "$default_ipv6_gw" ] || [ -n "$default_ipv4_gw" ]; then
+		return 0
+	fi
+
+	return 1
+}
+
+# MBP upstream is on LAN (existing ISP/LAN router). WAN is the vxlan trunk.
+detect_mbp_upstream() {
+	up_zone=$(echo "get network.lan.device" | uci batch | awk '{printf "%s", $1}')
+
+	if [ -z "$up_zone" ]; then
+		up_zone="br-$auto_mesh_network"
+	fi
+
+	detect_l3_upstream
+}
+
+# CPE upstream is the mesh on br-wan (Starlink via the MBP), not the trunk.
+detect_cpe_upstream() {
+	up_zone=$(echo "get network.wan.device" | uci batch | awk '{printf "%s", $1}')
+
+	if [ -z "$up_zone" ]; then
+		up_zone="br-wan"
+	fi
+
+	detect_l3_upstream
+}
+
+# MBP/CPE trunk is L2: static, no gateway, no default, no RA. Keep a non-.1
+# IPv4 already on br-tun so we do not collide with an MRP at the shared vtun_ip
+# or steal the IPv4 default from the mesh uplink.
+configure_mbp_vtunlan() {
+	local do_reload="$1"
+	local tunif="br-tun$tun_id"
+	local want_ip="$vtun_ip"
+	local cur_ip
+	local prev_proto
+	local prev_dr
+	local prev_gw
+	local changed=0
+	local via
+
+	if [ "$portal_detect" -ne 3 ] && [ "$portal_detect" -ne 4 ]; then
+		return 0
+	fi
+
+	if [ "$vtun_enable" -ne 1 ]; then
+		return 0
+	fi
+
+	if [ -z "$(uci -q get network.vtunlan)" ] && [ ! -d "/sys/class/net/$tunif" ]; then
+		return 0
+	fi
+
+	cur_ip=$(ip -4 addr show dev "$tunif" 2> /dev/null | awk '/inet / {print $2}' | awk -F/ '{printf "%s", $1; exit}')
+
+	if [ -n "$cur_ip" ] && [ "$cur_ip" != "$vtun_ip" ]; then
+		want_ip="$cur_ip"
+	fi
+
+	prev_proto=$(uci -q get network.vtunlan.proto)
+	prev_dr=$(uci -q get network.vtunlan.defaultroute)
+	prev_gw=$(uci -q get network.vtunlan.gateway)
+
+	echo "set network.vtunlan.proto='static'" | uci batch
+	if [ -n "$want_ip" ]; then
+		echo "set network.vtunlan.ipaddr='$want_ip'" | uci batch
+	fi
+	if [ -n "$vtun_mask" ]; then
+		echo "set network.vtunlan.netmask='$vtun_mask'" | uci batch
+	fi
+	echo "set network.vtunlan.defaultroute='0'" | uci batch
+	echo "set network.vtunlan.peerdns='0'" | uci batch
+	echo "delete network.vtunlan.gateway" | uci batch 2> /dev/null
+
+	if [ "$prev_proto" != "static" ] || [ "$prev_dr" != "0" ] || [ -n "$prev_gw" ]; then
+		changed=1
+	fi
+
+	echo 0 > "/proc/sys/net/ipv6/conf/$tunif/accept_ra" 2> /dev/null
+
+	via=$(ip -4 route show default dev "$tunif" 2> /dev/null | awk '/via/ {printf "%s", $3; exit}')
+	if [ -n "$via" ]; then
+		ip -4 route del default via "$via" dev "$tunif" 2> /dev/null
+	fi
+
+	via=$(ip -6 route show default dev "$tunif" 2> /dev/null | awk '/via/ {printf "%s", $3; exit}')
+	while [ -n "$via" ]; do
+		ip -6 route del default via "$via" dev "$tunif" 2> /dev/null
+		via=$(ip -6 route show default dev "$tunif" 2> /dev/null | awk '/via/ {printf "%s", $3; exit}')
+	done
+
+	if [ "$do_reload" = "reload" ] && [ "$changed" -eq 1 ] && [ "$commit_all" -eq 0 ]; then
+		log_notice "MBP: vtunlan is static with no default route (trunk is not upstream)"
+		/sbin/service network reload
+		echo 0 > "/proc/sys/net/ipv6/conf/$tunif/accept_ra" 2> /dev/null
+		via=$(ip -4 route show default dev "$tunif" 2> /dev/null | awk '/via/ {printf "%s", $3; exit}')
+		if [ -n "$via" ]; then
+			ip -4 route del default via "$via" dev "$tunif" 2> /dev/null
+		fi
+		via=$(ip -6 route show default dev "$tunif" 2> /dev/null | awk '/via/ {printf "%s", $3; exit}')
+		while [ -n "$via" ]; do
+			ip -6 route del default via "$via" dev "$tunif" 2> /dev/null
+			via=$(ip -6 route show default dev "$tunif" 2> /dev/null | awk '/via/ {printf "%s", $3; exit}')
+		done
+	fi
+}
+
+# MBP/TPN: WAN is the vxlan trunk ethernet port. Same sequence as the
+# original MBP create path: disable wan/wan6, add the netdev to
+# network.vtunnel.ports, then network reload so netifd applies it.
+# Live addif alone is not enough — netifd still owns wan until reload.
+ensure_wan_on_vxlan_bridge() {
+	local do_reload="$1"
+	local tunif="br-tun$tun_id"
+	local wanif
+	local prev_wan_dis
+	local prev_wan6_dis
+	local prev_ports
+	local changed=0
+	local already=0
+
+	if [ "$portal_detect" -ne 4 ] && [ "$portal_detect" -ne 5 ]; then
+		return 0
+	fi
+
+	if [ "$vtun_enable" -ne 1 ] || [ -z "$tun_id" ]; then
+		return 0
+	fi
+
+	wanif=$(uci get network.wan.device 2> /dev/null | awk '{printf "%s", $1}')
+	if [ -z "$wanif" ]; then
+		wanif=$(uci get network.wan.ifname 2> /dev/null | awk '{printf "%s", $1}')
+	fi
+	if [ -z "$wanif" ]; then
+		wanif="wan"
+	fi
+
+	prev_wan_dis=$(uci get network.wan.disabled 2> /dev/null | awk '{printf "%s", $1}')
+	prev_wan6_dis=$(uci get network.wan6.disabled 2> /dev/null | awk '{printf "%s", $1}')
+	prev_ports=$(uci get network.vtunnel.ports 2> /dev/null)
+
+	echo "set network.wan.disabled='1'" | uci batch
+	echo "set network.wan6.disabled='1'" | uci batch
+	echo "del_list network.vtunnel.ports='$wanif'" | uci batch 2> /dev/null
+	echo "add_list network.vtunnel.ports='$wanif'" | uci batch
+
+	if [ "$prev_wan_dis" != "1" ] || [ "$prev_wan6_dis" != "1" ]; then
+		changed=1
+	fi
+	if ! echo "$prev_ports" | grep -qw "$wanif"; then
+		changed=1
+	fi
+
+	if [ "$do_reload" = "reload" ] && [ "$changed" -eq 1 ] && [ "$commit_all" -eq 0 ]; then
+		log_notice "Moving wan device [ $wanif ] onto [ $tunif ] (netifd reload)"
+		/sbin/service network reload
+	fi
+
+	if [ ! -d "/sys/class/net/$tunif" ] || [ ! -d "/sys/class/net/$wanif" ]; then
+		return 0
+	fi
+
+	already=$(ip link show "$wanif" 2> /dev/null | grep -c "master $tunif")
+
+	if [ "$already" -eq 0 ]; then
+		ip link set "$wanif" nomaster 2> /dev/null
+		brctl addif "$tunif" "$wanif" 2> /dev/null
+		ip link set "$wanif" master "$tunif" 2> /dev/null
+		log_notice "Added wan device [ $wanif ] to [ $tunif ]"
+	fi
+
+	ip link set "$wanif" up 2> /dev/null
+}
+
 get_portal_state() {
 
 	if [ "$firstloop" -eq 1 ]; then
@@ -1927,6 +2201,8 @@ get_portal_state() {
 	local default_ipv6_gw
 	local default_ipv4_gw
 	local muteorg=$mute
+	local probe
+	local gwstatus
 
 
 	log_debug "In get_portal_state. firstloop=$firstloop..."
@@ -1935,16 +2211,58 @@ get_portal_state() {
 		return 0
 	fi
 
-	if [ "$portal_detect" -eq 1 ] || [ "$portal_detect" -eq 3 ] || [ "$portal_detect" -eq 4 ] || [ "$portal_detect" -eq 5 ]; then
+	if [ "$portal_detect" -eq 4 ]; then
+		if detect_mbp_upstream; then
+			is_portal="detected"
+			debugtype="debug"
+			syslogmessage="Node has upstream gateway(s), zone [ $up_zone ], [ $default_ipv6_gw ], [ $default_ipv4_gw ]"
+			mute=$muteorg
+			write_to_syslog
+			probe="$default_ipv6_gw"
+			if [ -z "$probe" ]; then
+				probe="$default_ipv4_gw"
+			fi
+			if [ -n "$probe" ]; then
+				gwstatus=$(ip neigh show 2> /dev/null | grep -w "$probe" | awk '{printf "%s", $NF; exit}')
+				if [ "$gwstatus" = "FAILED" ] || [ "$gwstatus" = "INCOMPLETE" ]; then
+					is_portal=""
+				elif [ -n "$gwstatus" ]; then
+					is_portal="$gwstatus"
+				fi
+			fi
+		else
+			is_portal=""
+		fi
+
+	elif [ "$portal_detect" -eq 3 ]; then
+		if detect_cpe_upstream; then
+			is_portal="detected"
+			debugtype="debug"
+			syslogmessage="Node has upstream gateway(s), zone [ $up_zone ], [ $default_ipv6_gw ], [ $default_ipv4_gw ]"
+			mute=$muteorg
+			write_to_syslog
+			probe="$default_ipv6_gw"
+			if [ -z "$probe" ]; then
+				probe="$default_ipv4_gw"
+			fi
+			if [ -n "$probe" ]; then
+				gwstatus=$(ip neigh show 2> /dev/null | grep -w "$probe" | awk '{printf "%s", $NF; exit}')
+				if [ "$gwstatus" = "FAILED" ] || [ "$gwstatus" = "INCOMPLETE" ]; then
+					is_portal=""
+				elif [ -n "$gwstatus" ]; then
+					is_portal="$gwstatus"
+				fi
+			fi
+		else
+			is_portal=""
+		fi
+
+	elif [ "$portal_detect" -eq 1 ] || [ "$portal_detect" -eq 5 ]; then
 
 		if [ "$firstloop" -eq 0 ]; then
 			#Check if portal - try to get the upstream default ipv4 gateway
 
-			if [ "$portal_detect" -eq 4 ]; then
-				up_zone=$(echo "get network.lan.device" | uci batch | awk '{printf "%s", $1}')
-			else
-				up_zone=$(echo "get network.wan.device" | uci batch | awk '{printf "%s", $1}')
-			fi
+			up_zone=$(echo "get network.wan.device" | uci batch | awk '{printf "%s", $1}')
 
 			if [ $(ip link show $up_zone 2> /dev/null | grep -c -w "state UP") -eq 1 ] || [ $(ip link show $up_zone 2> /dev/null | grep -c -w "state UNKNOWN") -eq 1 ]; then
 				# Look for ipv4 and ipv6 gateways
@@ -1964,10 +2282,6 @@ get_portal_state() {
 				# Try to find a portal on the backhaul - we only need to check ipv6
 				is_portal=""
 				local retries=4
-
-				if [ "$portal_detect" -eq 4 ]; then
-					retries=1
-				fi
 
 				br_zone=$(echo "get network.$auto_mesh_network.device" | uci batch | awk '{printf "%s", $1}')
 
@@ -2021,7 +2335,7 @@ get_portal_state() {
 	# Forced portal (portal_detect=0) has no upstream neighbour to probe;
 	# grep -w "" would otherwise clobber is_portal="forced".
 
-	if [ ! -z "$is_portal" ] && [ "$portal_detect" -ne 0 ]; then
+	if [ ! -z "$is_portal" ] && [ "$portal_detect" -ne 0 ] && [ "$portal_detect" -ne 4 ] && [ "$portal_detect" -ne 3 ]; then
 		gwstatus=$(ip neigh | grep -w "$default_ipv6_gw" | awk 'NR==1 {printf "%s", $NF}')
 
 		if [ -z "$gwstatus" ]; then
@@ -2114,18 +2428,20 @@ portal_watchdog() {
 		return 0
 	fi
 
+	log_info "Portal Watchdog...."
+
 	# Set auto_detect state
 	case $portal_detect in
 		"0") auto_detect="0";;
 		"1") auto_detect="1";;
 		"3") auto_detect="1";;
 		"4") auto_detect="0";;
-		"5") auto_detect="0";;
+		"5") auto_detect="1";;
 		*) auto_detect="0";;
 	esac
 
 	if [ "$auto_detect" -eq 0 ]; then
-		log_debug "Portal auto_detect [ $auto_detect ]"
+		log_debug "Watchdog: Portal auto_detect [ $auto_detect ]"
 		return 0
 	fi
 
@@ -2304,6 +2620,54 @@ dhcp4_renew() {
 	fi
 }
 
+# Peers/CPE keep stale DHCPv4/DHCPv6/RA across MBP<->MRP or portal ULA change
+# until T1. Same node can keep the vxlan group, so this is not the vxlan switch.
+refresh_uplink_on_portal_change() {
+	local prev_type=""
+	local prev_ula=""
+	local cur_type="$portal_type"
+	local cur_ula="$portal_ula"
+
+	if [ "$detected_state" = "portal" ]; then
+		return 0
+	fi
+
+	if [ -z "$cur_type" ] || [ "$cur_type" = "UNKNOWN" ]; then
+		return 0
+	fi
+
+	if [ -f "$tmpdir/last_portal_identity" ]; then
+		. "$tmpdir/last_portal_identity"
+	fi
+
+	echo "prev_type=\"$cur_type\"; prev_ula=\"$cur_ula\"" > "$tmpdir/last_portal_identity"
+
+	if [ -z "$prev_type" ]; then
+		return 0
+	fi
+
+	if [ "$prev_type" = "$cur_type" ] && [ "$prev_ula" = "$cur_ula" ]; then
+		return 0
+	fi
+
+	dhcpdevice=$(echo "get network.$auto_mesh_network.device" | uci batch | awk '{printf "%s", $1}')
+	log_notice "Portal change [ $prev_type $prev_ula ] -> [ $cur_type $cur_ula ], renewing uplink leases on [ $dhcpdevice ]"
+
+	if [ -n "$dhcpdevice" ]; then
+		dhcp4_renew
+	fi
+
+	# DHCPv6: SIGUSR1 = renew. Do not use ubus (it reads committed /etc/config).
+	for pid in $(pidof odhcp6c 2> /dev/null); do
+		kill -USR1 "$pid" 2> /dev/null
+	done
+
+	if [ -n "$device" ] && [ -f "/proc/sys/net/ipv6/conf/$device/accept_ra" ]; then
+		echo 0 > "/proc/sys/net/ipv6/conf/$device/accept_ra"
+		echo 2 > "/proc/sys/net/ipv6/conf/$device/accept_ra"
+	fi
+}
+
 check_dns_server() {
 	# nothing to do, dummy function
 	default_gw=""
@@ -2342,8 +2706,6 @@ check_portal() {
 				log_debug "CPE - checking vtunnel"
 				check_vtunnel
 			fi
-
-			return 0
 		fi
 
 		if [ "$portal_detect" -eq 4 ]; then
@@ -2371,7 +2733,20 @@ check_portal() {
 				check_vtunnel
 			fi
 
-			return 0
+			# TPN lan is a mesh peer; check_portal returns before the peer DHCP path
+			if [ "$cpe_dhcp_set" -eq 0 ]; then
+				echo "set dhcp.$auto_mesh_network.dhcpv4='disabled'" | uci batch
+				echo "set dhcp.$auto_mesh_network.dhcpv6='disabled'" | uci batch
+				echo "set dhcp.$auto_mesh_network.ra='disabled'" | uci batch
+				echo "set dhcp.$auto_mesh_network.ignore='1'" | uci batch
+				echo "del_list dhcp.$auto_mesh_network.ra_flags='managed-config'" | uci batch 2> /dev/null
+				echo "del_list dhcp.$auto_mesh_network.ra_flags='other-config'" | uci batch 2> /dev/null
+				echo "add_list dhcp.$auto_mesh_network.ra_flags='none'" | uci batch
+				echo "set network.$auto_mesh_network.proto='dhcp'" | uci batch
+				uci set dhcp.@dnsmasq[0].authoritative='0'
+				uci set dhcp.@dnsmasq[0].rebind_protection='0'
+				cpe_dhcp_set=1
+			fi
 		fi
 
 		if [ "$detected_state" != "portal" ]; then
@@ -2500,7 +2875,11 @@ check_portal() {
 				echo "set network.$auto_mesh_network.proto='static'" | uci batch
 
 				set_ula_prefix "set"
-				/sbin/service network reload
+				# If vxlan is about to be created, check_vtunnel will network restart.
+				vxlan_pending=$(ip link show vxlan$tun_id &> /dev/null; echo $?)
+				if [ "$vtun_enable" -ne 1 ] || [ "$vxlan_pending" -eq 0 ]; then
+					/sbin/service network reload
+				fi
 
 				if [ -z "$portal_ula" ]; then
 					get_portal_ula get
@@ -2562,6 +2941,9 @@ check_portal() {
 				/sbin/service dnsmasq restart
 				/sbin/service odhcpd restart
 				/sbin/service system restart
+				# Immediate odhcpd restart often races set_ula_prefix / netifd.
+				# check_odhcpd retries after a full checkinterval once the ULA is on lan.
+				odhcpd_check=0
 
 				if [ "$daemon_startup" -eq 1 ]; then
 					daemon_startup=0
@@ -3824,8 +4206,8 @@ get_kernel_version() {
 }
 
 probe_interface_mac() {
-	# Create a wireless probe interface
-	wifi down
+	# Temporary mesh vif to read the phy MAC. Do not wifi down; the caller
+	# has usually just brought radios up (and CLI probe must not drop the mesh).
 	get_wiphys
 	dsa_mesh_maclist=""
 
@@ -3981,20 +4363,30 @@ update_vxlan_for_active_portal() {
 
 	vxlan_if="vxlan$tun_id"
 
-	# Ensure we have a current portal selection with ula_subnet
 	get_portal_ula get
 
-	if [ -z "$ula_subnet" ]; then
-		log_warning "update_vxlan_for_active_portal: No ula_subnet - using default group"
-		unset vxlan_group
+	# No portal yet: ula_subnet from set_ula_prefix is this node's hint, not a
+	# portal. Keep (or once-create) dummy vxlan so TPN/br-tun stays up; do not
+	# treat that as a portal change every checkinterval.
+	if [ "$?" -ne 0 ] || [ -z "$portal_ula" ]; then
 		create_vxlan_if
-		return 1
+		return 0
+	fi
+
+	if [ -z "$ula_subnet" ]; then
+		ula_subnet=$(echo "$portal_ula" | awk -F ":" '{printf "%s", $4}')
 	fi
 
 	local new_group="ff02::$ula_subnet"
 
-	# Check current group
-	current_group=$(ip -d link show type vxlan | grep -w "vxlan" | awk -F "group" '{print $2}' | awk '{printf "%s", $1}')
+	current_group=""
+	if [ -f "$tmpdir/vxlan_conf" ]; then
+		. "$tmpdir/vxlan_conf"
+		current_group="$group"
+	fi
+	if [ -z "$current_group" ]; then
+		current_group=$(ip -d link show "$vxlan_if" 2>/dev/null | awk -F "group " '{print $2}' | awk '{printf "%s", $1}')
+	fi
 
 	if [ "$current_group" = "$new_group" ]; then
 		log_debug "VXLAN already using correct group $new_group"
@@ -4091,6 +4483,9 @@ create_vxlan_if() {
 			ip link set "$active_mesh_ifname" mtu 1600
 			ip link set "$device" mtu 1600
 			ip link set "vxlan$tun_id" mtu 1500
+			if ip link show "br-tun$tun_id" > /dev/null 2>&1; then
+				brctl addif "br-tun$tun_id" "vxlan$tun_id" 2> /dev/null
+			fi
 			break
 		fi
 	done
@@ -4137,20 +4532,44 @@ create_vxlan_if() {
 
 	log_info "vxlan_if created"
 	log_debug "dnsmasq restarting"
-	/sbin/service dnsmasq restart
+	# Must not block the daemon: with br-lan down, `service dnsmasq restart`
+	# waits on the lan interface and never returns.
+	/sbin/service dnsmasq restart >/dev/null 2>&1 &
 	vxlan_if="created"
 	. $tmpdir/devicemac
 }
 
 check_odhcpd() {
-	# We need to wait for dnsmasq to finish setting up dhcpv4 before restarting odhcpd
-	# If we don't wait long enough, RA will fail on vxlan
-	# So wait one full cycle of the service daemon
-	# Only do this if this is a dhcp server
+	# Wait one checkinterval after becoming a portal (or after vxlan dhcp
+	# server comes up) before restarting odhcpd. Immediate restart in
+	# check_portal races set_ula_prefix / netifd, so portal_ula is not
+	# advertised until a later odhcpd restart. Do not use ubus.
 
-	dhcpserver=$(uci get dhcp.vtunlan.ignore 2>/dev/null)
+	local lan_ra
+	local vtun_ignore
+	local need_ra=0
 
-	if [ -z "$dhcpserver" ] || [ "$dhcpserver" -eq 1 ]; then
+	if [ -f "$tmpdir/is_portal" ]; then
+		. "$tmpdir/is_portal"
+	fi
+
+	if [ "$detected_state" != "portal" ]; then
+		odhcpd_check=0
+		return 0
+	fi
+
+	lan_ra=$(uci get dhcp.$auto_mesh_network.ra 2>/dev/null)
+	vtun_ignore=$(uci get dhcp.vtunlan.ignore 2>/dev/null)
+
+	if [ "$lan_ra" = "server" ]; then
+		need_ra=1
+	fi
+
+	if [ "$vtun_ignore" = "0" ]; then
+		need_ra=1
+	fi
+
+	if [ "$need_ra" -eq 0 ]; then
 		return 0
 	fi
 
@@ -4265,7 +4684,6 @@ check_vtunnel() {
 					fi
 
 					vtunnel="configured"
-					/sbin/service network reload
 					/sbin/service firewall restart
 					get_indexed_mac "vxlan$tun_id"
 					vxmac_indexed="$mac_indexed"
@@ -4304,6 +4722,8 @@ check_vtunnel() {
 				proto="static"
 			elif [ "$portal_detect" -eq 1 ] && [ "$detected_state" = "portal" ]; then
 				proto="static"
+			elif [ "$portal_detect" -eq 3 ] || [ "$portal_detect" -eq 4 ]; then
+				proto="static"
 			else
 				proto="dhcp"
 			fi
@@ -4320,6 +4740,9 @@ check_vtunnel() {
 			echo "set network.vtunlan.ipaddr='$vtun_ip'" | uci batch
 			echo "set network.vtunlan.netmask='$vtun_mask'" | uci batch
 			echo "set network.vtunlan.proto='$proto'" | uci batch
+			if [ "$portal_detect" -eq 3 ] || [ "$portal_detect" -eq 4 ]; then
+				configure_mbp_vtunlan
+			fi
 			uci set network.vtunlan.ip6assign='64'
 			echo "set network.vtunlan.ip6hint='$ula_vxsubnet'" | uci batch
 			echo "set network.vtunlan.ip6privacy='0'" | uci batch
@@ -4328,15 +4751,9 @@ check_vtunnel() {
 			echo "set dhcp.vtunlan.ra_maxinterval='60'" | uci batch
 
 			if [ "$portal_detect" -eq 4 ] || [ "$portal_detect" -eq 5 ]; then
-				# Disable wan and add the port that was wan to the vtunnel bridge
-				echo "set network.wan.disabled='1'" | uci batch
-				echo "set network.wan6.disabled='1'" | uci batch
-				wanif=$(uci get network.wan.device)
-				echo "del_list network.vtunnel.ports='$wanif'" | uci batch 2>/dev/null
-				echo "add_list network.vtunnel.ports='$wanif'" | uci batch
+				ensure_wan_on_vxlan_bridge
 			fi
 
-			wifi down
 			/sbin/service firewall restart
 			/sbin/service network restart
 			wait_for_interface "$device"
@@ -4396,6 +4813,18 @@ check_vtunnel() {
 
 		device="br-tun$tun_id"
 		set_iface_path_cost "$vtun_path_cost" "$device" "vxlan$tun_id"
+
+		# WAN add used to sit only in the vxlan_status==1 block. Dummy vxlan
+		# is created later in the same loop, so that block never runs again.
+		# UCI list ports is not applied without a reload; enslave the live netdev.
+		if [ "$portal_detect" -eq 4 ] || [ "$portal_detect" -eq 5 ]; then
+			ensure_wan_on_vxlan_bridge reload
+		fi
+
+		if [ "$portal_detect" -eq 3 ] || [ "$portal_detect" -eq 4 ]; then
+			configure_mbp_vtunlan reload
+		fi
+
 		. $tmpdir/devicemac
 	fi
 
@@ -4630,7 +5059,7 @@ get_portal_ula() {
 			# Populate NDP table
 			link_to_portal=$(ping -q -A -c 4 "$candidate" &>/dev/null; echo -n $?)
 
-			if [ "$link_to_portal" -eq 1 ]; then
+			if [ "$link_to_portal" -ne 0 ]; then
 				continue
 			fi
 
@@ -4692,23 +5121,36 @@ get_portal_ula() {
 
 	portal_ula="$best_ula"
 
-	# (Re)test link to selected portal
-	link_to_portal=$(ping -q -A -c 2 "$portal_ula" &>/dev/null; echo -n $?)
-
-	if [ "$link_to_portal" -eq 0 ] && [ ! -z "$portal_ula" ]; then
-		ula_subnet=$(echo "$portal_ula" | awk -F ":" '{printf "%s", $4}')
-		ula_base=$(echo "$portal_ula" | awk -F ":" '{printf "%s:%s:%s", $1, $2, $3}')
-		log_debug "Selected portal: [ $portal_ula ] [ $best_peer ], mesh metric delta [ $mesh_metric_threshold ], mesh airtime metric [ $best_metric ], hops [ $best_hops ]"
-		echo "portal_ula=\"$portal_ula\"; ula_subnet=\"$ula_subnet\"; portal_mac=\"$best_peer\"; metric=$best_metric; hops=$best_hops" > "$tmpdir/active_portal"
-	else
+	if [ -z "$portal_ula" ]; then
 		log_warning "No responsive portal found"
 
 		if [ -f "$tmpdir/active_portal" ]; then
 			rm "$tmpdir/active_portal"
 		fi
+
+		link_to_portal=1
+		return 1
 	fi
 
-	return "$link_to_portal"
+	# (Re)test link to selected portal
+	link_to_portal=$(ping -q -A -c 2 "$portal_ula" &>/dev/null; echo -n $?)
+
+	if [ "$link_to_portal" -eq 0 ]; then
+		ula_subnet=$(echo "$portal_ula" | awk -F ":" '{printf "%s", $4}')
+		ula_base=$(echo "$portal_ula" | awk -F ":" '{printf "%s:%s:%s", $1, $2, $3}')
+		log_info "Selected portal: [ $portal_ula ] [ $best_peer ], mesh metric delta [ $mesh_metric_threshold ], mesh airtime metric [ $best_metric ], hops [ $best_hops ]"
+		echo "portal_ula=\"$portal_ula\"; ula_subnet=\"$ula_subnet\"; portal_mac=\"$best_peer\"; metric=$best_metric; hops=$best_hops" > "$tmpdir/active_portal"
+		return 0
+	fi
+
+	log_warning "No responsive portal found"
+
+	if [ -f "$tmpdir/active_portal" ]; then
+		rm "$tmpdir/active_portal"
+	fi
+
+	link_to_portal=1
+	return 1
 }
 
 # =============================================================================
@@ -6776,7 +7218,9 @@ mbp_dhcp_lan_defaults() {
 		echo "del_list dhcp.$auto_mesh_network.ra_flags='none'" | uci batch 2> /dev/null
 		echo "add_list dhcp.$auto_mesh_network.ra_flags='other-config'" | uci batch 2> /dev/null
 		echo "set network.$auto_mesh_network.proto='dhcp'" | uci batch
-
+		echo "set network.$auto_mesh_network.defaultroute='1'" | uci batch
+		echo "set network.$auto_mesh_network.peerdns='1'" | uci batch
+		/sbin/service odhcpd restart
 		log_notice "MBP portal: odhcpd now advertising mesh ULA $ula_base:$ula_subnet::/64 with low preference (non-default)"
 	else
 		echo "set dhcp.$auto_mesh_network.dhcpv4='disabled'" | uci batch
@@ -6849,6 +7293,47 @@ radiophy() {
 	return 0
 }
 
+# Set a bridge MAC without bouncing wireless ports. Try while UP first.
+# $1 = bridge, $2 = mac, $3 = optional uci interface (e.g. network.lan)
+apply_bridge_mac() {
+	local br="$1"
+	local mac="$2"
+	local uciname="$3"
+	local current_mac
+	local config_mac
+
+	if [ -z "$br" ] || [ -z "$mac" ] || [ ! -d "/sys/class/net/$br" ]; then
+		return 1
+	fi
+
+	ip link set "$br" up 2>/dev/null || true
+	current_mac=$(ip link show "$br" 2>/dev/null | grep -o 'link/ether [^ ]*' | awk '{printf "%s", $2}')
+
+	if [ "$current_mac" != "$mac" ]; then
+		log_debug "Setting $br MAC to $mac"
+		ip link set "$br" address "$mac" 2>/dev/null || true
+		current_mac=$(ip link show "$br" 2>/dev/null | grep -o 'link/ether [^ ]*' | awk '{printf "%s", $2}')
+		if [ "$current_mac" != "$mac" ]; then
+			ip link set "$br" down 2>/dev/null || true
+			ip link set "$br" address "$mac" 2>/dev/null || true
+			ip link set "$br" up 2>/dev/null || true
+			current_mac=$(ip link show "$br" 2>/dev/null | grep -o 'link/ether [^ ]*' | awk '{printf "%s", $2}')
+		fi
+		if [ "$current_mac" != "$mac" ]; then
+			log_debug "Failed to set mac [ $mac ] on [ $br ]"
+			return 1
+		fi
+	fi
+
+	if [ -n "$uciname" ]; then
+		config_mac=$(uci get "$uciname.macaddr" 2>/dev/null)
+		if [ "$config_mac" != "$mac" ]; then
+			echo "set $uciname.macaddr='$mac'" | uci batch
+		fi
+	fi
+	return 0
+}
+
 # =============================================================================
 # set_bridge_mac_addresses()
 # Ensure br-lan and br-tun$X have different MAC addresses
@@ -6898,37 +7383,14 @@ set_bridge_mac_addresses() {
 		fi
 	fi
 
-	# Set CPE bridge a locally administered, indexed MAC
-
+	# Set CPE LAN bridge a locally administered, indexed MAC.
+	# Must persist in UCI: without network.lan.macaddr, netifd/kernel
+	# re-inherits the first port (eth1) and SLAAC/EUI-64 addresses change.
 	if [ "$portal_detect" -eq 3 ]; then
 		get_indexed_mac "$cpe_bridge"
 		brcpe_mac="$mac_indexed"
-
-		wait_for_interface "$cpe_bridge"
-
-		if [ "$ifstatus" = "down" ]; then
-			# interface is not ready - abort
-			log_debug "[ $cpe_bridge ] is not ready"
-		else
-
-			current_mac=$(ip link show "$cpe_bridge" | grep -o 'link/ether [^ ]*' | awk '{printf "%s", $2}')
-
-			if [ -z "$brcpedone" ] && [ "$current_mac" != "$brcpe_mac" ]; then
-				log_debug "Setting $cpe_bridge MAC to $brcpe_mac"
-				ip link set "$cpe_bridge" down 2>/dev/null || true
-				ip link set "$cpe_bridge" address "$brcpe_mac" 2>/dev/null || true
-				ip link set "$cpe_bridge" up 2>/dev/null || true
-
-				achieved_mac=$(ip link show "$cpe_bridge" | grep -o 'link/ether [^ ]*' | awk '{printf "%s", $2}')
-
-				if [ "$achieved_mac" = "$brcpe_mac" ]; then
-					echo "brcpe_mac=\"$brcpe_mac\"" > $tmpdir/brcpe_mac
-					brcpedone=1
-				else
-					log_debug "Failed to set mac [ $brcpe_mac ] on [ $cpe_bridge ]"
-				fi
-			fi
-		fi
+		ip link set "$cpe_bridge" up 2>/dev/null || true
+		apply_bridge_mac "$cpe_bridge" "$brcpe_mac" "network.lan"
 	fi
 
 	# Skip if VXLAN is not active
@@ -6953,27 +7415,78 @@ set_bridge_mac_addresses() {
 
 	# Set mac addresses of all bridge interfaces, all bridges.
 	local bridge_interfaces=$(brctl show 2>/dev/null | awk 'NR>1 {printf "%s ", $NF}')
+	local factory_mac=""
+	local want_mac=""
+	local is_mesh_vif=0
 
 	if [ -f "$tmpdir/active_mesh_ifname" ]; then
 		. $tmpdir/active_mesh_ifname
 	fi
 
+	if [ -f "$tmpdir/factory_mac" ]; then
+		. "$tmpdir/factory_mac"
+	fi
+
 	for briface in $bridge_interfaces; do
 
-		if [ "$briface" = "$active_mesh_ifname" ] || [ "$briface" = "no" ] || [ "$briface" = "yes" ]; then
+		if [ "$briface" = "no" ] || [ "$briface" = "yes" ]; then
 			continue
 		fi
 
-		get_indexed_mac "$briface"
-		current_mac=$(ip link show "$briface" | grep -o 'link/ether [^ ]*' | awk '{printf "%s", $2}')
+		current_mac=$(ip link show "$briface" 2>/dev/null | grep -o 'link/ether [^ ]*' | awk '{printf "%s", $2}')
+		[ -z "$current_mac" ] && continue
 
-		if [ "$current_mac" != "$mac_indexed" ]; then
-			log_debug "Setting $briface MAC to $mac_indexed"
-			ip link set "$briface" down 2>/dev/null || true
-			ip link set "$briface" address "$mac_indexed" 2>/dev/null || true
-			ip link set "$briface" up 2>/dev/null || true
+		# Mesh vif: label/factory MAC (get_factory_mac), not indexed.
+		is_mesh_vif=0
+		if [ -n "$active_mesh_ifname" ] && [ "$briface" = "$active_mesh_ifname" ]; then
+			is_mesh_vif=1
+		fi
+		case "$briface" in
+			m-11s-*)
+				is_mesh_vif=1
+				;;
+		esac
+
+		if [ "$is_mesh_vif" -eq 1 ]; then
+			want_mac="$factory_mac"
+			if [ -z "$want_mac" ]; then
+				continue
+			fi
+		else
+			# All other netdevs: indexed locally administered MAC (DSA dupes).
+			get_indexed_mac "$briface"
+			want_mac="$mac_indexed"
+		fi
+
+		if [ "$current_mac" != "$want_mac" ]; then
+			log_debug "Setting $briface MAC to $want_mac"
+			ip link set "$briface" address "$want_mac" 2>/dev/null || true
+			current_mac=$(ip link show "$briface" 2>/dev/null | grep -o 'link/ether [^ ]*' | awk '{printf "%s", $2}')
+			if [ "$current_mac" != "$want_mac" ]; then
+				ip link set "$briface" down 2>/dev/null || true
+				ip link set "$briface" address "$want_mac" 2>/dev/null || true
+				ip link set "$briface" up 2>/dev/null || true
+			fi
 		fi
 	done
+
+	# Kernel leaves a bridge DOWN if all members were bounced. Bring them back,
+	# then re-apply each bridge's own indexed MAC so it does not inherit a port.
+	ip link set "$mesh_bridge" up 2>/dev/null || true
+	ip link set "$cpe_bridge" up 2>/dev/null || true
+	if [ "$vtun_enable" -eq 1 ] && [ -n "$tun_id" ] && [ "$tun_id" -ne 0 ]; then
+		ip link set "$vxlan_bridge" up 2>/dev/null || true
+	fi
+
+	if [ -n "$brmesh_mac" ]; then
+		apply_bridge_mac "$mesh_bridge" "$brmesh_mac" "network.$auto_mesh_network"
+	fi
+	if [ "$portal_detect" -eq 3 ] && [ -n "$brcpe_mac" ]; then
+		apply_bridge_mac "$cpe_bridge" "$brcpe_mac" "network.lan"
+	fi
+	if [ "$vtun_enable" -eq 1 ] && [ -n "$tun_id" ] && [ "$tun_id" -ne 0 ] && [ -n "$vxlan_mac" ]; then
+		apply_bridge_mac "$vxlan_bridge" "$vxlan_mac"
+	fi
 }
 
 # =============================================================================
@@ -7585,12 +8098,12 @@ if [ -z "$1" ] || [ "$1" = "-h" ] || [ $1 = "--help" ] || [ $1 = "help" ]; then
 ####
   Option: force_ipv4_download
   Usage: mesh11sd force_ipv4_download
-    Forces opkg or apk to use ipv4 for its downloads
+    Forces apk (wget) to use ipv4 for its downloads
 
 ####
   Option: download_revert_to_default
   Usage: mesh11sd download_revert_to_default
-    Reverts opkg or apk to default for its downloads
+    Reverts apk (wget) to default for its downloads
 
 ####
   Option: dhcp4_renew
@@ -9354,6 +9867,7 @@ elif [ "$1" = "daemon" ]; then
 	enabled=1 #bit 0
 
 	# Initial conditions
+	cpe_dhcp_set=0
 	link_to_portal=1
 	statusmode=0
 	changed=0
@@ -9402,7 +9916,6 @@ elif [ "$1" = "daemon" ]; then
 	refresh_bridgemac
 
 	/sbin/service odhcpd stop
-	/sbin/service network reload
 
 	if [ -e "$tmpdir/auto_config_test" ] && [ "$auto_config" -eq 0 ]; then
 		autostartup=1
@@ -9434,10 +9947,9 @@ elif [ "$1" = "daemon" ]; then
 
 		done
 
-		# Set ula prefix for forced portal modes
+		# Set ula prefix for forced portal modes (applied by network restart below)
 		if [ "$portal_detect" -eq 0 ] || [ "$portal_detect" -eq 4 ]; then
 			set_ula_prefix "set"
-			/sbin/service network reload
 		fi
 
 		# Force a restart of ethernet ports - some built in switch chips do not initialise on reboot, only on cold start
@@ -9450,7 +9962,34 @@ elif [ "$1" = "daemon" ]; then
 		done
 
 		# Set default dhcp settings for lan
-		if [ "$portal_detect" -ne 4 ]; then
+		if [ "$portal_detect" -eq 4 ]; then
+			mbp_dhcp_lan_defaults
+		elif [ "$portal_detect" -eq 5 ]; then
+			# TPN lan is a mesh peer endpoint, not a DHCP server
+			echo "set dhcp.$auto_mesh_network.dhcpv4='disabled'" | uci batch
+			echo "set dhcp.$auto_mesh_network.dhcpv6='disabled'" | uci batch
+			echo "set dhcp.$auto_mesh_network.ra='disabled'" | uci batch
+			echo "set dhcp.$auto_mesh_network.ignore='1'" | uci batch
+			echo "del_list dhcp.$auto_mesh_network.ra_flags='managed-config'" | uci batch 2> /dev/null
+			echo "del_list dhcp.$auto_mesh_network.ra_flags='other-config'" | uci batch 2> /dev/null
+			echo "add_list dhcp.$auto_mesh_network.ra_flags='none'" | uci batch
+			echo "set network.$auto_mesh_network.proto='dhcp'" | uci batch
+			uci set dhcp.@dnsmasq[0].rebind_protection='0'
+		elif [ "$portal_detect" -eq 3 ]; then
+			# CPE: auto_mesh_network is wan. Lan is the NAT network; wan/mesh is the uplink.
+			# The generic portal branch would set dhcp.wan as server and wan.proto=static.
+			echo "set dhcp.lan.dhcpv4='server'" | uci batch
+			echo "set dhcp.lan.dhcpv6='server'" | uci batch
+			echo "set dhcp.lan.ra='server'" | uci batch
+			echo "set dhcp.lan.ignore='0'" | uci batch
+			echo "set network.lan.proto='static'" | uci batch
+			echo "set network.wan.proto='dhcp'" | uci batch
+			echo "set network.wan.defaultroute='1'" | uci batch
+			echo "set network.wan.peerdns='1'" | uci batch
+			echo "set network.wan.disabled='0'" | uci batch
+			echo "set dhcp.wan.ignore='1'" | uci batch
+			uci set dhcp.@dnsmasq[0].rebind_protection='1'
+		else
 			uci set dhcp.$auto_mesh_network.dhcpv4='server'
 			uci set dhcp.$auto_mesh_network.dhcpv6='server'
 			uci set dhcp.$auto_mesh_network.ra='server'
@@ -9462,8 +10001,6 @@ elif [ "$1" = "daemon" ]; then
 			echo "add_list dhcp.$auto_mesh_network.ra_flags='other-config'" | uci batch 2> /dev/null
 			echo "set network.$auto_mesh_network.proto='static'" | uci batch
 			uci set dhcp.@dnsmasq[0].rebind_protection='1'
-		else
-			mbp_dhcp_lan_defaults
 		fi
 
 
@@ -9490,10 +10027,8 @@ elif [ "$1" = "daemon" ]; then
 		if [ "$portal_use_default_ipv4" -eq 0 ]; then
 
 			if [ "$portal_detect" -eq 3 ]; then
-				# Set the cpe gateway ipv4 address based on mac address
-				. $tmpdir/devicemac
-
-				seedvalue="$devicemac"
+				# Set the cpe gateway ipv4 address based on factory mac address
+				seedvalue="$(get_factory_mac)"
 			else
 				seedvalue="$auto_mesh_id"
 			fi
@@ -9561,6 +10096,8 @@ elif [ "$1" = "daemon" ]; then
 
 			if [ "$wanzoneindex" -le "$zones" ]; then
 				echo "set firewall.@zone[$wanzoneindex].input='ACCEPT'" | uci batch
+				echo "set firewall.@zone[$wanzoneindex].masq='1'" | uci batch
+				echo "set firewall.@zone[$wanzoneindex].mtu_fix='1'" | uci batch
 			else
 				debugtype="err"
 				syslogmessage="Unable to find wan zone"
@@ -9938,6 +10475,14 @@ elif [ "$1" = "daemon" ]; then
 					restart_mesh
 					forced_portal_conf=1
 
+				elif [ "$portal_detect" -eq 5 ] && [ "$commit_all" -eq 0 ] && [ "$forced_portal_conf" -eq 0 ]; then
+					# TPN: same wan-to-trunk move as MBP (UCI + netifd reload)
+					debugtype="notice"
+					syslogmessage="TPN: moving wan onto vxlan trunk"
+					write_to_syslog
+					ensure_wan_on_vxlan_bridge reload
+					forced_portal_conf=1
+
 				elif [ "$portal_detect" -eq 3 ] && [ "$commit_all" -eq 0 ]; then
 
 					if [ "$cpe_conf" -eq 0 ]; then
@@ -9968,12 +10513,36 @@ elif [ "$1" = "daemon" ]; then
 						echo "set dhcp.lan.ra_default='2'" | uci batch
 						echo "set dhcp.lan.dhcpv6='server'" | uci batch
 						echo "set dhcp.lan.ra='server'" | uci batch
+						echo "set dhcp.lan.dhcpv4='server'" | uci batch
+						echo "set network.lan.proto='static'" | uci batch
+						echo "set network.lan.ip6assign='64'" | uci batch
+						if [ -f "$tmpdir/devicemac" ]; then
+							. "$tmpdir/devicemac"
+							generate_ipv4_base "$devicemac"
+							echo "set network.lan.ipaddr='$newipaddr'" | uci batch
+							echo "set network.lan.netmask='255.255.255.0'" | uci batch
+						fi
+						ip link set br-lan up 2>/dev/null
+						echo "set network.wan.proto='dhcp'" | uci batch
+						echo "set network.wan.defaultroute='1'" | uci batch
+						echo "set network.wan.disabled='0'" | uci batch
 						uci set dhcp.@dnsmasq[0].logfacility='-'
 						uci set dhcp.@dnsmasq[0].quietdhcp='1'
 
-						/sbin/service dnsmasq restart
-						/sbin/service odhcpd restart
+						zones=7
+						for zoneindex in $(seq 0 1 $zones); do
+							zone=$(echo "get firewall.@zone[$zoneindex].name" | uci batch)
+							if [ "$zone" = "wan" ]; then
+								echo "set firewall.@zone[$zoneindex].masq='1'" | uci batch
+								echo "set firewall.@zone[$zoneindex].mtu_fix='1'" | uci batch
+								break
+							fi
+						done
+
+						/sbin/service firewall restart
 						restart_mesh
+						/sbin/service dnsmasq restart >/dev/null 2>&1 &
+						/sbin/service odhcpd restart >/dev/null 2>&1 &
 						manage_opennds restart
 						cpe_conf=1
 					fi
@@ -10056,7 +10625,17 @@ elif [ "$1" = "daemon" ]; then
 			echo 2 > /proc/sys/net/ipv6/conf/$device/accept_ra
 		fi
 
+		if [ "$portal_detect" -eq 3 ] || [ "$portal_detect" -eq 4 ]; then
+			echo 0 > "/proc/sys/net/ipv6/conf/br-tun$tun_id/accept_ra" 2> /dev/null
+			configure_mbp_vtunlan
+		fi
+
+		if [ "$portal_detect" -eq 4 ] || [ "$portal_detect" -eq 5 ]; then
+			ensure_wan_on_vxlan_bridge reload
+		fi
+
 		get_portal_type
+		refresh_uplink_on_portal_change
 
 		if [ "$portal_type" = "MBP" ] && [ ! -z "$portal_mac" ] && [ ! -z "$portal_ll" ] && [ ! -z "$mrp_default_ipv6_gw" ]; then
 			if [ "$mrp_mbp_restart" -eq 0 ]; then

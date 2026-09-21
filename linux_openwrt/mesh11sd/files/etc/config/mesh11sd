@@ -3,10 +3,10 @@ config mesh11sd 'setup'
 	###########################################################################################
 	# debuglevel (optional)
 	# Sets the debuglevel
-	# Default: 1 (Notification)
+	# Default: 3 (debug)
 	# Options are 0, silent, 1 notification, 2 info and 3 debug
 	#
-	#option debuglevel '2'
+	#option debuglevel '1'
 
 	###########################################################################################
 	# enabled (optional)
@@ -224,6 +224,15 @@ config mesh11sd 'setup'
 	#option mesh_phy_index '2'
 
 	###########################################################################################
+	# mesh_multi_interfaces (optional)
+	#
+	# When set to 'enabled', more than one mesh interface may be brought up
+	# (for example on more than one radio).
+	# Default: disabled
+	#
+	#option mesh_multi_interfaces 'enabled'
+
+	###########################################################################################
 	# country (optional)
 	#
 	# Set a valid country code for all radios
@@ -405,12 +414,22 @@ config mesh11sd 'setup'
 	# Note: All vtun options require the ip-full and vxlan packages to be installed, otherwise the options will be ignored
 	#
 	# sets the Interface cost of the vxtunnel network
-	# Default: 10
+	# Default: 65525
 	# Can be set to any value from 0 to 65534
 	# Setting to 0 disables path cost setting
 	#
 	# Example:
 	#option vtun_path_cost '100'
+
+	###########################################################################################
+	# vtun_isolate (optional)
+	#
+	# When set to 1, forwarding between the mesh/lan zone and the vxtunnel zone is blocked.
+	# Guest (VTunnel) clients then cannot reach the mesh LAN, only the portal uplink.
+	#
+	# Default: 0 (disabled)
+	#
+	#option vtun_isolate '1'
 
 	###########################################################################################
 	# mesh_gate_enable (optional)
@@ -637,14 +656,14 @@ config mesh11sd 'setup'
 	# mesh_node_mobility_level (optional)
 	#
 	# Sets the mesh node mobility level
-	# Supported levels are 0, 1, 2, 3 and 4
+	# Supported levels are 0, 1, 2, 3, 4, 5 and 6
 	# Level 0 - not recommended for normal use - node must be stationary and carefully positioned
 	# Level 1 - Enables mesh_hwmp_rts for on air collision avoidance, enables transmit queue and aql_threshold to minimise latency, enables rapid path convergence
-	#	Level 1 supports inter node relative velocities up to 1.5 metres per second
+	# Level 2 - supports inter node relative velocities up to 1.5 metres per second
+	# Levels 3 to 5 - support progressively higher relative inter node velocities at the expense of a larger backhaul overhead
+	# Level 6 - PA / voice optimised (push-to-talk announcement use-case)
 	#
-	# Levels 2 to 4 support progressively higher relative inter node velocities at the expense of a larger and larger backhaul overhead
-	#
-	# Default: 1
+	# Default: 2
 	#
 	# Example:
 	#option mesh_node_mobility_level '2'
@@ -703,6 +722,42 @@ config mesh11sd 'setup'
 	#
 	# Example: Set log level to debug
 	#option odhcpd_log_level '7'
+
+	###########################################################################################
+	# wpad_debuglevel (optional)
+	#
+	# Sets wpa_supplicant verbosity via the wpad init script.
+	# 0-2 QUIET/ERROR/WARNING, 3 INFO, 4 DEBUG, 5 EXCESSIVE
+	# Default: 2
+	#
+	#option wpad_debuglevel '3'
+
+	###########################################################################################
+	# move_ethernet_to_vxlan_bridge (optional)
+	#
+	# When enabled, physical lan ethernet ports are moved onto the vxlan trunk bridge.
+	# Not used in CPE mode (portal_detect 3).
+	# Default: 0 (disabled)
+	#
+	#option move_ethernet_to_vxlan_bridge '1'
+
+	###########################################################################################
+	# connect_show_all (optional)
+	#
+	# When 1, `mesh11sd connect` with no Node ID lists reachable nodes including island meshes.
+	# When 0, only nodes in this contiguous mesh are listed (same as `connect filter_list`).
+	# Default: 1
+	#
+	#option connect_show_all '0'
+
+	###########################################################################################
+	# mesh_metric_threshold (optional)
+	#
+	# Hysteresis for portal selection (get_portal_ula).
+	# A candidate must beat the current portal by at least this airtime metric delta.
+	# Default: 50
+	#
+	#option mesh_metric_threshold '50'
 
 config mesh11sd 'mesh_params'
 	# A minimum set of parameters is automatically set for initial startup and do not have to be configured here
