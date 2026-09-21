@@ -8098,12 +8098,12 @@ if [ -z "$1" ] || [ "$1" = "-h" ] || [ $1 = "--help" ] || [ $1 = "help" ]; then
 ####
   Option: force_ipv4_download
   Usage: mesh11sd force_ipv4_download
-    Forces opkg or apk to use ipv4 for its downloads
+    Forces apk (wget) to use ipv4 for its downloads
 
 ####
   Option: download_revert_to_default
   Usage: mesh11sd download_revert_to_default
-    Reverts opkg or apk to default for its downloads
+    Reverts apk (wget) to default for its downloads
 
 ####
   Option: dhcp4_renew
