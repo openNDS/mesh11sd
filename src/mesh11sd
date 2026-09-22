@@ -4996,6 +4996,8 @@ get_portal_ula() {
 			ula_base=$(echo "$ula_prefix" | awk -F"::/" '{print $1}')
 			portal_ula="$ula_base:$ula_subnet::1"
 			link_to_portal=0
+
+			echo "portal_ula=\"$portal_ula\"; ula_subnet=\"$ula_subnet\"; portal_mac=\"$factory_mac\"; metric=0; hops=0" > "$tmpdir/active_portal"
 			return 0
 		fi
 	fi
@@ -8555,7 +8557,15 @@ elif [ "$1" = "status" ]; then
 				macrouting=$(iw dev $iface mpath dump 2>/dev/null | awk -F" " 'NR>1 {printf "%s/%s/%s/%s/%s/%s/%s ", $1, $2, $5, $11, $12, $4, $10}')
 				peer_macs="$devicemac ""$(iw dev $iface mpath dump 2>/dev/null | awk -F" " 'NR>1 {printf "%s ", $1}')"
 
-				echo "      \"this_node\":\"$devicemac\","
+				echo "      \"this_node\":\"$factory_mac\","
+
+				if [ -f "$tmpdir/active_portal" ]; then
+					. "$tmpdir/active_portal"
+					echo "      \"active_portal\":\"$portal_mac\","
+					echo "      \"portal_ula\":\"$portal_ula\","
+					echo "      \"multicast_group\":\"ff02::$ula_subnet\","
+				fi
+
 				echo "      \"active_peers\":\"$peers\","
 				echo "      \"peers\":{"
 
@@ -9483,10 +9493,9 @@ elif [ "$1" = "dhcp4_renew" ]; then
 
 elif [ "$1" = "get_portal_ula" ]; then
 	get_portal_ula "$2"
-	if [ "$detected_state" = "peer" ]; then
+
+	if [ -f "$tmpdir/active_portal" ]; then
 		cat "$tmpdir/active_portal"
-	else
-		echo "$portal_ula"
 	fi
 
 	exit 0
