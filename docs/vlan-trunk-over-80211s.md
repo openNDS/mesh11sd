@@ -1,0 +1,691 @@
+# 802.11s - VLAN Trunk Limitations
+
+## 1. Introduction
+
+This document describes how to pass an 802.1Q VLAN trunk across an OpenWrt 802.11s mesh by carrying the VLAN tag inside the wireless payload. 802.11s has no VLAN field of its own, so this relies on Linux and the radio driver leaving those bytes untouched, which is outside the mesh standard and cannot be guaranteed for every driver, firmware, or node layout. What follows is a technical deep dive into why the method sometimes works, where it fails, and how to configure it.
+
+## 2. Overview
+
+The use case is a small mesh that behaves as one managed switch. One node, the portal, connects to the Internet and hands out addresses. The other nodes are bridges. They share the same VLANs and do not route between them. The mesh link is the trunk that joins the nodes. Access points and Ethernet ports are ordinary ports on those VLANs.
+
+The configuration is normal OpenWrt UCI. It needs no tunnel package. The full files are in [section 11](#11-example): one VLAN-aware bridge, the mesh interface as a tagged port, and each SSID bound to a single VLAN.
+
+It is aimed at a tiny mesh of two or three nodes, placed so that every node can hear the others and traffic stays on a single hop. A second hop is not something to plan on. The mesh will use one as soon as a direct link weakens, and a multi-hop path is not a VLAN feature of 802.11s. Read [section 3](#3-security-warning) before relying on this, and treat [section 12](#12-checks) as the test that it is actually working on your hardware.
+
+## 3. Security Warning
+
+You use this at your own risk. It is reasonable only when every mesh node is under your control. If that is not true, use a tunnel instead ([section 9](#9-when-this-is-the-wrong-tool)).
+
+**Every mesh node can read every VLAN.** The mesh password protects the frames on the air, and every node that knows that password can decrypt them. A guest VLAN is not hidden from the other mesh nodes. Any of them can read that traffic, copy it, or move it onto another VLAN. The detail is in [section 8.1](#81-every-mesh-node-can-read-every-vlan).
+
+**Isolation is only as good as the worst bridge.** The wireless link does not enforce the VLAN boundaries. Each node does, with its own bridge settings. One node set up wrongly joins the VLANs together for the whole mesh, and nothing reports an error. The detail is in [section 8.2](#82-isolation-is-only-as-good-as-the-worst-bridge).
+
+## 4. What is being carried
+
+An 802.11s mesh can pass an 802.1Q trunk between nodes. The VID is not a field in the mesh header. The four tag bytes ride inside the MSDU, as an ordinary EtherType `0x8100` plus the tag control information, and mesh forwarding copies that MSDU from hop to hop.
+
+Each node then behaves like a managed switch:
+
+- the mesh vif is a tagged trunk port
+- Ethernet ports and access-point interfaces are access ports, or further trunks
+- the Linux bridge, with VLAN filtering on, is what keeps the VLANs apart
+
+The mesh itself stays one bridged LAN at layer 2. HWMP paths, the mesh proxy table, and broadcast flooding are all keyed by MAC address. They do not know which VLAN a frame belongs to. That is workable on a small mesh of trusted nodes, and it is the source of every limitation below.
+
+Tested shape of this setup: softmac drivers that let mac80211 build the 802.11 frame (mt76 in particular), OpenWrt 23.05 or newer, a handful of nodes, a handful of VLANs. Confirm it on your own hardware with the checks at the end. Fullmac firmware that rewrites Ethernet headers is a poor fit.
+
+## 5. Frame layout
+
+A mesh data frame is a QoS Data frame with ToDS and FromDS set, plus a Mesh Control field in the body. A typical unicast frame on the air:
+
+```
+| FC | Dur | Addr1 RA | Addr2 TA | Addr3 | Seq | Addr4 | QoS | Mesh Control | MSDU | FCS |
+| 2  |  2  | 6        | 6        | 6     |  2  | 6     |  2  | 6, 12, or 18 | ...  |  4  |
+```
+
+The addresses are:
+
+| Field | Meaning |
+| --- | --- |
+| Addr1, RA | Next-hop radio, this hop only |
+| Addr2, TA | Transmitting radio, this hop only |
+| Addr3 / Addr4 | Mesh destination and mesh source when both ToDS and FromDS are set |
+| Mesh Control extra addresses | End-station Ethernet DA and SA when the frame was bridged in from a non-mesh device |
+
+Mesh Control itself is:
+
+| Octets | Contents |
+| --- | --- |
+| 1 | Flags, including the Address Extension mode |
+| 1 | TTL |
+| 4 | Mesh sequence number |
+| 0, 6, or 12 | Address extension |
+
+Address extension mode 0 is a mesh-to-mesh frame (Mesh Control is 6 bytes). Mode 2 is the usual case for a client or Ethernet station bridged into the mesh: 18-byte Mesh Control, with the original Ethernet destination and source in the extension. Those addresses still do not contain a VID.
+
+There is no TPID, no TCI, and no VID anywhere in the MAC header or in Mesh Control. The 802.11 QoS Control field has a 3-bit TID. That TID is the airtime queue. It is not the 802.1Q PCP, and nothing in the standard copies one into the other.
+
+### 5.1 Where the tag sits inside the MSDU
+
+mac80211 encapsulates Ethernet using RFC 1042 SNAP. The MSDU of an untagged IPv4 frame is:
+
+```
+AA AA 03  00 00 00  08 00  | IPv4 packet
+LLC       OUI       IPv4
+```
+
+When the Ethernet frame handed to the mesh vif still has an inline 802.1Q header, the EtherType at that moment is `0x8100`, and the two TCI bytes plus the real EtherType follow it. The MSDU becomes:
+
+```
+AA AA 03  00 00 00  81 00  | PCP DEI VID | 08 00 | IPv4 packet
+LLC       OUI       TPID    TCI (2 bytes)  real EtherType
+```
+
+Those four extra bytes (TPID already occupies the EtherType slot, plus the 2-byte TCI) are ordinary MSDU payload. Intermediate nodes that forward in mac80211 do not parse past Mesh Control, so the tag is copied through with the rest of the MSDU.
+
+A 1500-byte IPv4 packet with one tag produces an MSDU of 1512 bytes (8-byte SNAP header, 4-byte tag, 1500-byte packet). The 802.11 maximum MSDU is 2304 bytes, so a single tag fits. QinQ adds another 4 bytes and needs a larger mesh MTU.
+
+CCMP (SAE mesh) encrypts the frame body. Mesh Control and the MSDU, tag included, sit inside that protected body. Encryption is hop by hop: the forwarder decrypts with the previous peer's pairwise key, decrements TTL, and encrypts a new frame for the next peer. The tag bytes are part of what is copied. They are visible to every mesh node that holds the mesh key.
+
+## 6. What Linux has to do for the tag to be inline
+
+Two different places can hold a VLAN tag, and only one of them reaches the air.
+
+1. **Inline**, in the packet buffer: EtherType `0x8100`, then the TCI. This is what becomes the MSDU above.
+2. **In skb metadata** (`skb->vlan_tci` / `skb->vlan_proto`). The Ethernet header then already shows the inner EtherType (`0x0800`, `0x86DD`, …). mac80211 encapsulates that inner EtherType. The VID never leaves the machine.
+
+The bridge and the 802.1Q code use metadata whenever the egress netdev advertises VLAN transmit offload (`NETIF_F_HW_VLAN_CTAG_TX`). mac80211 mesh vifs do not implement VLAN-aware firmware offload. In current mac80211 (the versions shipped in OpenWrt 24.10 and 25.12) `ieee80211_iftype_supports_hdr_offload()` is true only for AP and station interfaces, so a mesh vif is not put on the 802.3-encap offload path either. The driver is handed an 802.11 frame that mac80211 has already built.
+
+On egress, the bridge transmit path therefore inserts the metadata tag into the buffer (`__vlan_hwaccel_push_inside`) before it calls the mesh vif's `ndo_start_xmit`. From that point the fast mesh transmit path (`ieee80211_mesh_xmit_fast`) and the slow path do the same thing with it: they read the EtherType at offset 12, and `0x8100` is a normal EtherType (it is greater than `0x0600`, so it is not treated as an 802.3 length). The cached or built SNAP header is prepended and the `0x8100` plus TCI stay in the MSDU.
+
+Multicast skips the fast path. Power-save peers skip it too. Both fall back to the slow path, which SNAP-encapsulates `0x8100` the same way.
+
+On receive, mac80211 rebuilds an Ethernet header. If the MSDU started with SNAP + `0x8100`, the netdev delivers a tagged Ethernet frame. `__netif_receive_skb_core` pulls an inline tag back into `skb->vlan_tci`, and the VLAN-aware bridge accepts or drops it according to that port's VLAN membership.
+
+### 6.1 What an intermediate hop actually forwards
+
+With `mesh_fwding` left at 1 (the default, and required for this design):
+
+1. The previous hop's frame is decrypted.
+2. HWMP has already chosen the next hop from the mesh destination address and the path metric.
+3. TTL in Mesh Control is decremented. The MSDU is not rewritten.
+4. A new frame is encrypted for the next peer and sent.
+
+The local bridge on that intermediate node does not see the frame, so it cannot strip the tag, and it also cannot filter by VLAN. Filtering happens only at the node where the frame enters the mesh and at the node where it leaves.
+
+If `mesh_fwding` is 0, mac80211 does not forward. That is the setting batman-adv requires, and it is a different design. Leaving it at 0 and hoping the bridge will re-inject tagged frames is not this setup.
+
+## 7. What the mesh will not do
+
+HWMP selects a path for a destination MAC. The mesh proxy (MPP) table records which mesh node advertises an external MAC. Broadcast and unknown-unicast are flooded to every peer, and the recent-multicast cache suppresses duplicates by source MAC and mesh sequence number.
+
+Consequences, all of which follow from "one MAC, one path, one flood domain":
+
+- Two stations with the same MAC on different VLANs are one proxy entry. Unicast for both VIDs is delivered to whichever mesh node last advertised that MAC.
+- A broadcast on VLAN 10 is transmitted to every mesh node, including nodes with no VLAN 10 port. Those nodes spend airtime on it. Their bridge drops it on egress if, and only if, the mesh port has no untagged membership.
+- IGMP and MLD snooping on the bridge prune Ethernet ports. They do not prune this flood. Snooping runs in the bridge, and transit multicast is forwarded inside mac80211 before the bridge sees it.
+- The whole MBSS is one STP topology if you enable spanning tree. Linux bridge STP is not per VLAN. Blocking the mesh port blocks every VLAN on it.
+
+PCP follows the same rule. The TCI is preserved as payload, so a receiver rebuilds the same PCP that was sent. The TID used on the air comes from `skb->priority` at the ingress node. Unless you map PCP to skb priority yourself, a frame tagged PCP 6 still contends as best effort.
+
+## 8. Limitations
+
+### 8.1 Every mesh node can read every VLAN
+
+Hop-by-hop CCMP means any node that has the SAE key can decrypt every VLAN's traffic, retag it, or bridge two VIDs together. VLAN IDs on this kind of trunk are an administrative separation among nodes you trust. They are not a security boundary against a node that has joined the mesh.
+
+Use a long SAE passphrase. Do not give the mesh key to a device that should only see the guest VLAN.
+
+### 8.2 Isolation is only as good as the worst bridge
+
+The tag survives a hop. It does not decide where the frame is delivered. Delivery is decided by the VLAN-aware bridge on the egress node.
+
+The mesh vif must be a **tagged** member of each VLAN it carries, with **no PVID** and no "egress untagged" flag. An untagged frame arriving on that port, including a frame whose tag was lost, is then dropped. If the mesh port has a PVID, a stripped tag is silently accepted into that VLAN.
+
+One node with VLAN filtering off, or with the mesh vif dropped into `br-lan` as a normal access port, merges the VLANs for everyone whose traffic passes through it.
+
+### 8.3 Drivers that rewrite the MSDU
+
+This depends on mac80211 building the 802.11 header and on the firmware transmitting that buffer unchanged.
+
+| Driver | What to expect |
+| --- | --- |
+| mt76 (MT7622, MT7915, MT7981, MT7986, and similar Filogic / MT76 parts) | The usual working case. Several VLANs across two hops have been run this way on OpenWrt 23.05 and 25.12. |
+| ath9k | Same mac80211 encapsulation path. A reasonable candidate; still run the two-hop check. |
+| ath10k, ath10k-ct | Firmware handles a lot of the data path. Do not use this design on these radios. |
+| ath11k, ath12k | Depends on the firmware's native-wifi path. Treat as unproven until the two-hop isolation check passes on your build. |
+| brcmfmac and other fullmac | The firmware bridges Ethernet, and this design is the wrong tool. |
+
+A driver that advertises VLAN transmit offload on the mesh vif will leave the tag in `skb->vlan_tci`. Confirm with the checks below. If `ethtool -k mesh0` shows `tx-vlan-hw-insert: on` and a capture on `mesh0` shows no `802.1Q` header, turn it off on the **mesh** vif only:
+
+```
+ethtool -K mesh0 tx-vlan-offload off rx-vlan-offload off
+```
+
+Leave offload enabled on the switch ports. DSA uses metadata between the switch and the bridge; that is what you want on `lan1`, and the bridge then writes an inline tag toward `mesh0`.
+
+### 8.4 A-MSDU
+
+For a mesh A-MSDU the Mesh Control field lives in the subframe header, not immediately after the 802.11 header (IEEE 802.11-2020, Figure 9-70). mac80211 used to parse this wrong and corrupt forwarded mesh A-MSDU subframes. The fix is `986e43b19ae9` ("wifi: mac80211: fix receiving A-MSDU frames on mesh interfaces", February 2023), which is in OpenWrt 23.05 and later. Older releases are not a safe baseline for this trunk.
+
+If tags are intact at low rate and disappear when the link is busy, aggregation is the first place to look.
+
+### 8.5 MTU
+
+One 802.1Q tag adds 4 bytes to the Ethernet frame. The bridge allows `VLAN_HLEN` (4 bytes) of slack beyond the device MTU, so a 1500-byte IP packet with a single tag is often forwarded onto a mesh vif whose MTU is still 1500. Set the mesh vif MTU to **1504** anyway, so the extra tag is inside the MTU rather than inside that slack. Do not raise the IP MTU of clients; PMTU toward the internet is still 1500.
+
+QinQ (`0x88a8` plus an inner `0x8100`) needs a mesh MTU of at least 1508. The example below is a single tag, not QinQ.
+
+The mesh vif's maximum MTU is the driver's maximum MSDU, capped at 2304. There is no benefit to setting 2304 here, and a larger MTU lets the bridge present frames the Ethernet ports will only drop.
+
+### 8.6 Broadcast cost
+
+ARP, NDP, DHCP, RA, and mDNS from every VLAN are flooded across the whole mesh, at the multicast rate, on every hop. Two VLANs roughly double this background load compared with a single bridged LAN. This is the practical limit on how many VLANs a 2.4 GHz backhaul will tolerate, well before unicast throughput is the problem. Prefer a 5 GHz (or 6 GHz) radio for the backhaul.
+
+### 8.7 Loops with a wired backbone
+
+A cable between two nodes that also share the mesh is a loop for every VLAN on the bridge. Pick one:
+
+- Do not connect the nodes with Ethernet as well as mesh, or
+- Turn STP on, and give the mesh port a high path cost so the cable is preferred when it is up.
+
+STP on this bridge is a single instance. If it blocks `mesh0`, it blocks VLAN 10 and VLAN 20 together. Per-VLAN spanning tree is not what the Linux bridge is doing here.
+
+### 8.8 Proxy ARP, 802.11k/v, and fast transition
+
+A node that trunks a VLAN and has no address of its own on that VLAN cannot answer proxy ARP for it, and it cannot run client steering that depends on being a member of that subnet. Access points bridged to the VLAN still work. Features that need the AP to hold an address in the client subnet belong on a node that has one.
+
+## 9. When this is the wrong tool
+
+Use an overlay instead when any of the following is true:
+
+- a mesh node must not be able to see another VLAN's traffic
+- the radios are fullmac, ath10k, or anything that has failed the two-hop check
+- the mesh is large, mobile, or has a high hop count, so the all-VLAN broadcast flood dominates
+- you want the backhaul to be its own addressed network, with the trunk encapsulated on top
+
+The usual overlays on top of an 802.11s underlay:
+
+| Overlay | What it changes |
+| --- | --- |
+| VXLAN | The trunk is the payload of UDP. The mesh carries IP packets of one underlay network. This is what mesh11sd builds (a `vxlan` interface in `br-tun`). Overhead is an outer Ethernet header plus IP, UDP, and 8 bytes of VXLAN, and a second VLAN tag if the inner frame is tagged. IPv6 underlay costs more than IPv4. Drivers that can carry a plain tag can fail VXLAN because the outer packet no longer fits the MSDU or because they mishandle the larger frame. |
+| GRETAP | Same idea, point to point, one tunnel per pair of nodes. |
+| batman-adv | Set `mesh_fwding` to 0 so batman-adv does the forwarding. `bat0` is the interface you put in the VLAN bridge. Different scaling rules, and its own MTU and multicast behaviour. |
+
+mesh11sd will rewrite wireless interfaces, bridges, and the vxlan tunnel when its daemon is running. Do not combine this page's bridge with mesh11sd auto-configuration. Use one or the other.
+
+## 10. Packages
+
+Install a full hostapd/wpa_supplicant build. `wpad-basic-mbedtls` does not provide SAE mesh.
+
+On OpenWrt 25.12 and later:
+
+```
+apk update
+apk add wpad-mbedtls ethtool tcpdump
+```
+
+`wpad-mesh-mbedtls` is enough if you do not need WPA3 on the access points. Remove `wpad-basic-mbedtls` first if it is installed. `ethtool` and `tcpdump` are only for the checks.
+
+Bridge VLAN filtering is built into the OpenWrt kernel bridge on 23.05, 24.10, and 25.12. No extra VLAN package is required for the example.
+
+## 11. Example
+
+Two VLANs:
+
+| VLAN | Use | IPv4 on the portal | Ports |
+| --- | --- | --- | --- |
+| 10 | Management and ordinary LAN | 192.168.10.1/24 | `lan1` access, AP "house" |
+| 20 | Guest | 192.168.20.1/24 | `lan2` access, AP "guest" |
+
+`mesh0` is tagged in both. `wan` stays the upstream Internet interface and is not a bridge port. Remote nodes are bridges: DHCP client on VLAN 10, no address on VLAN 20, same SSIDs and the same mesh.
+
+Every node uses the same country, the same mesh channel, the same `mesh_id`, and the same SAE key. Access points on the mesh radio are stuck to that channel. Put the client APs on the other radio if you want them on a different channel.
+
+The port names `lan1`, `lan2`, and `wan` are DSA names. On a swconfig device, or if your DSA switch uses different names, keep the names from the image you flashed. The VLAN logic does not change; the `list ports` lines do.
+
+Replace the SAE key before this touches a real network.
+
+### 11.1 Portal: /etc/config/network
+
+```
+config interface 'loopback'
+	option device 'lo'
+	option proto 'static'
+	option ipaddr '127.0.0.1'
+	option netmask '255.0.0.0'
+
+config globals 'globals'
+	option ula_prefix 'auto'
+
+config device
+	option name 'br-lan'
+	option type 'bridge'
+	option vlan_filtering '1'
+	option bridge_empty '1'
+	list ports 'lan1'
+	list ports 'lan2'
+	list ports 'lan3'
+	list ports 'lan4'
+
+config bridge-vlan
+	option device 'br-lan'
+	option vlan '10'
+	list ports 'lan1:u*'
+	list ports 'mesh0:t'
+
+config bridge-vlan
+	option device 'br-lan'
+	option vlan '20'
+	list ports 'lan2:u*'
+	list ports 'mesh0:t'
+
+# Unused switch ports stay out of both VLANs on purpose.
+# A wired trunk toward another managed switch would be:
+#   list ports 'lan4:t'
+# on both bridge-vlan sections, and on neither as ':u*'.
+
+config interface 'trunk'
+	option device 'br-lan'
+	option proto 'none'
+
+config interface 'lan'
+	option device 'br-lan.10'
+	option proto 'static'
+	option ipaddr '192.168.10.1'
+	option netmask '255.255.255.0'
+	option ip6assign '60'
+
+config interface 'guest'
+	option device 'br-lan.20'
+	option proto 'static'
+	option ipaddr '192.168.20.1'
+	option netmask '255.255.255.0'
+	option ip6assign '60'
+
+config interface 'wan'
+	option device 'wan'
+	option proto 'dhcp'
+
+config interface 'wan6'
+	option device 'wan'
+	option proto 'dhcpv6'
+```
+
+`mesh0` is not listed under `config device`. It does not exist until wifi comes up. `option network 'trunk'` adds it to `br-lan` at that moment, and the `bridge-vlan` lines that name `mesh0:t` are what mark it tagged. `option bridge_empty '1'` keeps `br-lan` up before the mesh vif appears.
+
+`:u*` means untagged egress and PVID. `:t` means tagged egress and no PVID. The mesh lines must not grow a `*` or a `u`.
+
+### 11.2 Portal: /etc/config/wireless
+
+Leave each `wifi-device` `option path` as the value already on the router. The block below only shows the options that have to match across nodes.
+
+```
+config wifi-device 'radio0'
+	option type 'mac80211'
+	option path 'REPLACE_WITH_THE_EXISTING_5GHZ_PATH'
+	option band '5g'
+	option channel '36'
+	option htmode 'HE80'
+	option country 'GB'
+	option disabled '0'
+
+config wifi-iface 'mesh'
+	option device 'radio0'
+	option mode 'mesh'
+	option ifname 'mesh0'
+	option network 'trunk'
+	option mesh_id 'house-backhaul'
+	option encryption 'sae'
+	option key 'replace-with-a-long-mesh-passphrase'
+	option mesh_fwding '1'
+	option mtu '1504'
+	option disabled '0'
+
+config wifi-device 'radio1'
+	option type 'mac80211'
+	option path 'REPLACE_WITH_THE_EXISTING_24GHZ_PATH'
+	option band '2g'
+	option channel '6'
+	option htmode 'HE20'
+	option country 'GB'
+	option disabled '0'
+
+config wifi-iface 'ap_lan'
+	option device 'radio1'
+	option mode 'ap'
+	option ssid 'house'
+	option encryption 'sae-mixed'
+	option key 'replace-with-the-lan-wifi-key'
+	option network 'lan'
+	option disabled '0'
+
+config wifi-iface 'ap_guest'
+	option device 'radio1'
+	option mode 'ap'
+	option ssid 'guest'
+	option encryption 'sae-mixed'
+	option key 'replace-with-the-guest-wifi-key'
+	option network 'guest'
+	option isolate '1'
+	option disabled '0'
+```
+
+`option network 'lan'` on an AP, where `lan` is `br-lan.10`, makes netifd add that AP to `br-lan` as an untagged PVID 10 port. `guest` does the same for VLAN 20. That is access-port behaviour, which is what a client SSID wants. The mesh iface is the only one bound to `trunk`.
+
+`option isolate '1'` stops clients associated to that AP from talking to each other at that AP. It does not filter guests bridged in from `mesh0` or from `lan2`. Guest separation between nodes is the VLAN, plus the firewall zone on the portal.
+
+`sae-mixed` on the APs lets WPA2 and WPA3 clients associate. The mesh iface stays `sae` only. Mixing `psk2` into the mesh is a different, weaker backhaul; do not do it on some nodes and not others.
+
+### 11.3 Portal: DHCP and firewall
+
+`/etc/config/dhcp` on the portal:
+
+```
+config dhcp 'lan'
+	option interface 'lan'
+	option start '100'
+	option limit '150'
+	option leasetime '12h'
+	option dhcpv4 'server'
+	option dhcpv6 'server'
+	option ra 'server'
+
+config dhcp 'guest'
+	option interface 'guest'
+	option start '100'
+	option limit '150'
+	option leasetime '1h'
+	option dhcpv4 'server'
+	option dhcpv6 'server'
+	option ra 'server'
+
+config dhcp 'trunk'
+	option interface 'trunk'
+	option ignore '1'
+```
+
+In `/etc/config/firewall`, keep the existing `wan` zone. Point the `lan` zone at the `lan` network (VLAN 10), and add a guest zone that can reach the Internet and cannot reach LAN:
+
+```
+config zone
+	option name 'lan'
+	option input 'ACCEPT'
+	option output 'ACCEPT'
+	option forward 'ACCEPT'
+	list network 'lan'
+
+config zone
+	option name 'guest'
+	option input 'REJECT'
+	option output 'ACCEPT'
+	option forward 'REJECT'
+	list network 'guest'
+
+config forwarding
+	option src 'lan'
+	option dest 'wan'
+
+config forwarding
+	option src 'guest'
+	option dest 'wan'
+```
+
+The firewall sees forwarded **IP** that was addressed to the router or routed between zones. It does not filter frames the bridge switches from `mesh0` to `lan1`. L2 separation is the `bridge-vlan` membership. Leaving `guest` out of the `lan` zone is what stops the router from routing guest clients onto the LAN addresses.
+
+`wan` masquerading stays on the `wan` zone, as in the default firewall. Guest Internet access uses that same masquerade via the `guest → wan` forwarding.
+
+### 11.4 Remote mesh node
+
+Same `/etc/config/wireless` as the portal. Same `bridge-vlan` sections, so `mesh0` is still a tagged member and the local ports are still access ports.
+
+`/etc/config/network` differs in the layer-3 interfaces. There is no `wan`. VLAN 10 is a DHCP client. VLAN 20 is bridged and has no address, so this node cannot be a router for guests and cannot answer proxy ARP on that VLAN:
+
+```
+config interface 'loopback'
+	option device 'lo'
+	option proto 'static'
+	option ipaddr '127.0.0.1'
+	option netmask '255.0.0.0'
+
+config device
+	option name 'br-lan'
+	option type 'bridge'
+	option vlan_filtering '1'
+	option bridge_empty '1'
+	list ports 'lan1'
+	list ports 'lan2'
+	list ports 'lan3'
+	list ports 'lan4'
+
+config bridge-vlan
+	option device 'br-lan'
+	option vlan '10'
+	list ports 'lan1:u*'
+	list ports 'mesh0:t'
+
+config bridge-vlan
+	option device 'br-lan'
+	option vlan '20'
+	list ports 'lan2:u*'
+	list ports 'mesh0:t'
+
+config interface 'trunk'
+	option device 'br-lan'
+	option proto 'none'
+
+config interface 'lan'
+	option device 'br-lan.10'
+	option proto 'dhcp'
+
+config interface 'guest'
+	option device 'br-lan.20'
+	option proto 'none'
+```
+
+`/etc/config/dhcp` on the remote node, so it does not also hand out leases:
+
+```
+config dhcp 'lan'
+	option interface 'lan'
+	option ignore '1'
+	option dhcpv6 'disabled'
+	option ra 'disabled'
+
+config dhcp 'guest'
+	option interface 'guest'
+	option ignore '1'
+	option dhcpv6 'disabled'
+	option ra 'disabled'
+```
+
+Keep the default firewall on the remote node, with the `lan` zone covering the `lan` network only. Do not add a forwarding from `guest` to `lan`. With `proto 'none'` on `guest`, the node has nothing to route there.
+
+Apply on each node:
+
+```
+wifi reload
+service network restart
+```
+
+Then run the checks before moving clients across.
+
+### 11.5 Optional: make the portal a mesh root
+
+Not required for the trunk. On a mesh of more than two nodes it gives HWMP a stable root. These parameters often do not stick if they are only present in UCI, because they have to be set after the mesh vif is up. On the portal, `/etc/hotplug.d/iface/50-mesh-root`:
+
+```
+#!/bin/sh
+[ "$ACTION" = "ifup" ] || exit 0
+[ "$INTERFACE" = "trunk" ] || exit 0
+[ -d /sys/class/net/mesh0 ] || exit 0
+iw dev mesh0 set mesh_param mesh_hwmp_rootmode 4
+iw dev mesh0 set mesh_param mesh_gate_announcements 1
+```
+
+On remote nodes, `mesh_hwmp_rootmode 2` (proactive PREQ to the root) is the matching choice. `chmod 755` the hotplug script.
+
+### 11.6 Optional: Ethernet plus mesh
+
+If two nodes are also cabled together, turn on STP on `br-lan` (`option stp '1'`) and make the mesh the expensive link. `/etc/hotplug.d/iface/50-mesh-stp-cost`:
+
+```
+#!/bin/sh
+[ "$ACTION" = "ifup" ] || exit 0
+[ "$INTERFACE" = "trunk" ] || exit 0
+brctl setpathcost br-lan mesh0 65535
+```
+
+Without that cost, STP may block the cable and leave the mesh as the forwarding path, or it may flap. With the cost set, the cable carries traffic while it is up, and the mesh takes over when the cable is unplugged. Remember that blocking `mesh0` blocks every VLAN.
+
+### 11.7 A pure wireless trunk, with no local VLANs
+
+Sometimes a node should extend a trunk and terminate nothing: one Ethernet port in, the mesh out, tags untouched. That is a VLAN-unaware bridge between a port that already carries inline tags and `mesh0`.
+
+```
+config device
+	option name 'br-trunk'
+	option type 'bridge'
+	option vlan_filtering '0'
+	option bridge_empty '1'
+	list ports 'eth1'
+
+config interface 'trunk'
+	option device 'br-trunk'
+	option proto 'none'
+```
+
+The mesh iface uses `option network 'trunk'` and `option mtu '1504'` as above.
+
+This only works if `eth1` delivers the `0x8100` header in the frame buffer. A DSA port configured as an access port does not: the switch has already consumed the tag. On DSA, a trunk port is expressed with bridge VLAN filtering (the main example), not with this dumb bridge. Use this form for a dedicated Ethernet interface that is already a trunk, such as a USB adapter plugged into a managed switch.
+
+You cannot hang an access-point SSID for "VLAN 20 only" off `br-trunk`. There is no per-VID port. That needs the VLAN-aware bridge from the main example.
+
+## 12. Checks
+
+Run these on every node after `wifi` is up. `mesh0` in the examples is the `option ifname`.
+
+### 12.1 The mesh port is in the bridge
+
+`brctl` is the bridge utility included with OpenWrt. It does not print VLAN ids.
+
+```
+brctl show
+```
+
+A working portal lists `mesh0` under `br-lan`, with the Ethernet ports and the AP interfaces (names vary):
+
+```
+bridge name     bridge id               STP enabled     interfaces
+br-lan          8000.aabbccddeeff       no              lan1
+                                                        lan2
+                                                        mesh0
+                                                        phy1-ap0
+                                                        phy1-ap1
+```
+
+If `mesh0` is missing, `option network 'trunk'` did not add it to the bridge. Fix that, then `service network restart` and `wifi reload`. Whether `mesh0` is tagged, rather than an untagged access port, is the tcpdump check in section 12.2. A port with a PVID shows no `802.1Q` header. Fix the `bridge-vlan` lines so the port name matches `option ifname`, then reload and run that capture again.
+
+### 12.2 The tag is inline on the mesh netdev
+
+From a client on VLAN 10, generate some traffic, then on a mesh node:
+
+```
+tcpdump -e -i mesh0 -c 10 vlan
+```
+
+Frames should print an `802.1Q` header and a `vlan 10` or `vlan 20` id. This capture is on the Ethernet-shaped netdev, before transmit encapsulation and after receive decapsulation. It proves the tag is in the buffer mac80211 encapsulates. It does not, by itself, prove the bytes survived a forward.
+
+If `tcpdump` shows only untagged frames while clients are on a VLAN, the tag is still in skb metadata (or it was never pushed). Check `ethtool -k mesh0` as described above.
+
+### 12.3 Two hops, and the VLANs are still separate
+
+Ping and DHCP across a single hop are a weak test. HWMP will prefer a direct peer whenever it can hear one.
+
+1. On each node, `iw dev mesh0 mpath dump`. For a node that should be reached via another, `HOP_COUNT` must be 2 or more, and `NEXT_HOP` must be the intermediate node rather than the final one. `iw dev mesh0 station dump` shows who the direct peers are.
+2. `iw dev mesh0 station del <mac>` only drops a peer until the next peering retry. Use it to force a topology for a test, then read `mpath dump` again and confirm the hop count **during** the test. A door, a fridge, or a txpower change will restore the direct peer.
+3. Put a client on VLAN 10 at one end of that two-hop path and a client on VLAN 10 at the other. It gets a 192.168.10.x lease from the portal and can ARP the portal. A client on VLAN 20 at the far end gets a 192.168.20.x lease and does not.
+4. The VLAN 10 client must not obtain a VLAN 20 address, and it must not see VLAN 20 broadcasts. On the VLAN 10 access port:
+
+   ```
+   tcpdump -e -i lan1 -c 20 vlan 20
+   ```
+
+   That should stay silent while VLAN 20 clients talk. The symmetric capture on the VLAN 20 port should stay silent for `vlan 10`.
+5. Repeat the DHCP test while the intermediate node has no local client on that VLAN. Success there is the interesting result: the intermediate bridge never had to understand the tag, because forwarding copied the MSDU.
+
+A monitor-mode radio on the mesh channel will show QoS Data, ToDS and FromDS, and a Mesh Control field, then CCMP. The VID is inside the encrypted body, so a third radio that does not hold the key will not display `802.1Q`. That is what a correct capture looks like. The mesh header having no VID field is also what a correct capture looks like.
+
+### 12.4 After a wireless reload
+
+`mesh0` is destroyed and created again by `wifi reload`. It is put back on `br-lan`, with its tagged VLAN membership, only if `option ifname 'mesh0'` and the `bridge-vlan` port name still agree. After a reload, run `brctl show` and the tcpdump in section 12.2 again. If `mesh0` is in the bridge but the capture shows no `802.1Q` header, the port has come back untagged and forwarded frames are delivered into whichever VLAN is its PVID.
+
+## 13. See also
+
+- [802.11s on OpenWrt](https://openwrt.org/docs/guide-user/network/wifi/mesh/80211s), without VLANs
+- [mesh11sd](https://openwrt.org/docs/guide-user/network/wifi/mesh/mesh11sd), whose trunk is a VXLAN overlay on top of 802.11s
+- [batman-adv](https://openwrt.org/docs/guide-user/network/wifi/mesh/batman)
+- IEEE 802.11 mesh data frames and Mesh Control; IEEE 802.1Q tag format; RFC 1042 SNAP encapsulation
+
+## 14. Acronyms
+
+| Acronym | Full wording | Brief meaning |
+| --- | --- | --- |
+| AP | Access Point | A wireless interface that client devices join. It is not a mesh peer. |
+| ARP | Address Resolution Protocol | The IPv4 broadcast that maps an IP address to a MAC address. Flooded across the mesh. |
+| A-MSDU | Aggregate MAC Service Data Unit | Several MSDUs carried in one 802.11 frame. |
+| CCMP | Counter Mode with CBC-MAC Protocol | The AES encryption used on a WPA2, WPA3, or SAE mesh link. CBC-MAC is Cipher Block Chaining Message Authentication Code. |
+| DA | Destination Address | The end-station address the frame is finally addressed to. |
+| DEI | Drop Eligible Indicator | The one-bit field in the 802.1Q TCI that marks a frame as eligible to be dropped. |
+| DHCP | Dynamic Host Configuration Protocol | The service that assigns IPv4 addresses, and DHCPv6 addresses when enabled. |
+| DSA | Distributed Switch Architecture | The Linux switch driver model in current OpenWrt. Ports appear as names such as `lan1` and `wan`. |
+| FC | Frame Control | The first field of an 802.11 header. It records the frame type and flags such as ToDS and FromDS. |
+| FCS | Frame Check Sequence | The checksum at the end of an 802.11 frame. |
+| FromDS | From Distribution System | An 802.11 header flag. Mesh data frames set FromDS and ToDS together. |
+| GRE | Generic Routing Encapsulation | A simple tunnel protocol. GRETAP is GRE carrying whole Ethernet frames. |
+| GRETAP | GRE TAP | A point-to-point Ethernet tunnel. An alternative to carrying VLAN tags directly. |
+| HE | High Efficiency | 802.11ax. OpenWrt channel widths such as HE80 and HE20 use this name. |
+| HWMP | Hybrid Wireless Mesh Protocol | The 802.11s protocol that selects a next hop for a destination MAC address. |
+| IGMP | Internet Group Management Protocol | How IPv4 hosts report multicast membership. Bridge snooping listens to it. |
+| IP | Internet Protocol | The layer-3 packet inside an Ethernet frame. IPv4 and IPv6 are the two versions used here. |
+| LAN | Local Area Network | A bridged network on the node, as distinct from the WAN uplink. |
+| LLC | Logical Link Control | The IEEE 802.2 header at the start of a SNAP-encapsulated MSDU. The bytes are `AA AA 03`. |
+| MAC | Media Access Control | A layer-2 address, and the layer that carries frames between devices. |
+| MBSS | Mesh Basic Service Set | One 802.11s mesh: the nodes that share a mesh id and can forward for each other. |
+| mDNS | Multicast DNS | Link-local name and service discovery. DNS is the Domain Name System. These packets are multicast, so the mesh floods them. |
+| MLD | Multicast Listener Discovery | The IPv6 equivalent of IGMP. |
+| MPP | Mesh Point Portal | A mesh node that proxies a station bridged in from outside the mesh. The proxy table maps that station's MAC address to the node. |
+| MSDU | MAC Service Data Unit | The payload of an 802.11 data frame after the mesh header. The VLAN tag is carried here. |
+| MTU | Maximum Transmission Unit | The largest payload a network device will accept. |
+| NDP | Neighbor Discovery Protocol | The IPv6 equivalent of ARP. |
+| OUI | Organizationally Unique Identifier | The three-byte field in a SNAP header. `00 00 00` means the next two bytes are an EtherType. |
+| PCP | Priority Code Point | The three-bit class-of-service field inside an 802.1Q tag. |
+| PMTU | Path Maximum Transmission Unit | The largest packet size that fits along the whole path to a destination. |
+| PREQ | Path Request | An HWMP message a node sends to discover or refresh a path. |
+| PSK | Pre-Shared Key | The WPA2 passphrase mode. In UCI this is `psk2`. |
+| PVID | Port VLAN Identifier | The VLAN a bridge assigns to a frame that arrives untagged on that port. |
+| QinQ | Provider bridging, informally "stacked VLANs" | An outer VLAN tag (EtherType `0x88a8`, IEEE 802.1ad) wrapped around an inner 802.1Q tag. |
+| QoS | Quality of Service | In this document, the 802.11 header field that carries the TID. |
+| RA (address) | Receiver Address | Address 1 of an 802.11 frame: the radio that should receive this hop. |
+| RA (IPv6) | Router Advertisement | The IPv6 message a router sends so hosts can learn a prefix and a default route. |
+| RFC | Request for Comments | The document series that includes RFC 1042, the SNAP encapsulation used by mac80211. |
+| SA | Source Address | The end station that originally sent the frame. |
+| SAE | Simultaneous Authentication of Equals | The password handshake used to secure a modern 802.11s mesh. |
+| SNAP | Subnetwork Access Protocol | The LLC, OUI, and EtherType header placed at the start of an MSDU. |
+| SSID | Service Set Identifier | The name of an access-point network. The mesh itself uses a mesh id, not an SSID. |
+| STP | Spanning Tree Protocol | The bridge protocol that blocks one port to break a loop. |
+| TA | Transmitter Address | Address 2 of an 802.11 frame: the radio that transmitted this hop. |
+| TCI | Tag Control Information | The two bytes after a VLAN EtherType. They hold the PCP, the DEI, and the VID. |
+| TID | Traffic Identifier | The three-bit queue number in the 802.11 QoS Control field. It selects the airtime queue. |
+| ToDS | To Distribution System | An 802.11 header flag. Mesh data frames set ToDS and FromDS together. |
+| TPID | Tag Protocol Identifier | The EtherType that marks a VLAN tag. `0x8100` is the TPID for a normal 802.1Q tag. |
+| TTL | Time To Live | The hop counter in the Mesh Control field. Each forwarder decrements it. |
+| UCI | Unified Configuration Interface | OpenWrt's text configuration, stored under `/etc/config` and applied by netifd. |
+| UDP | User Datagram Protocol | The transport protocol VXLAN is carried in. |
+| VID | VLAN Identifier | The 12-bit VLAN number inside the TCI. |
+| VIF (also vif) | Virtual InterFace | A virtual network interface. In this document, the mesh vif and the access-point interfaces. |
+| VLAN | Virtual Local Area Network | A separate layer-2 network identified by an 802.1Q VID. |
+| VXLAN | Virtual Extensible LAN | A UDP tunnel that carries Ethernet frames. This is the trunk mesh11sd builds. |
+| WAN | Wide Area Network | The portal's upstream Internet interface. |
+| WPA | Wi-Fi Protected Access | The family of client wireless security. WPA2 and WPA3 are the versions used on the access points here. |
+| skb | socket buffer | The Linux object that holds a packet. `vlan_tci` is VLAN information stored beside the packet bytes rather than inside them. |
