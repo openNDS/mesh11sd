@@ -1,4 +1,6 @@
 mesh11sd (7.2.0)
+  * Add - Report portal information in mesh11sd status json [bluewavenet]
+  * Fix - Correctly report this_node as factory_mac [bluewavenet]
   * Add - GETTING_STARTED.md and update README.md [bluewavenet]
   * Fix - remove opkg references as it is deprecated [bluewavenet]
   * Fix - detect=1 portal did not advertise portal_ula until a manual odhcpd restart [bluewavenet]
@@ -81,7 +83,7 @@ mesh11sd (7.2.0)
   * Add - update_vxlan_for_active_portal, multi-portal support [bluewavenet]
   * Add - hex_to_dec(), converts hex string to decimal [bluewavenet]
 
- -- Rob White <dot@blue-wave.net>  Mon, 21 Sep 2026 20:56:11 +0000
+ -- Rob White <dot@blue-wave.net>  Tue, 22 Sep 2026 17:15:14 +0000
 
 mesh11sd (7.1.0)
   * Fix - use br-wan for sticky on-link route when in CPE mode [bluewavenet]
