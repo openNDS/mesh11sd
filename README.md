@@ -41,6 +41,7 @@ If the image uses **ath10k-ct**, switch to non-ct ath10k packages; otherwise the
 10. **Mobility levels** 0–6 (level 6 is PTT/voice-oriented)
 11. **Cabled backhaul** with STP path cost
 12. **OpenNDS** — if installed, mesh11sd starts/stops it as the node becomes portal or peer
+13. **Multi-portal with auto-failover** — more than one MRP/MBP can exist on the same mesh. Peers choose the best portal by airtime metric (`mesh_metric_threshold` hysteresis), switch VXLAN group if the portal ULA changes, and renew uplink leases if the portal type changes (for example MBP to MRP)
 
 ## 4. Node types
 
