@@ -13,8 +13,8 @@
 # mesh11sd daemon
 #
 
-last_version="7.2.0~be7a"
-version="7.2.0"
+last_version="7.2.0"
+version="7.3.0~be7a"
 
 checksum=$(sha256sum /usr/sbin/mesh11sd | awk '{printf "%s", $1}')
 fixup1=0
@@ -956,7 +956,7 @@ get_current_setup() {
 	gateway_proxy_arp=$(uci get mesh11sd.setup.gateway_proxy_arp 2> /dev/null)
 
 	if [ -z "$gateway_proxy_arp" ]; then
-		gateway_proxy_arp="0"
+		gateway_proxy_arp="1"
 	fi
 
 	if [ "$gateway_proxy_arp" -ne 0 ]; then
@@ -4151,6 +4151,185 @@ block_bridge_loops() {
 	refresh_bridgemac
 
 	# we do not and need not restart the mesh here
+}
+
+# pin_active_portal_arp_clear()
+# Remove a pin left over from an MRP. Used when the active portal is an MBP.
+pin_active_portal_arp_clear() {
+	rm -f "$tmpdir/arp_portal_pin" 2>/dev/null
+
+	if nft list chain bridge mesh11s mesh_ARP >/dev/null 2>&1; then
+		nft flush chain bridge mesh11s mesh_ARP 2>/dev/null
+		nft delete chain bridge mesh11s mesh_ARP 2>/dev/null
+	fi
+}
+
+# pin_active_portal_arp()
+# Drop gateway ARP that arrives on a mesh vif from any MAC except the active
+# MRP. On that vif the ethernet source is portal_mac (the mesh STA). The
+# IPv6 neighbour for portal_ula is the portal bridge MAC, a different address
+# on the same node, so both are allowed.
+# CPE uses the same pin on br-wan. An MBP does not: its gateway is the
+# upstream router, whose ARP is bridged onto the mesh and must be kept.
+pin_active_portal_arp() {
+	local mesh_bridge mesh_if mesh_ifs gw_ip bridge_mac pin_sig prev_sig
+	local portal_ula_pin portal_mac_pin own_mac nft_err
+
+	if [ -f "$tmpdir/is_portal" ]; then
+		. "$tmpdir/is_portal"
+	fi
+
+	# An MBP bridges the upstream router onto the mesh. A peer or CPE of an
+	# MBP must not pin that router's ARP to the portal MAC. An MRP portal
+	# (portal_detect 0 or 1) always pins, even if portal_type is stale.
+	if [ "$portal_detect" -eq 4 ] || { [ "$portal_type" = "MBP" ] && [ "$detected_state" != "portal" ]; }; then
+		pin_active_portal_arp_clear
+		log_notice "ARP pin: not applied, active portal is an MBP (gateway is the upstream router)"
+		return 0
+	fi
+
+	mesh_bridge="br-$auto_mesh_network"
+
+	if [ ! -f "$tmpdir/active_portal" ]; then
+		log_info "ARP pin: no active_portal file"
+		return 0
+	fi
+
+	portal_ula_pin=$(. "$tmpdir/active_portal"; printf '%s' "$portal_ula")
+	portal_mac_pin=$(. "$tmpdir/active_portal"; printf '%s' "$portal_mac")
+	own_mac=""
+
+	if [ -f "$tmpdir/factory_mac" ]; then
+		own_mac=$(. "$tmpdir/factory_mac"; printf '%s' "$factory_mac")
+	fi
+
+	if [ "${#portal_mac_pin}" -ne 17 ] && [ "$detected_state" = "portal" ] && [ "${#own_mac}" -eq 17 ]; then
+		portal_mac_pin="$own_mac"
+	fi
+
+	if [ "${#portal_mac_pin}" -ne 17 ]; then
+		log_notice "ARP pin: active_portal has no portal_mac"
+		return 0
+	fi
+
+	bridge_mac=""
+
+	# This node is the MRP. Its default route is on the WAN, so the gateway
+	# address is the one configured on the mesh bridge, not "ip route default".
+	if [ "$detected_state" = "portal" ] || { [ -n "$own_mac" ] && [ "$portal_mac_pin" = "$own_mac" ]; }; then
+		bridge_mac=$(cat "/sys/class/net/$mesh_bridge/address" 2>/dev/null | awk '{printf "%s", $1}')
+		gw_ip=$(ip -4 addr show dev "$mesh_bridge" 2>/dev/null | awk '/inet / {
+			split($2, a, "/")
+			if (a[1] ~ /\.1$/) { printf "%s", a[1]; exit }
+		}')
+
+		if [ -z "$gw_ip" ]; then
+			gw_ip=$(uci get "network.$auto_mesh_network.ipaddr" 2>/dev/null | awk '{printf "%s", $1}')
+		fi
+	else
+		if [ -n "$portal_ula_pin" ]; then
+			bridge_mac=$(ip -6 neigh 2>/dev/null | grep "$portal_ula_pin" | awk '{
+				for (i = 1; i <= NF; i++) if ($i == "lladdr" && length($(i+1)) == 17) { printf "%s", $(i+1); exit }
+			}')
+		fi
+		gw_ip=$(ip -4 route show default dev "$mesh_bridge" 2>/dev/null | awk '{
+			for (i = 1; i <= NF; i++) if ($i == "via") { printf "%s", $(i+1); exit }
+		}')
+
+		if [ -z "$gw_ip" ]; then
+			gw_ip=$(uci get "network.$auto_mesh_network.ipaddr" 2>/dev/null | awk '{printf "%s", $1}')
+		fi
+	fi
+
+	if [ "$bridge_mac" = "$portal_mac_pin" ]; then
+		bridge_mac=""
+	fi
+
+	is_ipv4addr_valid "$gw_ip"
+
+	if [ "$?" -ne 0 ]; then
+		log_notice "ARP pin: no gateway IPv4 for active portal [ $portal_mac_pin ]"
+		return 0
+	fi
+
+	get_mesh_iflist
+	mesh_ifs=$(echo "$iflist" | awk '{$1=$1; printf "%s", $0}')
+
+	if [ -z "$mesh_ifs" ]; then
+		log_info "ARP pin: no mesh interface"
+		return 0
+	fi
+
+	pin_sig="v2 $gw_ip $portal_mac_pin $bridge_mac $mesh_ifs"
+	prev_sig=""
+
+	if [ -f "$tmpdir/arp_portal_pin" ]; then
+		prev_sig=$(cat "$tmpdir/arp_portal_pin" 2>/dev/null)
+	fi
+
+	if [ "$pin_sig" = "$prev_sig" ]; then
+		if ! nft list chain bridge mesh11s mesh_ARP 2>/dev/null | grep -q "$portal_mac_pin"; then
+			prev_sig=""
+		fi
+	fi
+
+	if [ "$pin_sig" = "$prev_sig" ]; then
+		return 0
+	fi
+
+	nft list table bridge mesh11s >/dev/null 2>&1 || nft add table bridge mesh11s
+	nft add chain bridge mesh11s mesh_ARP { type filter hook prerouting priority -400\; } 2>/dev/null
+	nft flush chain bridge mesh11s mesh_ARP 2>/dev/null
+
+	for mesh_if in $mesh_ifs; do
+		if [ "${#bridge_mac}" -eq 17 ]; then
+			nft_err=$(nft add rule bridge mesh11s mesh_ARP \
+				meta iifname "$mesh_if" \
+				ether type arp \
+				arp operation reply \
+				arp saddr ip "$gw_ip" \
+				ether saddr != "$portal_mac_pin" \
+				ether saddr != "$bridge_mac" \
+				counter drop 2>&1) || {
+				log_notice "ARP pin failed on [ $mesh_if ]: $nft_err"
+				return 0
+			}
+
+			# Any request that says "I am the gateway", not only gratuitous
+			# ones. Hosts refresh an existing neighbour from the sender
+			# hardware address of a request.
+			nft add rule bridge mesh11s mesh_ARP \
+				meta iifname "$mesh_if" \
+				ether type arp \
+				arp operation request \
+				arp saddr ip "$gw_ip" \
+				arp saddr ether != "$portal_mac_pin" \
+				arp saddr ether != "$bridge_mac" \
+				counter drop >/dev/null 2>&1
+		else
+			nft_err=$(nft add rule bridge mesh11s mesh_ARP \
+				meta iifname "$mesh_if" \
+				ether type arp \
+				arp operation reply \
+				arp saddr ip "$gw_ip" \
+				ether saddr != "$portal_mac_pin" \
+				counter drop 2>&1) || {
+				log_notice "ARP pin failed on [ $mesh_if ]: $nft_err"
+				return 0
+			}
+
+			nft add rule bridge mesh11s mesh_ARP \
+				meta iifname "$mesh_if" \
+				ether type arp \
+				arp operation request \
+				arp saddr ip "$gw_ip" \
+				arp saddr ether != "$portal_mac_pin" \
+				counter drop >/dev/null 2>&1
+		fi
+	done
+
+	echo "$pin_sig" > "$tmpdir/arp_portal_pin"
+	log_notice "ARP pin: replies for [ $gw_ip ] on mesh [ $mesh_ifs ] accepted from portal [ $portal_mac_pin ] bridge [ $bridge_mac ]"
 }
 
 check_rule_status() {
@@ -10557,14 +10736,20 @@ elif [ "$1" = "daemon" ]; then
 					fi
 				fi
 
+				. $tmpdir/active_mesh_ifname
+
 				if [ "$mesh_mac_forced_forwarding" -eq 1 ] && [ -f "$tmpdir/active_mesh_ifname" ]; then
-					. $tmpdir/active_mesh_ifname
 					echo 1 > /proc/sys/net/ipv4/conf/$active_mesh_ifname/proxy_arp_pvlan
+				else
+					echo 0 > /proc/sys/net/ipv4/conf/$active_mesh_ifname/proxy_arp_pvlan
 				fi
 
+				. $tmpdir/devicemac
+
 				if [ "$gateway_proxy_arp" -eq 0 ]; then
-					. $tmpdir/devicemac
 					echo 0 > /proc/sys/net/ipv4/conf/$device/proxy_arp
+				else
+					echo 1 > /proc/sys/net/ipv4/conf/$device/proxy_arp
 				fi
 			fi
 
@@ -10670,6 +10855,7 @@ elif [ "$1" = "daemon" ]; then
 		set_root_bridge_priority
 
 		block_bridge_loops
+		pin_active_portal_arp
 		ensure_cpe_multicast_discovery_rule
 		check_odhcpd
 
