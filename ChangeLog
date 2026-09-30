@@ -1,3 +1,8 @@
+mesh11sd (7.3.0)
+  * Add - pin mesh gateway ARP to the active portal so a second portal cannot retarget the neighbour. [bluewavenet]
+
+ -- Rob White <dot@blue-wave.net>  Wed, 30 Sep 2026 19:37:10 +0000
+
 mesh11sd (7.2.0)
   * Add - Report portal information in mesh11sd status json [bluewavenet]
   * Fix - Correctly report this_node as factory_mac [bluewavenet]
