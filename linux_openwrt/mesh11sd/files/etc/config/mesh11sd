@@ -478,8 +478,10 @@ config mesh11sd 'setup'
 	###########################################################################################
 	# watchdog_nonvolatile_log (optional - FOR DEBUGGING PURPOSES ONLY)
 	#
-	# This enables logging of the portal detect watchdog actions in non-volatile storage.
-	# The log file /mesh11sd_log/mesh11sd.log is created
+	# This enables a non-volatile debug log at /mesh11sd_log/mesh11sd.log.
+	# Each line is wall-clock time, uptime in seconds, then the message.
+	# It records portal watchdog actions, portal probes, channel scans, peer handoff and bridge MAC changes.
+	# Nothing is written while auto_config is disabled, test mode is off, and no mesh interface is configured.
 	#
 	# ##########WARNING##########
 	# THIS OPTION IS FOR PORTAL DETECT WATCHDOG DEBUGGING PURPOSES ONLY

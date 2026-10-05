@@ -904,7 +904,7 @@ get_current_setup() {
 		debugtype="warn"
 		mute="$mutestate"
 		write_to_syslog
-		syslogmessage="******WARNING******: Irrepairable flash wear will occur and storage space will be used up by watchdog debug log at /mesh11sd_log/watchdog.log"
+		syslogmessage="******WARNING******: Irrepairable flash wear will occur and storage space will be used up by watchdog debug log at /mesh11sd_log/mesh11sd.log"
 		debugtype="warn"
 		mute="$mutestate"
 		write_to_syslog
@@ -1548,10 +1548,23 @@ write_to_syslog() {
 }
 
 write_to_watchdog_nonvolatile_log() {
+	local uptime_sec
+	local waiting_mesh
 
 	if [ "$watchdog_nonvolatile_log" -gt 0 ]; then
+		# No flash writes while waiting for `auto_config enable` or `auto_config test`.
+		# A mesh already configured in UCI is not that wait.
+		if [ "$auto_config" -eq 0 ] && [ ! -e "$tmpdir/auto_config_test" ]; then
+			waiting_mesh=$(uci show wireless 2>/dev/null | grep "mode='mesh'")
+
+			if [ -z "$waiting_mesh" ]; then
+				return 0
+			fi
+		fi
+
 		mkdir -p /mesh11sd_log
-		echo "$(date) $syslogmessage" >> /mesh11sd_log/mesh11sd.log
+		uptime_sec=$(cut -d' ' -f1 < /proc/uptime | cut -d. -f1)
+		echo "$(date) $uptime_sec $syslogmessage" >> /mesh11sd_log/mesh11sd.log
 	fi
 }
 
@@ -1627,6 +1640,28 @@ check_gate() {
 	fi
 }
 
+# One clock for check_channel and the get_portal_state scan.
+# Seconds are read from /proc/uptime so an NTP step cannot open or close the gate.
+# An empty cctimestamp is seeded to now, so the first call waits.
+# check_channel_now nonzero (portal watchdog) opens the gate on this call.
+# Caller clears cctimestamp after a scan.
+channel_scan_due() {
+	mininterval=$channel_tracking_checkinterval
+	timenow=$(cut -d' ' -f1 < /proc/uptime | cut -d. -f1)
+
+	if [ -z "$cctimestamp" ]; then
+		cctimestamp=$timenow
+	fi
+
+	if [ "$check_channel_now" -eq 0 ]; then
+		elapsed_time=$(($timenow - $cctimestamp))
+	else
+		elapsed_time=$mininterval
+	fi
+
+	[ "$mininterval" -le "$elapsed_time" ]
+}
+
 check_channel() {
 
 	if [ "$portal_detect" -eq 4 ]; then
@@ -1636,31 +1671,23 @@ check_channel() {
 	# We need to scan for working channel if we cannot see a portal
 	# Check for portal every channel_tracking_checkinterval seconds
 
-	timenow=$(date +%s)
-
 	debugtype="debug"
 	syslogmessage="checking for working channel...."
 	write_to_syslog
 
-	if [ -z $cctimestamp ]; then
-		cctimestamp=$(date +%s)
-	fi
+	channel_scan_due
+	scan_due=$?
 
 	if [ "$check_channel_now" -eq 0 ]; then
-		elapsed_time=$(($timenow - $cctimestamp))
 		syslogmessage="Time since last channel tracking check [ $elapsed_time ], minimum checkinterval [ $mininterval ]"
 	else
-		elapsed_time=$(($timenow + $cctimestamp))
 		syslogmessage="Checking working channel - immediate"
 	fi
-
-	mininterval=$channel_tracking_checkinterval
 
 	debugtype="debug"
 	write_to_syslog
 
-
-	if [ "$mininterval" -le "$elapsed_time" ]; then
+	if [ "$scan_due" -eq 0 ]; then
 		ifaces=$(uci export wireless | grep "config wifi-iface" | awk -F"'" '$2 != "" {printf "%s ",$2}')
 
 		for iface in $ifaces; do
@@ -1866,8 +1893,9 @@ is_channel_valid() {
 
 scan_channel() {
 	debugtype="debug"
-	syslogmessage="Entering scan channel...."
+	syslogmessage="Entering scan channel, link_to_portal [ $link_to_portal ]"
 	write_to_syslog
+	write_to_watchdog_nonvolatile_log
 
 	if [ "$link_to_portal" -gt 0 ]; then
 		# No link to portal. Maybe we are on the wrong channel, so scan for meshid to get channel
@@ -1890,7 +1918,11 @@ scan_channel() {
 
 			log_info "Current channel [ $our_channel ]"
 			mesh_id=$(uci get $meshconfig.mesh_id)
+			syslogmessage="scan_channel iw dev $ifname scan, channel [ $our_channel ]"
+			write_to_watchdog_nonvolatile_log
 			scanned_channels=$(iw dev $ifname scan 2> /dev/null | grep -F -w -B 20 "MESH ID: $mesh_id" | awk -F "primary channel: " '$2 != "" {printf "%s ",$2}')
+			syslogmessage="scan_channel iw dev $ifname scan returned [ $scanned_channels ]"
+			write_to_watchdog_nonvolatile_log
 
 			if [ ! -z "$our_channel" ] && [ ! -z "$scanned_channels" ]; then
 
@@ -2299,7 +2331,11 @@ get_portal_state() {
 
 							if [ -z "$default_ipv6_gw" ]; then
 								get_portal_ula discover
-								scan_channel
+
+								if channel_scan_due; then
+									scan_channel
+									cctimestamp=""
+								fi
 
 								dhcpdevice="$br_zone"
 								default_ipv6_gw=$(ip -6 neigh | grep "$br_zone" | grep "router" | awk '{print $1}' | awk -F ":" '$1 != "fe80" {printf "%s ", $0}')
@@ -2460,11 +2496,17 @@ portal_watchdog() {
 		fi
 
 		log_debug "Portal Watchdog - checking status ...."
+		write_to_watchdog_nonvolatile_log
 
 		get_portal_ula discover
+		syslogmessage="Portal Watchdog probe link_to_portal [ $link_to_portal ] portal_ula [ $portal_ula ]"
+		debugtype="debug"
+		write_to_syslog
+		write_to_watchdog_nonvolatile_log
 
 		if [ "$link_to_portal" -eq 0 ]; then
 			log_debug "Portal Watchdog - portal detected ...."
+			write_to_watchdog_nonvolatile_log
 			failcount=0
 			network_restart=0
 			is_portal="detected"
@@ -2473,6 +2515,10 @@ portal_watchdog() {
 		fi
 
 		# Do a channel Scan for our mesh_id
+		syslogmessage="Portal Watchdog probe missed, check_channel"
+		debugtype="debug"
+		write_to_syslog
+		write_to_watchdog_nonvolatile_log
 		check_channel_now=1
 		check_channel
 		check_channel_now=0
@@ -2480,6 +2526,7 @@ portal_watchdog() {
 		if [ "$link_to_portal" -eq 0 ]; then
 			# link to portal found
 			log_debug "Portal Watchdog - portal found ...."
+			write_to_watchdog_nonvolatile_log
 			failcount=0
 			network_restart=0
 			is_portal="detected"
@@ -2827,7 +2874,15 @@ check_portal() {
 				fi
 
 				set_ula_prefix "revert"
+				syslogmessage="peer handoff: network reload"
+				debugtype="debug"
+				write_to_syslog
+				write_to_watchdog_nonvolatile_log
 				/sbin/service network reload
+				syslogmessage="peer handoff: network reload returned"
+				debugtype="debug"
+				write_to_syslog
+				write_to_watchdog_nonvolatile_log
 
 				/sbin/service dnsmasq restart
 				/sbin/service odhcpd restart
@@ -2835,6 +2890,22 @@ check_portal() {
 				echo 2 > /proc/sys/net/ipv6/conf/$device/accept_ra
 				# Just become a peer so stop opennds if it is installed and enabled
 				manage_opennds stop
+				# network reload can return while the mesh vif is still down.
+				# wait_for_mesh is unsafe here: a down vif makes it disable the
+				# other vifs on the radio and run wifi.
+				get_mesh_iflist
+				if [ -z "$iflist" ]; then
+					log_debug "Peer handoff mesh interface is [ missing ]"
+					write_to_watchdog_nonvolatile_log
+				else
+					for iface in $iflist; do
+						wait_for_interface "$iface"
+						log_debug "Peer handoff mesh interface $iface is [ $ifstatus ]"
+						write_to_watchdog_nonvolatile_log
+					done
+				fi
+				failcount=0
+				network_restart=0
 			fi
 
 #			check_dns_server
@@ -4897,6 +4968,28 @@ check_vtunnel() {
 
 			. $tmpdir/devicemac
 
+			# A network reload deletes the ip-link vxlan netdev. vtunlan UCI
+			# is already in place, so recreate the device. Restarting the
+			# network here overlaps mesh re-association on a slow node.
+			vtunlan_if=$(uci get network.vtunlan 2>/dev/null)
+			recreate_vxlan=0
+
+			if [ -n "$vtunlan_if" ]; then
+				debugtype="debug"
+				syslogmessage="vxlan$tun_id missing, vtunlan exists, recreating"
+				write_to_syslog
+				create_vxlan_if
+
+				if ip link show "vxlan$tun_id" >/dev/null 2>&1; then
+					vtunnel="configured"
+					vxlan_status=0
+				fi
+
+				recreate_vxlan=1
+			fi
+
+			if [ "$recreate_vxlan" -eq 0 ]; then
+
 			if [ "$portal_detect" -eq 0 ]; then
 				proto="static"
 			elif [ "$portal_detect" -eq 1 ] && [ "$detected_state" = "portal" ]; then
@@ -4955,6 +5048,8 @@ check_vtunnel() {
 				brctl addif "$device" "$vxifname"
 			done
 
+			fi # recreate_vxlan == 0, first-time vtunlan
+
 		elif [ "$vxlan_status" -eq 1 ] && [ "$commit_all" -eq 1 ]; then
 			device="br-tun$tun_id"
 ###			echo 1 > /proc/sys/net/ipv4/conf/$device/proxy_arp
@@ -4993,9 +5088,11 @@ check_vtunnel() {
 		device="br-tun$tun_id"
 		set_iface_path_cost "$vtun_path_cost" "$device" "vxlan$tun_id"
 
-		# WAN add used to sit only in the vxlan_status==1 block. Dummy vxlan
-		# is created later in the same loop, so that block never runs again.
-		# UCI list ports is not applied without a reload; enslave the live netdev.
+		# WAN add used to sit only in the vxlan_status==1 block. A reload
+		# deletes the ip-link netdev, and that block used to network-restart
+		# on every pass until the device existed. An existing vtunlan is
+		# recreated above instead. UCI list ports is not applied without a
+		# reload; enslave the live netdev.
 		if [ "$portal_detect" -eq 4 ] || [ "$portal_detect" -eq 5 ]; then
 			ensure_wan_on_vxlan_bridge reload
 		fi
@@ -5158,6 +5255,33 @@ set_ula_prefix() {
 }
 
 # =============================================================================
+# ping_portal_diag()
+# One probe of a portal ULA. Returns ping's exit status.
+# When nonvolatile logging is enabled, one result line is appended.
+# =============================================================================
+ping_portal_diag() {
+	local addr="$1"
+	local ping_out
+	local ping_exit
+	local ping_note
+	local saved_syslogmessage
+
+	ping_out=$(ping -W 20 -c 1 "$addr" 2>&1)
+	ping_exit=$?
+	ping_note=$(printf '%s\n' "$ping_out" | grep -m 1 "time=")
+
+	if [ -z "$ping_note" ]; then
+		ping_note=$(printf '%s\n' "$ping_out" | grep -m 1 -e "sendto" -e "unreachable" -e "packets transmitted")
+	fi
+
+	saved_syslogmessage="$syslogmessage"
+	syslogmessage="ping -W 20 -c 1 $addr exit [ $ping_exit ] $ping_note"
+	write_to_watchdog_nonvolatile_log
+	syslogmessage="$saved_syslogmessage"
+	return $ping_exit
+}
+
+# =============================================================================
 # get_portal_ula()
 # Selects the best portal based on metrics. Uses mesh_metric_threshold for
 # hysteresis when a portal is already active.
@@ -5189,7 +5313,8 @@ get_portal_ula() {
 			. "$tmpdir/active_portal" 2>/dev/null
 
 			# (Re)test link to selected portal
-			link_to_portal=$(ping -q -A -c 2 "$portal_ula" &>/dev/null; echo -n $?)
+			ping_portal_diag "$portal_ula"
+			link_to_portal=$?
 
 			if [ "$link_to_portal" -eq 0 ]; then
 				log_debug "Active Portal - portal_ula [ $portal_ula ], ula_subnet [ $ula_subnet ], portal_mac [ $portal_mac ], metric [ $metric ], hops [ $hops ]"
@@ -5223,7 +5348,8 @@ get_portal_ula() {
 		# Read current active portal (if any)
 		if [ -f "$tmpdir/active_portal" ]; then
 			. "$tmpdir/active_portal" 2>/dev/null
-			current_reachable=$(ping -q -A -c 2 "$portal_ula" &>/dev/null; echo -n $?)
+			ping_portal_diag "$portal_ula"
+			current_reachable=$?
 			if [ "$current_reachable" -eq 0 ]; then
 				current_portal_ula="$portal_ula"
 				current_metric="$metric"
@@ -5238,7 +5364,8 @@ get_portal_ula() {
 			[ -z "$candidate" ] && break
 
 			# Populate NDP table
-			link_to_portal=$(ping -q -A -c 4 "$candidate" &>/dev/null; echo -n $?)
+			ping_portal_diag "$candidate"
+			link_to_portal=$?
 
 			if [ "$link_to_portal" -ne 0 ]; then
 				continue
@@ -5303,6 +5430,8 @@ get_portal_ula() {
 	portal_ula="$best_ula"
 
 	if [ -z "$portal_ula" ]; then
+		syslogmessage="ping portal ula skipped, no address"
+		write_to_watchdog_nonvolatile_log
 		log_warning "No responsive portal found"
 
 		if [ -f "$tmpdir/active_portal" ]; then
@@ -5314,7 +5443,8 @@ get_portal_ula() {
 	fi
 
 	# (Re)test link to selected portal
-	link_to_portal=$(ping -q -A -c 2 "$portal_ula" &>/dev/null; echo -n $?)
+	ping_portal_diag "$portal_ula"
+	link_to_portal=$?
 
 	if [ "$link_to_portal" -eq 0 ]; then
 		ula_subnet=$(echo "$portal_ula" | awk -F ":" '{printf "%s", $4}')
@@ -7474,6 +7604,56 @@ radiophy() {
 	return 0
 }
 
+# A swconfig bridge is recreated from the device section. The interface
+# macaddr is not applied, so the new bridge inherits eth0. Record the
+# address on that device. Never down the bridge once a mesh port is in
+# it: the mesh does not come back on these boards.
+swconfig_bridge() {
+	uci get network.@switch[0].name >/dev/null 2>&1
+}
+
+mesh_port_in_bridge() {
+	local port
+	local ports
+
+	ports=$(brctl show "$1" 2>/dev/null | awk 'NR>1 {print $NF}')
+
+	for port in $ports; do
+		if iw dev "$port" info 2>/dev/null | grep -q "type mesh"; then
+			return 0
+		fi
+	done
+
+	return 1
+}
+
+persist_swconfig_bridge_mac() {
+	local bridge="$1"
+	local mac="$2"
+	local sec
+	local cur
+
+	swconfig_bridge || return 0
+
+	sec=$(uci show network 2>/dev/null | awk -F"'" -v n="$bridge" '
+		$2 == n && /\.name=/ {
+			sub(/\.name=$/, "", $1)
+			print $1
+			exit
+		}')
+
+	[ -n "$sec" ] || return 0
+	cur=$(uci get "$sec.type" 2>/dev/null)
+	[ "$cur" = "bridge" ] || return 0
+
+	cur=$(uci get "$sec.macaddr" 2>/dev/null)
+
+	if [ "$cur" != "$mac" ]; then
+		echo "set $sec.macaddr='$mac'" | uci batch
+		log_debug "swconfig $sec macaddr [ $mac ]"
+	fi
+}
+
 # Set a bridge MAC without bouncing wireless ports. Try while UP first.
 # $1 = bridge, $2 = mac, $3 = optional uci interface (e.g. network.lan)
 apply_bridge_mac() {
@@ -7491,18 +7671,27 @@ apply_bridge_mac() {
 	current_mac=$(ip link show "$br" 2>/dev/null | grep -o 'link/ether [^ ]*' | awk '{printf "%s", $2}')
 
 	if [ "$current_mac" != "$mac" ]; then
-		log_debug "Setting $br MAC to $mac"
-		ip link set "$br" address "$mac" 2>/dev/null || true
-		current_mac=$(ip link show "$br" 2>/dev/null | grep -o 'link/ether [^ ]*' | awk '{printf "%s", $2}')
-		if [ "$current_mac" != "$mac" ]; then
-			ip link set "$br" down 2>/dev/null || true
+		persist_swconfig_bridge_mac "$br" "$mac"
+
+		if swconfig_bridge && mesh_port_in_bridge "$br"; then
+			log_debug "swconfig: $br has a mesh port, leaving it up"
+			write_to_watchdog_nonvolatile_log
+		else
+			log_debug "Setting $br MAC to $mac"
+			write_to_watchdog_nonvolatile_log
 			ip link set "$br" address "$mac" 2>/dev/null || true
-			ip link set "$br" up 2>/dev/null || true
 			current_mac=$(ip link show "$br" 2>/dev/null | grep -o 'link/ether [^ ]*' | awk '{printf "%s", $2}')
-		fi
-		if [ "$current_mac" != "$mac" ]; then
-			log_debug "Failed to set mac [ $mac ] on [ $br ]"
-			return 1
+			if [ "$current_mac" != "$mac" ]; then
+				ip link set "$br" down 2>/dev/null || true
+				ip link set "$br" address "$mac" 2>/dev/null || true
+				ip link set "$br" up 2>/dev/null || true
+				current_mac=$(ip link show "$br" 2>/dev/null | grep -o 'link/ether [^ ]*' | awk '{printf "%s", $2}')
+			fi
+			if [ "$current_mac" != "$mac" ]; then
+				log_debug "Failed to set mac [ $mac ] on [ $br ]"
+				write_to_watchdog_nonvolatile_log
+				return 1
+			fi
 		fi
 	fi
 
@@ -7545,22 +7734,30 @@ set_bridge_mac_addresses() {
 	current_mac=$(ip link show "$mesh_bridge" | grep -o 'link/ether [^ ]*' | awk '{printf "%s", $2}')
 
 	if [ "$current_mac" != "$brmesh_mac" ]; then
-		log_debug "Setting $mesh_bridge MAC to $brmesh_mac"
-		ip link set "$mesh_bridge" down 2>/dev/null || true
-		ip link set "$mesh_bridge" address "$brmesh_mac" 2>/dev/null || true
-		ip link set "$mesh_bridge" up 2>/dev/null || true
-		achieved_mac=$(ip link show "$mesh_bridge" | grep -o 'link/ether [^ ]*' | awk '{printf "%s", $2}')
+		persist_swconfig_bridge_mac "$mesh_bridge" "$brmesh_mac"
+		config_mac=$(uci get network.$auto_mesh_network.macaddr 2>/dev/null)
 
-		if [ "$achieved_mac" = "$brmesh_mac" ]; then
-			echo "brmesh_mac=\"$brmesh_mac\"" > $tmpdir/brmesh_mac
-			# add brmesh_mac also to uci config, if not already there
-			config_mac=$(uci get network.$auto_mesh_network.macaddr 2>/dev/null)
+		if [ "$config_mac" != "$brmesh_mac" ]; then
+			echo "set network.$auto_mesh_network.macaddr='$brmesh_mac'" | uci batch
+		fi
 
-			if [ "$config_mac" != "$brmesh_mac" ]; then
-				echo "set network.$auto_mesh_network.macaddr='$brmesh_mac'" | uci batch
-			fi
+		if swconfig_bridge && mesh_port_in_bridge "$mesh_bridge"; then
+			log_debug "swconfig: $mesh_bridge has a mesh port, leaving it up"
+			write_to_watchdog_nonvolatile_log
 		else
-			log_debug "Failed to set mac [ $brmesh_mac ] on [ $mesh_bridge ]"
+			log_debug "Setting $mesh_bridge MAC to $brmesh_mac"
+			write_to_watchdog_nonvolatile_log
+			ip link set "$mesh_bridge" down 2>/dev/null || true
+			ip link set "$mesh_bridge" address "$brmesh_mac" 2>/dev/null || true
+			ip link set "$mesh_bridge" up 2>/dev/null || true
+			achieved_mac=$(ip link show "$mesh_bridge" | grep -o 'link/ether [^ ]*' | awk '{printf "%s", $2}')
+
+			if [ "$achieved_mac" = "$brmesh_mac" ]; then
+				echo "brmesh_mac=\"$brmesh_mac\"" > $tmpdir/brmesh_mac
+			else
+				log_debug "Failed to set mac [ $brmesh_mac ] on [ $mesh_bridge ]"
+				write_to_watchdog_nonvolatile_log
+			fi
 		fi
 	fi
 
@@ -7591,6 +7788,7 @@ set_bridge_mac_addresses() {
 
 	if [ "$current_mac" != "$vxlan_mac" ]; then
 		log_debug "Setting $vxlan_bridge MAC to $vxlan_mac"
+		write_to_watchdog_nonvolatile_log
 		ip link set "$vxlan_bridge" address "$vxlan_mac" 2>/dev/null || true
 	fi
 
@@ -7641,6 +7839,7 @@ set_bridge_mac_addresses() {
 
 		if [ "$current_mac" != "$want_mac" ]; then
 			log_debug "Setting $briface MAC to $want_mac"
+			write_to_watchdog_nonvolatile_log
 			ip link set "$briface" address "$want_mac" 2>/dev/null || true
 			current_mac=$(ip link show "$briface" 2>/dev/null | grep -o 'link/ether [^ ]*' | awk '{printf "%s", $2}')
 			if [ "$current_mac" != "$want_mac" ]; then
@@ -10074,6 +10273,7 @@ elif [ "$1" = "daemon" ]; then
 	setroute=0
 	check_channel_now=0
 	odhcpd_check=0
+	bridge_mac_ready=""
 
 	#loop counter for Mesh Reactive Stabilsation Threshold:
 	mrstloopcount=0
@@ -10480,7 +10680,20 @@ elif [ "$1" = "daemon" ]; then
 					debugtype="err"
 					syslogmessage="auto_config is disabled. Please configure a mesh interface or enable auto_config...."
 					write_to_syslog
+
+					# No mesh port yet, so correct br-lan on each pass.
+					# Stop once its live MAC is already the indexed MAC.
+					if [ -z "$bridge_mac_ready" ]; then
+						set_bridge_mac_addresses
+						live_mac=$(ip link show "br-$auto_mesh_network" 2>/dev/null | grep -o 'link/ether [^ ]*' | awk '{printf "%s", $2}')
+
+						if [ -n "$brmesh_mac" ] && [ "$live_mac" = "$brmesh_mac" ]; then
+							bridge_mac_ready=1
+						fi
+					fi
+
 					sleep $checkinterval
+					continue
 				fi
 
 				########################
@@ -10841,7 +11054,19 @@ elif [ "$1" = "daemon" ]; then
 		fi
 
 		move_ethernet_to_vxlan_bridge
-		set_bridge_mac_addresses
+
+		# Startup already corrected the bridge MACs. Skip the repeat walk when
+		# auto_config is 0, test mode is off, and no mesh interface is configured.
+		# A manual mesh still runs.
+		if [ "$auto_config" -ne 0 ] || [ -e "$tmpdir/auto_config_test" ]; then
+			set_bridge_mac_addresses
+		else
+			idle_mesh=$(uci show wireless 2>/dev/null | grep "mode='mesh'")
+
+			if [ -n "$idle_mesh" ]; then
+				set_bridge_mac_addresses
+			fi
+		fi
 
 		if [ -f "$tmpdir/is_portal" ]; then
 			. $tmpdir/is_portal
