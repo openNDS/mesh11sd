@@ -1,3 +1,23 @@
+mesh11sd (7.3.1)
+  * Fix - a stalled mesh radio reboots without calling wifi or restarting the network [bluewavenet]
+  * Fix - a moving receive counter is scanned in the background for up to 30 seconds, and a scan still running then uses the same reboot path [bluewavenet]
+  * Fix - a stored receive count of zero is not a portal sample and is scanned [bluewavenet]
+  * Add - loop_interval_delta lengthens the pause while a portal is answering and the node is loaded; 0 keeps checkinterval; status prints the live pause as loop_interval [bluewavenet]
+  * Fix - the channel-scan wait scales with the live pause [bluewavenet]
+  * Add - status reports the mesh driver for the mesh band [bluewavenet]
+  * Fix - an mt76_wmac mesh radio forces beacon interval 100, as ath11k and a multi-band wiphy already do [bluewavenet]
+  * Add - swconfig_mac_skip leaves swconfig MAC addresses unchanged when set to 1; default 0 runs the walk [bluewavenet]
+  * Fix - a portal prefix that is no longer selected has its address, static route, and neighbour removed [bluewavenet]
+  * Fix - channel scans wait for the uptime interval [bluewavenet]
+  * Fix - a portal probe is one ping with a 20 second cap that returns as soon as the echo arrives [bluewavenet]
+  * Fix - a swconfig bridge that already contains a mesh port is left up [bluewavenet]
+  * Fix - br-lan is corrected before test mode creates that port, and those waits stop once the indexed MAC is set [bluewavenet]
+  * Fix - peer handoff waits for the mesh interface [bluewavenet]
+  * Fix - a missing vxlan device is recreated without another network restart [bluewavenet]
+  * Fix - the nonvolatile log line is wall-clock time, uptime seconds, then the message, and nothing is written while auto_config is off, test mode is off, and no mesh interface is configured [bluewavenet]
+
+ -- Rob White <dot@blue-wave.net>  Mon, 12 Oct 2026 15:43:20 +0000
+
 mesh11sd (7.3.0)
   * Add - pin mesh gateway ARP to the active portal so a second portal cannot retarget the neighbour. [bluewavenet]
 

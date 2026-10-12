@@ -4,7 +4,7 @@ Mesh11sd is an OpenWrt daemon for **IEEE 802.11s** mesh backhaul. It configures 
 
 **New users:** start with [GETTING_STARTED.md](GETTING_STARTED.md).
 
-This documentation applies to version **7.2.x** on **OpenWrt 25.12** and later (apk package manager; this release is not backported to 24.10 or earlier). Setup options are documented in [§7](#7-configuration---setup-options); the commented source UCI file is in [§12](#12-default-configuration-file).
+This documentation applies to version **7.3.x** on **OpenWrt 25.12** and later (apk package manager; this release is not backported to 24.10 or earlier). Setup options are documented in [§7](#7-configuration---setup-options); the commented source UCI file is in [§12](#12-default-configuration-file).
 
 ***Read this document (or Getting Started) before installing.***
 
@@ -232,14 +232,15 @@ Values in the tables below are script defaults when the option is unset. Set wit
 | --- | --- | --- |
 | `enabled` | 1 | Daemon on/off. |
 | `debuglevel` | **3** | 0 silent, 1 notice, 2 info, 3 debug. Also `mesh11sd debuglevel N`. |
-| `checkinterval` | 10 | Seconds between reconfiguration passes. |
+| `checkinterval` | 10 | Seconds between reconfiguration passes. Shortest end-of-loop pause. |
+| `loop_interval_delta` | 20 | Added to `checkinterval` while a portal is answering, and on a portal node. Load at least 0.5 per core: one delta. Load at least 1.0: two deltas, held until the load falls below 0.5. Any other pass stays at `checkinterval`. 0 disables the longer pauses. Status prints the live pause as `loop_interval` while the daemon is running. |
 | `interface_timeout` | 10 | Wait for an interface to come up. |
 | `auto_config` | 0 | 0 off, 1 on, 2 on + `commit_all` + LuCI (locks first role). |
 | `portal_detect` | 1 | See [§4](#4-node-types). Ignored if auto_config is 0. |
-| `portal_detect_threshold` | 10 | Watchdog: checkintervals without a portal before action. 0 = never. |
+| `portal_detect_threshold` | 5 | Watchdog: checkintervals without a portal before action. 0 = never. |
 | `portal_use_default_ipv4` | 0 | Portal: 1 = keep `/etc/config/network` IPv4; 0 = hash from label MAC. |
 | `portal_channel` | default | Portal 2.4 GHz: `auto`, `default`, or channel 1–13. Peers track it. |
-| `channel_tracking_checkinterval` | 30 | Minimum seconds between peer channel scans. |
+| `channel_tracking_checkinterval` | checkinterval×8/3 | Minimum seconds between peer channel scans. Unset is 26 when `checkinterval` is 10. The wait scales by `loop_interval` / `checkinterval`. |
 
 ### 7.2 Mesh identity and radio
 
@@ -291,11 +292,12 @@ MBP/TPN: WAN is added to `br-tun$tun_id`. MRP portal may serve DHCPv4/RA on vtun
 | `mesh_path_stabilisation` | 0 | Rarely needed if mobility level &gt; 0. |
 | `reactive_path_stabilisation_threshold` | 10 | Checkintervals before reactive stabilisation. |
 | `mesh_mac_forced_forwarding` | 1 | |
+| `swconfig_mac_skip` | 0 | 1 leaves swconfig bridge and port MAC addresses unchanged. Default 0 runs the walk; a bridge that already has a mesh port is left up on that walk. No effect on DSA or a switchless board. |
 | `gateway_proxy_arp` | 1 | |
 | `mesh_metric_threshold` | 50 | Portal-selection hysteresis (airtime metric). |
 | `reboot_on_error` | 1 | Watchdog reboot if portal still missing. |
 | `stop_on_error` | 0 | Idle instead of reboot (overrides reboot_on_error). |
-| `watchdog_nonvolatile_log` | 0 | **Debug only** — can wear flash. |
+| `watchdog_nonvolatile_log` | 0 | **Debug only** — can wear flash. Appends time, uptime, then the message to `/mesh11sd_log/mesh11sd.log`. |
 | `apmond_enable` | 1 | AP/Ethernet stats to the portal. |
 | `apmond_cgi_dir` | `/www/cgi-bin/` | |
 | `apmon_verbose_debug_enable` | 0 | |
@@ -303,7 +305,7 @@ MBP/TPN: WAN is added to `br-tun$tun_id`. MRP portal may serve DHCPv4/RA on vtun
 | `manage_opennds_startup` | 1 | If opennds is installed. |
 | `log_mountpoint` | `/tmp` | Not on system flash for long-term logs. Subdir `mesh11sd`. |
 | `max_log_entries` | 500 | `mesh11sd read_log`. |
-| `use_default_beacon_interval` | 0 | 1 = keep driver 100 ms (some ath11k/ipq6018). |
+| `use_default_beacon_interval` | 0 | 1 forces beacon interval 100. ath11k, mt76_wmac, and a multi-band wiphy force 100 even when this is 0. |
 | `mesh_dtim_period` | 2 | Overridden by mobility level unless the driver ignores it. |
 | `mesh_node_mobility_level` | **2** | 0–6; see CLI. |
 | `cpe_mode` | `nat66` | CPE only: `nat66`, `prefix_delegation`, `relay`. |
@@ -374,7 +376,7 @@ The daemon runs as a service. CLI is for status, logs, and a few runtime knobs. 
 
 | Command | Purpose |
 | --- | --- |
-| `mesh11sd status` | JSON setup, interfaces, peers, metrics |
+| `mesh11sd status` | JSON setup, interfaces, peers, metrics. Setup includes `mesh_driver`. While the daemon is running it also includes the live `loop_interval`. |
 | `mesh11sd connect` / `connect filter_list` / `connect [Node ID]` | List or SSH to a node (label MAC) |
 | `mesh11sd copy` / `copy filter_list` / `copy [Node ID] [file]` | Copy file to `$tmpdir/` on a node |
 | `mesh11sd stations` | One-hop mesh STAs |
@@ -452,7 +454,7 @@ Airtime link metric updates are driven mainly by **beacon interval** and HWMP PR
 | 3–5 | Faster movement, more overhead |
 | 6 | PTT / PA voice |
 
-Some drivers (e.g. IPQ6018) break if beacon interval changes — use `use_default_beacon_interval=1`.
+ath11k, an mt76_wmac radio, and a multi-band wiphy keep beacon interval 100. Other drivers that break when the interval changes (for example IPQ6018) need `use_default_beacon_interval=1`.
 
 ## 12. Default configuration file
 
@@ -483,6 +485,18 @@ config mesh11sd 'setup'
 	# Default: 10 (seconds)
 	#
 	#option checkinterval '15'
+
+	###########################################################################################
+	# loop_interval_delta (optional)
+	# Added to checkinterval while a portal is answering, and on a portal node.
+	# Load at least 0.5 per core: one delta. Load at least 1.0 per core: two deltas.
+	# The two-delta pause is held until the load falls below 0.5.
+	# Any other pass stays at checkinterval. checkinterval itself is not changed.
+	# Set to 0 to keep every pass at checkinterval.
+	# Status prints the live pause as loop_interval while the daemon is running.
+	# Default: 20 (seconds)
+	#
+	#option loop_interval_delta '20'
 
 	###########################################################################################
 	# portal_detect (optional)
@@ -568,10 +582,10 @@ config mesh11sd 'setup'
 	###########################################################################################
 	# channel_tracking_checkinterval (optional)
 	#
-	# The minimum interval in seconds after which channel tracking begins on peer nodes
-	# Values less than checkinterval are ignored
-	#
-	# Default: 30 seconds
+	# The minimum interval in seconds after which channel tracking begins on peer nodes.
+	# When unset this is checkinterval * 8 / 3 (26 seconds when checkinterval is 10).
+	# The wait scales with the live pause: this interval * loop_interval / checkinterval.
+	# At the configured checkinterval the wait is unchanged.
 	#
 	# Example:
 	#option channel_tracking_checkinterval '60'
@@ -583,7 +597,7 @@ config mesh11sd 'setup'
 	#
 	# The number of checkintervals before the portal detect watchdog begins actions to (re)establish a reconnection to a portal.
 	#
-	# Default 10 (watchdog is triggered after 10 iterations)
+	# Default 5 (watchdog is triggered after 5 iterations)
 	# If set to 0, the watchdog is never triggered
 	# Ignored if auto_config is disabled.
 	#
@@ -906,6 +920,18 @@ config mesh11sd 'setup'
 	#option mesh_gate_enable '0'
 
 	###########################################################################################
+	# swconfig_mac_skip (optional)
+	#
+	# On a swconfig target, mesh11sd walks bridge and port MAC addresses.
+	# Set to 1 to leave those addresses unchanged.
+	# Default: 0 (the MAC walk runs).
+	# When the walk runs, a bridge that already contains a mesh port is left up.
+	# DSA and switchless boards do not use this option.
+	#
+	# Example:
+	#option swconfig_mac_skip '1'
+
+	###########################################################################################
 	# mesh_leechmode_enable (optional)
 	# Determines whether this node will be a gate only leech node
 	#
@@ -940,7 +966,7 @@ config mesh11sd 'setup'
 	#
 	# This enables a non-volatile debug log at /mesh11sd_log/mesh11sd.log.
 	# Each line is wall-clock time, uptime in seconds, then the message.
-	# It records portal watchdog actions, portal probes, channel scans, peer handoff and bridge MAC changes.
+	# It records portal watchdog actions, portal probes, channel scans, a stalled mesh radio, peer handoff and bridge MAC changes.
 	# Nothing is written while auto_config is disabled, test mode is off, and no mesh interface is configured.
 	#
 	# ##########WARNING##########
@@ -1090,10 +1116,11 @@ config mesh11sd 'setup'
 	###########################################################################################
 	# use_default_beacon_interval (optional)
 	#
-	# When set, forces the use of the default beacon interval on the mesh phy
-	# For most drivers, the beacon interval defaults to 100ms
-	# mesh11sd dynamically sets the beacon interval according to the mesh_node_mobility_level setting
-	# Some wireless drivers fail if the beacon interval is changed (eg Qualcomm Atheros IPQ6018)
+	# When set, forces beacon interval 100 on the mesh phy.
+	# For most drivers, the beacon interval defaults to 100ms.
+	# mesh11sd otherwise sets the beacon interval from mesh_node_mobility_level.
+	# Some wireless drivers fail if the beacon interval is changed (eg Qualcomm Atheros IPQ6018).
+	# ath11k, an mt76_wmac radio, and a multi-band wiphy are forced to 100 even when this is unset.
 	# Default: 0 (disabled)
 	# Set to 1 to force
 	#

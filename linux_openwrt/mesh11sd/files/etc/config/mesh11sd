@@ -26,10 +26,12 @@ config mesh11sd 'setup'
 
 	###########################################################################################
 	# loop_interval_delta (optional)
-	# Added to checkinterval while a portal is answering.
+	# Added to checkinterval while a portal is answering, and on a portal node.
 	# Load at least 0.5 per core: one delta. Load at least 1.0 per core: two deltas.
 	# The two-delta pause is held until the load falls below 0.5.
+	# Any other pass stays at checkinterval. checkinterval itself is not changed.
 	# Set to 0 to keep every pass at checkinterval.
+	# Status prints the live pause as loop_interval while the daemon is running.
 	# Default: 20 (seconds)
 	#
 	#option loop_interval_delta '20'
@@ -118,10 +120,10 @@ config mesh11sd 'setup'
 	###########################################################################################
 	# channel_tracking_checkinterval (optional)
 	#
-	# The minimum interval in seconds after which channel tracking begins on peer nodes
-	# Values less than checkinterval are ignored
-	#
-	# Default: 30 seconds
+	# The minimum interval in seconds after which channel tracking begins on peer nodes.
+	# When unset this is checkinterval * 8 / 3 (26 seconds when checkinterval is 10).
+	# The wait scales with the live pause: this interval * loop_interval / checkinterval.
+	# At the configured checkinterval the wait is unchanged.
 	#
 	# Example:
 	#option channel_tracking_checkinterval '60'
@@ -133,7 +135,7 @@ config mesh11sd 'setup'
 	#
 	# The number of checkintervals before the portal detect watchdog begins actions to (re)establish a reconnection to a portal.
 	#
-	# Default 10 (watchdog is triggered after 10 iterations)
+	# Default 5 (watchdog is triggered after 5 iterations)
 	# If set to 0, the watchdog is never triggered
 	# Ignored if auto_config is disabled.
 	#
@@ -456,6 +458,18 @@ config mesh11sd 'setup'
 	#option mesh_gate_enable '0'
 
 	###########################################################################################
+	# swconfig_mac_skip (optional)
+	#
+	# On a swconfig target, mesh11sd walks bridge and port MAC addresses.
+	# Set to 1 to leave those addresses unchanged.
+	# Default: 0 (the MAC walk runs).
+	# When the walk runs, a bridge that already contains a mesh port is left up.
+	# DSA and switchless boards do not use this option.
+	#
+	# Example:
+	#option swconfig_mac_skip '1'
+
+	###########################################################################################
 	# mesh_leechmode_enable (optional)
 	# Determines whether this node will be a gate only leech node
 	#
@@ -490,7 +504,7 @@ config mesh11sd 'setup'
 	#
 	# This enables a non-volatile debug log at /mesh11sd_log/mesh11sd.log.
 	# Each line is wall-clock time, uptime in seconds, then the message.
-	# It records portal watchdog actions, portal probes, channel scans, peer handoff and bridge MAC changes.
+	# It records portal watchdog actions, portal probes, channel scans, a stalled mesh radio, peer handoff and bridge MAC changes.
 	# Nothing is written while auto_config is disabled, test mode is off, and no mesh interface is configured.
 	#
 	# ##########WARNING##########
@@ -640,10 +654,11 @@ config mesh11sd 'setup'
 	###########################################################################################
 	# use_default_beacon_interval (optional)
 	#
-	# When set, forces the use of the default beacon interval on the mesh phy
-	# For most drivers, the beacon interval defaults to 100ms
-	# mesh11sd dynamically sets the beacon interval according to the mesh_node_mobility_level setting
-	# Some wireless drivers fail if the beacon interval is changed (eg Qualcomm Atheros IPQ6018)
+	# When set, forces beacon interval 100 on the mesh phy.
+	# For most drivers, the beacon interval defaults to 100ms.
+	# mesh11sd otherwise sets the beacon interval from mesh_node_mobility_level.
+	# Some wireless drivers fail if the beacon interval is changed (eg Qualcomm Atheros IPQ6018).
+	# ath11k, an mt76_wmac radio, and a multi-band wiphy are forced to 100 even when this is unset.
 	# Default: 0 (disabled)
 	# Set to 1 to force
 	#
