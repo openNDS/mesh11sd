@@ -160,6 +160,9 @@ restart_mesh() {
 	check_mesh_mtu
 	mobility_settings parameters
 
+	# wifi replaces the vif and the packet counters restart near zero.
+	# hold keeps a stall in force; the new numbers are the next baseline.
+	note_mesh_radio_counters "" hold
 }
 
 check_mesh_mtu() {
@@ -251,6 +254,24 @@ get_current_setup() {
 	fi
 
 	syslogmessage="option checkinterval [ $checkinterval ]"
+	debugtype="info"
+	mute="$mutestate"
+	write_to_syslog
+
+	#####
+	# Added to checkinterval once at load 0.5 per core, and twice at load 1.0.
+	# 0 keeps every pass at checkinterval.
+	loop_interval_delta=$(uci get mesh11sd.setup.loop_interval_delta 2> /dev/null)
+
+	case "$loop_interval_delta" in
+		''|*[!0-9]*)
+			loop_interval_delta=20
+			;;
+	esac
+
+	loop_interval_delta=$((loop_interval_delta))
+
+	syslogmessage="option loop_interval_delta [ $loop_interval_delta ]"
 	debugtype="info"
 	mute="$mutestate"
 	write_to_syslog
@@ -848,6 +869,21 @@ get_current_setup() {
 	fi
 
 	syslogmessage="option mesh_gate_enable [ $mesh_gate_enable ]"
+	debugtype="info"
+	mute="$mutestate"
+	write_to_syslog
+
+	#####
+	# swconfig_mac_skip
+	# 0 (default): run the MAC walk.
+	# 1: on a swconfig bridge, leave MAC addresses unchanged.
+	swconfig_mac_skip=$(uci get mesh11sd.setup.swconfig_mac_skip 2> /dev/null)
+
+	if [ -z "$swconfig_mac_skip" ] || [ "$swconfig_mac_skip" != "1" ]; then
+		swconfig_mac_skip="0"
+	fi
+
+	syslogmessage="option swconfig_mac_skip [ $swconfig_mac_skip ]"
 	debugtype="info"
 	mute="$mutestate"
 	write_to_syslog
@@ -1645,8 +1681,15 @@ check_gate() {
 # An empty cctimestamp is seeded to now, so the first call waits.
 # check_channel_now nonzero (portal watchdog) opens the gate on this call.
 # Caller clears cctimestamp after a scan.
+# The floor is channel_tracking_checkinterval scaled by the live pause
+# (loop_interval / checkinterval). At the configured pause it is unchanged.
 channel_scan_due() {
-	mininterval=$channel_tracking_checkinterval
+	if [ -n "$loop_interval" ] && [ "$loop_interval" -gt 0 ]; then
+		mininterval=$((channel_tracking_checkinterval * loop_interval / checkinterval))
+	else
+		mininterval=$channel_tracking_checkinterval
+	fi
+
 	timenow=$(cut -d' ' -f1 < /proc/uptime | cut -d. -f1)
 
 	if [ -z "$cctimestamp" ]; then
@@ -1660,6 +1703,65 @@ channel_scan_due() {
 	fi
 
 	[ "$mininterval" -le "$elapsed_time" ]
+}
+
+# The configured checkinterval is the shortest end-of-loop pause.
+# It is used until a portal has answered, and again on any pass where
+# the portal did not answer. A portal node follows the load rules.
+# loop_interval_delta 0 disables the longer pauses.
+# One-minute load per CPU, once a portal is answering:
+# below 0.5, checkinterval; from 0.5, checkinterval+delta; from 1.0, checkinterval+2*delta.
+# The longer pause is held while the load stays at or above 0.5.
+# Sets loop_interval. Does not change checkinterval.
+loop_sleep_interval() {
+	local load10
+	local ncpu
+	local per
+
+	if [ -z "$loop_interval_delta" ]; then
+		loop_interval_delta=20
+	fi
+
+	if [ "$loop_interval_delta" -eq 0 ]; then
+		loop_interval=$checkinterval
+		loop_interval_factor=1
+		return 0
+	fi
+
+	if [ "$detected_state" != "portal" ] && [ "$link_to_portal" != "0" ]; then
+		loop_interval=$checkinterval
+		loop_interval_factor=1
+		return 0
+	fi
+
+	load10=$(awk '{printf "%d", $1 * 10}' /proc/loadavg 2>/dev/null)
+	ncpu=$(grep -c '^processor' /proc/cpuinfo 2>/dev/null)
+
+	if [ -z "$load10" ] || [ -z "$ncpu" ] || [ "$ncpu" -lt 1 ]; then
+		loop_interval=$checkinterval
+		loop_interval_factor=1
+		return 0
+	fi
+
+	per=$((load10 / ncpu))
+
+	if [ "$per" -ge 10 ]; then
+		loop_interval_factor=3
+	elif [ "$per" -ge 5 ] && [ "$loop_interval_factor" -ge 3 ]; then
+		loop_interval_factor=3
+	elif [ "$per" -ge 5 ]; then
+		loop_interval_factor=2
+	else
+		loop_interval_factor=1
+	fi
+
+	if [ "$loop_interval_factor" -ge 3 ]; then
+		loop_interval=$((checkinterval + (loop_interval_delta * 2)))
+	elif [ "$loop_interval_factor" -ge 2 ]; then
+		loop_interval=$((checkinterval + loop_interval_delta))
+	else
+		loop_interval=$checkinterval
+	fi
 }
 
 check_channel() {
@@ -1862,6 +1964,82 @@ manage_fallback_ula_route() {
 		fi
 	fi
 
+	# A portal we no longer use leaves its /64 address, the kernel route
+	# that address creates, and the metric-512 on-link route.
+	if [ -n "$device" ] && [ -n "$ula_base" ] && [ -n "$ula_subnet" ] && [ -n "$devicemac" ]; then
+		mac_no_colons="${devicemac//:/}"
+		eui64="${mac_no_colons:0:2}${mac_no_colons:2:2}${mac_no_colons:4:2}fffe${mac_no_colons:6:2}${mac_no_colons:8:2}${mac_no_colons:10:2}"
+		eui64_formatted="${eui64:0:4}:${eui64:4:4}:${eui64:8:4}:${eui64:12:4}"
+
+		ip -6 addr show dev "$device" 2>/dev/null | while read -r addr_line; do
+			case "$addr_line" in
+				*"inet6 $ula_base:"*) ;;
+				*) continue ;;
+			esac
+
+			addr=$(echo "$addr_line" | awk '{printf "%s", $2}')
+			addr_only=${addr%%/*}
+			old_subnet=$(echo "$addr_only" | awk -F: '{printf "%s", $4}')
+			iid=$(echo "$addr_only" | awk -F: '{printf "%s:%s:%s:%s", $5, $6, $7, $8}')
+
+			if [ -z "$old_subnet" ] || [ "$old_subnet" = "$ula_subnet" ]; then
+				continue
+			fi
+
+			if [ "$iid" = "$eui64_formatted" ] || [ "$addr_only" = "$ula_base:$old_subnet::1" ]; then
+				if ip -6 addr del "$addr" dev "$device" 2>/dev/null; then
+					log_notice "Removed stale portal address $addr from $device"
+					write_to_watchdog_nonvolatile_log
+				fi
+			fi
+		done
+
+		ip -6 route show dev "$device" proto static 2>/dev/null | while read -r route_line; do
+			prefix=$(echo "$route_line" | awk '{printf "%s", $1}')
+
+			case "$prefix" in
+				"$ula_base":*::/64) ;;
+				*) continue ;;
+			esac
+
+			case "$route_line" in
+				*"metric 512"*) ;;
+				*) continue ;;
+			esac
+
+			old_subnet=$(echo "$prefix" | awk -F: '{printf "%s", $4}')
+
+			if [ -z "$old_subnet" ] || [ "$old_subnet" = "$ula_subnet" ]; then
+				continue
+			fi
+
+			if ip -6 route del "$prefix" dev "$device" onlink metric 512 proto static 2>/dev/null; then
+				log_notice "Removed stale portal route $prefix from $device"
+				write_to_watchdog_nonvolatile_log
+			fi
+		done
+
+		ip -6 neigh show dev "$device" 2>/dev/null | while read -r neigh_line; do
+			neigh=$(echo "$neigh_line" | awk '{printf "%s", $1}')
+
+			case "$neigh" in
+				"$ula_base":*::1) ;;
+				*) continue ;;
+			esac
+
+			old_subnet=$(echo "$neigh" | awk -F: '{printf "%s", $4}')
+
+			if [ -z "$old_subnet" ] || [ "$old_subnet" = "$ula_subnet" ]; then
+				continue
+			fi
+
+			if ip -6 neigh del "$neigh" dev "$device" 2>/dev/null; then
+				log_notice "Removed stale portal neighbour $neigh from $device"
+				write_to_watchdog_nonvolatile_log
+			fi
+		done
+	fi
+
 	return 0
 }
 
@@ -1888,6 +2066,204 @@ is_channel_valid() {
 		return "$valid_channel"
 	else
 		return 1
+	fi
+}
+
+# Remember mesh vif packet counters while the portal answers.
+# scan_channel compares these before iw scan.
+# $1 is the mesh ifname, or empty to use $tmpdir/active_mesh_ifname.
+# $2 hold records a zero baseline when wifi has replaced the vif and
+# the new counters cannot be read yet.
+note_mesh_radio_counters() {
+	local ifname
+	local hold
+	local rx
+	local tx
+
+	ifname="$1"
+	hold="$2"
+
+	if [ -z "$ifname" ]; then
+		if [ -f "$tmpdir/active_mesh_ifname" ]; then
+			. "$tmpdir/active_mesh_ifname"
+			ifname="$active_mesh_ifname"
+		fi
+	fi
+
+	if [ -z "$ifname" ]; then
+		return 0
+	fi
+
+	rx=$(cat "/sys/class/net/$ifname/statistics/rx_packets" 2>/dev/null)
+	tx=$(cat "/sys/class/net/$ifname/statistics/tx_packets" 2>/dev/null)
+
+	case "$rx" in
+		''|*[!0-9]*) rx="" ;;
+	esac
+
+	case "$tx" in
+		''|*[!0-9]*) tx="" ;;
+	esac
+
+	if [ -z "$rx" ] || [ -z "$tx" ]; then
+		# wifi may return before the new vif statistics can be read.
+		# Zero makes the next real sample comparable.
+		if [ "$hold" = "hold" ]; then
+			mesh_ctr_if="$ifname"
+			mesh_ctr_rx=0
+			mesh_ctr_tx=0
+		fi
+
+		return 0
+	fi
+
+	mesh_ctr_if="$ifname"
+	mesh_ctr_rx="$rx"
+	mesh_ctr_tx="$tx"
+}
+
+# Return 0 when this vif is not receiving now, or the vif has gone.
+# The caller must not run iw scan.
+# A rise since the last answered probe is checked again across 1 s,
+# because that sample can be a minute old.
+# Return 1 when rx moved during that second. No baseline yet is a scan,
+# so a peer can find the portal before it has ever answered.
+# A stored rx of 0 is the same. restart_mesh writes it when the new vif
+# counters are missing or still zero, and that is not a portal sample.
+mesh_radio_stalled() {
+	local ifname
+	local rx
+	local tx
+	local rx_moved
+
+	ifname="$1"
+
+	if [ -z "$ifname" ]; then
+		return 1
+	fi
+
+	if [ -z "$mesh_ctr_if" ] || [ -z "$mesh_ctr_rx" ] || [ -z "$mesh_ctr_tx" ]; then
+		log_info "mesh radio counters, no baseline, scanning"
+		write_to_watchdog_nonvolatile_log
+		return 1
+	fi
+
+	if [ "$mesh_ctr_rx" -eq 0 ]; then
+		log_info "mesh radio counters, zero baseline, scanning"
+		write_to_watchdog_nonvolatile_log
+		return 1
+	fi
+
+	if [ "$ifname" != "$mesh_ctr_if" ]; then
+		log_info "mesh radio counters, iface [ $ifname ] baseline [ $mesh_ctr_if ], scanning"
+		write_to_watchdog_nonvolatile_log
+		return 1
+	fi
+
+	if [ ! -e "/sys/class/net/$ifname" ]; then
+		log_notice "mesh radio stalled, $ifname missing, rx [ $mesh_ctr_rx ] tx [ $mesh_ctr_tx ]"
+		write_to_watchdog_nonvolatile_log
+		return 0
+	fi
+
+	rx=$(cat "/sys/class/net/$ifname/statistics/rx_packets" 2>/dev/null)
+	tx=$(cat "/sys/class/net/$ifname/statistics/tx_packets" 2>/dev/null)
+
+	case "$rx" in
+		''|*[!0-9]*) rx="" ;;
+	esac
+
+	case "$tx" in
+		''|*[!0-9]*) tx="" ;;
+	esac
+
+	if [ -z "$rx" ] || [ -z "$tx" ]; then
+		log_info "mesh radio counters unreadable, scanning"
+		write_to_watchdog_nonvolatile_log
+		return 1
+	fi
+
+	# rx unchanged since the link was up: nothing has been received.
+	# tx may have moved (deaf) or not (the probe never left).
+	if [ "$rx" = "$mesh_ctr_rx" ]; then
+		log_notice "mesh radio stalled, $ifname rx [ $mesh_ctr_rx ] tx [ $mesh_ctr_tx ] now rx [ $rx ] tx [ $tx ]"
+		write_to_watchdog_nonvolatile_log
+		return 0
+	fi
+
+	rx_moved=$(awk -v now="$rx" -v then="$mesh_ctr_rx" 'BEGIN { if (now+0 > then+0) print 1; else print 0 }')
+
+	if [ "$rx_moved" = "1" ]; then
+		# Growth since the last answered probe can be a minute old.
+		# Reset and watch 1 s. A hearing vif moves rx on HWMP.
+		# tx alone does not count: a deaf radio still sends PREQs.
+		log_info "mesh radio counters moved since last portal, rechecking over 1 s, $ifname rx [ $mesh_ctr_rx ] tx [ $mesh_ctr_tx ] now rx [ $rx ] tx [ $tx ]"
+		write_to_watchdog_nonvolatile_log
+		mesh_ctr_rx="$rx"
+		mesh_ctr_tx="$tx"
+		sleep 1
+
+		if [ ! -e "/sys/class/net/$ifname" ]; then
+			log_notice "mesh radio stalled, $ifname missing over 1 s, rx [ $mesh_ctr_rx ] tx [ $mesh_ctr_tx ]"
+			write_to_watchdog_nonvolatile_log
+			return 0
+		fi
+
+		rx=$(cat "/sys/class/net/$ifname/statistics/rx_packets" 2>/dev/null)
+		tx=$(cat "/sys/class/net/$ifname/statistics/tx_packets" 2>/dev/null)
+
+		case "$rx" in
+			''|*[!0-9]*) rx="" ;;
+		esac
+
+		case "$tx" in
+			''|*[!0-9]*) tx="" ;;
+		esac
+
+		if [ -z "$rx" ] || [ -z "$tx" ]; then
+			log_notice "mesh radio stalled, $ifname counters unreadable over 1 s, rx [ $mesh_ctr_rx ] tx [ $mesh_ctr_tx ]"
+			write_to_watchdog_nonvolatile_log
+			return 0
+		fi
+
+		rx_moved=$(awk -v now="$rx" -v then="$mesh_ctr_rx" 'BEGIN { if (now+0 > then+0) print 1; else print 0 }')
+
+		if [ "$rx_moved" = "1" ]; then
+			log_info "mesh radio counters moving over 1 s, $ifname rx [ $mesh_ctr_rx ] tx [ $mesh_ctr_tx ] now rx [ $rx ] tx [ $tx ]"
+			write_to_watchdog_nonvolatile_log
+			mesh_ctr_rx="$rx"
+			mesh_ctr_tx="$tx"
+			return 1
+		fi
+
+		log_notice "mesh radio stalled, $ifname rx unchanged over 1 s, rx [ $mesh_ctr_rx ] tx [ $mesh_ctr_tx ] now rx [ $rx ] tx [ $tx ]"
+		write_to_watchdog_nonvolatile_log
+		return 0
+	fi
+
+	# Counter went backwards. The vif was replaced; this is not a hearing radio.
+	log_notice "mesh radio stalled, $ifname rx [ $mesh_ctr_rx ] tx [ $mesh_ctr_tx ] now rx [ $rx ] tx [ $tx ]"
+	write_to_watchdog_nonvolatile_log
+	return 0
+}
+
+# procd's reboot stops wireless and can wait on a phy that is not answering.
+# Arm a detached sysrq first. Do not call wifi or restart the network.
+# reboot_on_error 0 leaves the node up. The caller has already logged why.
+reboot_without_wireless() {
+	sync
+
+	if [ "$reboot_on_error" -gt 0 ]; then
+		echo "sleep 45; echo 1 > /proc/sys/kernel/sysrq; echo b > /proc/sysrq-trigger" > "$tmpdir/scan_reboot"
+		chmod 700 "$tmpdir/scan_reboot"
+
+		if command -v setsid >/dev/null 2>&1; then
+			setsid sh "$tmpdir/scan_reboot" >/dev/null 2>&1 &
+		else
+			sh "$tmpdir/scan_reboot" >/dev/null 2>&1 &
+		fi
+
+		reboot
 	fi
 }
 
@@ -1918,11 +2294,71 @@ scan_channel() {
 
 			log_info "Current channel [ $our_channel ]"
 			mesh_id=$(uci get $meshconfig.mesh_id)
-			syslogmessage="scan_channel iw dev $ifname scan, channel [ $our_channel ]"
+
+			# A hung mt76 radio accepts nl80211 and does not return.
+			# The last answered probe can be a minute old, so a rise since
+			# then is rechecked across 1 s. Frozen rx must not call wifi:
+			# restart_mesh asks the same phy and can sit there.
+			# Reboot instead. Do not scan on this pass.
+			if mesh_radio_stalled "$ifname"; then
+				log_notice "mesh radio stalled, rebooting without mesh restart"
+				write_to_watchdog_nonvolatile_log
+				reboot_without_wireless
+				return 0
+			fi
+
+			# iw writes the dump only after the phy finishes the sweep.
+			# Run it aside so this process can still reach a reboot.
+			# wifi and network restart take the same lock once the sweep
+			# has been accepted and has not finished, so they are not used here.
+			# 30 s covers one 2.4 GHz sweep. A zombie still answers kill -0;
+			# /proc state Z means iw has exited and can be reaped.
+			scan_dump="$tmpdir/iw_scan_dump"
+			iw dev "$ifname" scan > "$scan_dump" 2>/dev/null &
+			scan_pid=$!
+			scan_wait=0
+			scan_done=0
+
+			debugtype="info"
+			syslogmessage="scan_channel iw dev $ifname scan background, channel [ $our_channel ], pid [ $scan_pid ], wait up to 30 s"
+			write_to_syslog
 			write_to_watchdog_nonvolatile_log
-			scanned_channels=$(iw dev $ifname scan 2> /dev/null | grep -F -w -B 20 "MESH ID: $mesh_id" | awk -F "primary channel: " '$2 != "" {printf "%s ",$2}')
-			syslogmessage="scan_channel iw dev $ifname scan returned [ $scanned_channels ]"
-			write_to_watchdog_nonvolatile_log
+
+			while [ "$scan_wait" -lt 30 ]; do
+				if [ ! -d "/proc/$scan_pid" ]; then
+					scan_done=1
+					break
+				fi
+
+				scan_stat=$(cat "/proc/$scan_pid/stat" 2>/dev/null)
+				scan_state=${scan_stat##*) }
+				scan_state=${scan_state%% *}
+
+				if [ -z "$scan_state" ] || [ "$scan_state" = "Z" ]; then
+					scan_done=1
+					break
+				fi
+
+				sleep 1
+				scan_wait=$((scan_wait + 1))
+			done
+
+			if [ "$scan_done" -eq 1 ]; then
+				wait "$scan_pid" 2>/dev/null
+				scanned_channels=$(grep -F -w -B 20 "MESH ID: $mesh_id" "$scan_dump" 2>/dev/null | awk -F "primary channel: " '$2 != "" {printf "%s ",$2}')
+				debugtype="info"
+				syslogmessage="scan_channel iw dev $ifname scan returned [ $scanned_channels ]"
+				write_to_syslog
+				write_to_watchdog_nonvolatile_log
+			else
+				kill "$scan_pid" 2>/dev/null
+				debugtype="notice"
+				syslogmessage="iw scan still running after 30 s, rebooting without wireless restart"
+				write_to_syslog
+				write_to_watchdog_nonvolatile_log
+				reboot_without_wireless
+				return 0
+			fi
 
 			if [ ! -z "$our_channel" ] && [ ! -z "$scanned_channels" ]; then
 
@@ -2908,7 +3344,6 @@ check_portal() {
 				network_restart=0
 			fi
 
-#			check_dns_server
 			check_channel
 
 		else
@@ -3953,6 +4388,15 @@ mobility_settings() {
 		beacon_int=100
 		debugtype="info"
 		syslogmessage="Qualcomm ath11k detected, beacon interval override to [ $beacon_int ms ] (workaround for ath11k bug). Mesh mobility may be suboptimal."
+		write_to_syslog
+	fi
+
+	# GL-MT300N-V2 and the other MT7628 boards. The integrated radio is one
+	# beacon timer shared by the mesh vif and any AP on that phy.
+	if [ "$mesh_driver" = "mt76_wmac" ]; then
+		beacon_int=100
+		debugtype="info"
+		syslogmessage="MediaTek mt76_wmac detected, beacon interval override to [ $beacon_int ms ] (workaround for mt7603 beacon bug). Mesh mobility may be suboptimal."
 		write_to_syslog
 	fi
 
@@ -5038,7 +5482,6 @@ check_vtunnel() {
 				network_zone="$auto_mesh_network"
 			fi
 
-###			echo 1 > /proc/sys/net/ipv4/conf/$device/proxy_arp
 			/sbin/service dnsmasq reload
 
 			vxiflist=$(uci show wireless | grep "network='$network_zone'" | awk -F "." '{printf "%s.%s ", $1, $2}')
@@ -5052,7 +5495,6 @@ check_vtunnel() {
 
 		elif [ "$vxlan_status" -eq 1 ] && [ "$commit_all" -eq 1 ]; then
 			device="br-tun$tun_id"
-###			echo 1 > /proc/sys/net/ipv4/conf/$device/proxy_arp
 
 			vxiflist=$(uci show wireless | grep "network='vtunlan'" | awk -F "." '{printf "%s.%s ", $1, $2}')
 
@@ -5299,6 +5741,7 @@ get_portal_ula() {
 			ula_base=$(echo "$ula_prefix" | awk -F"::/" '{print $1}')
 			portal_ula="$ula_base:$ula_subnet::1"
 			link_to_portal=0
+			note_mesh_radio_counters
 
 			echo "portal_ula=\"$portal_ula\"; ula_subnet=\"$ula_subnet\"; portal_mac=\"$factory_mac\"; metric=0; hops=0" > "$tmpdir/active_portal"
 			return 0
@@ -5317,6 +5760,7 @@ get_portal_ula() {
 			link_to_portal=$?
 
 			if [ "$link_to_portal" -eq 0 ]; then
+				note_mesh_radio_counters
 				log_debug "Active Portal - portal_ula [ $portal_ula ], ula_subnet [ $ula_subnet ], portal_mac [ $portal_mac ], metric [ $metric ], hops [ $hops ]"
 				return 0
 			else
@@ -5447,6 +5891,7 @@ get_portal_ula() {
 	link_to_portal=$?
 
 	if [ "$link_to_portal" -eq 0 ]; then
+		note_mesh_radio_counters
 		ula_subnet=$(echo "$portal_ula" | awk -F ":" '{printf "%s", $4}')
 		ula_base=$(echo "$portal_ula" | awk -F ":" '{printf "%s:%s:%s", $1, $2, $3}')
 		log_info "Selected portal: [ $portal_ula ] [ $best_peer ], mesh metric delta [ $mesh_metric_threshold ], mesh airtime metric [ $best_metric ], hops [ $best_hops ]"
@@ -7709,6 +8154,31 @@ apply_bridge_mac() {
 # Ensure br-lan and br-tun$X have different MAC addresses
 # =============================================================================
 set_bridge_mac_addresses() {
+
+	if [ "$auto_config" -eq 0 ] && [ ! -e "$tmpdir/auto_config_test" ]; then
+		log_debug "daemon is idling"
+		return 0
+	fi
+
+	# A swconfig bridge is rebuilt from its device section on network reload.
+	# The MAC walk runs unless swconfig_mac_skip is 1.
+	if swconfig_bridge; then
+		if [ "$swconfig_mac_skip" != "0" ]; then
+			if [ -z "$swconfig_mac_skip_logged" ]; then
+				log_debug "swconfig: leaving MAC addresses unchanged"
+				write_to_watchdog_nonvolatile_log
+				swconfig_mac_skip_logged=1
+			fi
+			return 0
+		fi
+
+		if [ -z "$swconfig_mac_noskip_logged" ]; then
+			log_debug "swconfig: MAC skip disabled"
+			write_to_watchdog_nonvolatile_log
+			swconfig_mac_noskip_logged=1
+		fi
+	fi
+
 	log_debug "checking mac addresses"
 	local mesh_bridge="br-$auto_mesh_network"
 	local cpe_bridge="br-lan"
@@ -8787,6 +9257,28 @@ elif [ "$1" = "status" ]; then
 	echo "    \"auto_mesh_network\":\"$auto_mesh_network\","
 	echo "    \"auto_mesh_band\":\"$auto_mesh_band\","
 
+	# Same band-to-driver read as mobility_settings. The daemon writes
+	# wifidetect at startup; status creates it when that file is missing.
+	if [ ! -e "$tmpdir/wifidetect" ]; then
+		wifi_chipset_detect
+	fi
+
+	case "$auto_mesh_band" in
+		"2g")	mesh_band="2.4GHz" ;;
+		"2g40")	mesh_band="2.4GHz" ;;
+		"5g")	mesh_band="5GHz" ;;
+		"6g")	mesh_band="6GHz" ;;
+		"60g")	mesh_band="60GHz" ;;
+	esac
+
+	if [ -e "$tmpdir/wifidetect" ] && [ -n "$mesh_band" ]; then
+		start_marker="\"$mesh_band\""
+		end_marker="}"
+		mesh_driver=$(eval $(echo "sed -n '/$start_marker/,/$end_marker/{/$start_marker\|$end_marker/!p}' $tmpdir/wifidetect") | grep "\"Driver\"" | awk -F "\"" '{print $4}' | head -n 1)
+	fi
+
+	echo "    \"mesh_driver\":\"$mesh_driver\","
+
 	if [ ! -z "$mesh_phy_index" ]; then
 		echo "    \"mesh_phy_index\":\"$mesh_phy_index\","
 	fi
@@ -8794,6 +9286,7 @@ elif [ "$1" = "status" ]; then
 	echo "    \"mesh_multi_interfaces\":\"$mesh_multi_interfaces\","
 	echo "    \"auto_mesh_id\":\"$auto_mesh_id\","
 	echo "    \"mesh_gate_enable\":\"$mesh_gate_enable\","
+	echo "    \"swconfig_mac_skip\":\"$swconfig_mac_skip\","
 
 	if [ -e "$tmpdir/leechmode" ]; then
 		. "$tmpdir/leechmode"
@@ -8860,6 +9353,15 @@ elif [ "$1" = "status" ]; then
 	echo "    \"mesh_path_stabilisation\":\"$mesh_path_stabilisation\","
 	echo "    \"reactive_path_stabilisation_threshold\":\"$reactive_path_stabilisation_threshold\","
 	echo "    \"checkinterval\":\"$checkinterval\","
+	echo "    \"loop_interval_delta\":\"$loop_interval_delta\","
+
+	# Written by the running daemon at the end of each pass. Empty until the first sleep,
+	# and empty again once procd reports the daemon is not running.
+	if [ "$procd_status" = "running" ] && [ -f "$tmpdir/loop_interval" ]; then
+		. "$tmpdir/loop_interval"
+	fi
+
+	echo "    \"loop_interval\":\"$loop_interval\","
 	echo "    \"interface_timeout\":\"$interface_timeout\","
 	echo "    \"ssid_suffix_enable\":\"$ssid_suffix_enable\","
 	echo "    \"apmond_enable\":\"$apmond_enable\","
@@ -10238,6 +10740,11 @@ elif [ "$1" = "daemon" ]; then
 		rm $tmpdir/vxlan_mac
 	fi
 
+	# Drop the previous run's pause. status reads this until the first sleep writes it again.
+	if [ -f "$tmpdir/loop_interval" ]; then
+		rm "$tmpdir/loop_interval"
+	fi
+
 	# Fix dropbear - make sure reboot terminates ssh session before closing wireless
 	fix_dropbear
 
@@ -10274,6 +10781,11 @@ elif [ "$1" = "daemon" ]; then
 	check_channel_now=0
 	odhcpd_check=0
 	bridge_mac_ready=""
+	loop_interval_factor=1
+	loop_interval_last=""
+	mesh_ctr_if=""
+	mesh_ctr_rx=""
+	mesh_ctr_tx=""
 
 	#loop counter for Mesh Reactive Stabilsation Threshold:
 	mrstloopcount=0
@@ -10297,9 +10809,6 @@ elif [ "$1" = "daemon" ]; then
 
 	# unconditionally try to stop openNDS
 	manage_opennds stop
-
-	#configure mac addresses of intitial interfaces
-	set_bridge_mac_addresses
 
 	refresh_bridgemac
 
@@ -10645,6 +11154,7 @@ elif [ "$1" = "daemon" ]; then
 	log_debug "Initial setup [ luci_add_custom ]"
 	luci_add_custom
 
+	log_debug "Initial setup [ test for portal ULAs ]"
 	get_portal_ula discover
 	log_debug "portal ula [ $portal_ula ], link to portal [ $link_to_portal ]"
 
@@ -10681,17 +11191,8 @@ elif [ "$1" = "daemon" ]; then
 					syslogmessage="auto_config is disabled. Please configure a mesh interface or enable auto_config...."
 					write_to_syslog
 
-					# No mesh port yet, so correct br-lan on each pass.
-					# Stop once its live MAC is already the indexed MAC.
-					if [ -z "$bridge_mac_ready" ]; then
-						set_bridge_mac_addresses
-						live_mac=$(ip link show "br-$auto_mesh_network" 2>/dev/null | grep -o 'link/ether [^ ]*' | awk '{printf "%s", $2}')
-
-						if [ -n "$brmesh_mac" ] && [ "$live_mac" = "$brmesh_mac" ]; then
-							bridge_mac_ready=1
-						fi
-					fi
-
+					log_info "Checkinterval [$checkinterval]"
+					write_to_watchdog_nonvolatile_log
 					sleep $checkinterval
 					continue
 				fi
@@ -11083,10 +11584,19 @@ elif [ "$1" = "daemon" ]; then
 		pin_active_portal_arp
 		ensure_cpe_multicast_discovery_rule
 		check_odhcpd
+		set_bridge_mac_addresses
+		loop_sleep_interval
 
-		log_info "Checkinterval [$checkinterval]"
+		# status is a separate process and reads the pause this pass is about to use.
+		echo "loop_interval=\"$loop_interval\"" > "$tmpdir/loop_interval"
 
-		sleep $checkinterval
+		if [ "$loop_interval" != "$loop_interval_last" ]; then
+			loop_interval_last=$loop_interval
+		fi
+
+		log_info "Checkinterval [$loop_interval]"
+		write_to_watchdog_nonvolatile_log
+		sleep $loop_interval
 	done
 	exit 0
 else

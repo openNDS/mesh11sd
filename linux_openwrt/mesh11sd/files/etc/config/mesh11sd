@@ -25,6 +25,16 @@ config mesh11sd 'setup'
 	#option checkinterval '15'
 
 	###########################################################################################
+	# loop_interval_delta (optional)
+	# Added to checkinterval while a portal is answering.
+	# Load at least 0.5 per core: one delta. Load at least 1.0 per core: two deltas.
+	# The two-delta pause is held until the load falls below 0.5.
+	# Set to 0 to keep every pass at checkinterval.
+	# Default: 20 (seconds)
+	#
+	#option loop_interval_delta '20'
+
+	###########################################################################################
 	# portal_detect (optional)
 	# Ignored if auto_config is disabled.
 	#
