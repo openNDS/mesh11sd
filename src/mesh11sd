@@ -13,8 +13,8 @@
 # mesh11sd daemon
 #
 
-last_version="7.3.0"
-version="7.3.1~be7a"
+last_version="7.3.1~be7a"
+version="7.3.1"
 
 checksum=$(sha256sum /usr/sbin/mesh11sd | awk '{printf "%s", $1}')
 fixup1=0
@@ -3011,6 +3011,8 @@ portal_watchdog() {
 
 			wait_for_mesh
 			dhcp4_renew
+			failcount=0
+			return 0
 		fi
 
 		if [ "$link_to_portal" -ne 0 ] && [ "$network_restart" -eq 3 ]; then
