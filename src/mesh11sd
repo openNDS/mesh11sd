@@ -3011,6 +3011,8 @@ portal_watchdog() {
 
 			wait_for_mesh
 			dhcp4_renew
+			failcount=0
+			return 0
 		fi
 
 		if [ "$link_to_portal" -ne 0 ] && [ "$network_restart" -eq 3 ]; then
