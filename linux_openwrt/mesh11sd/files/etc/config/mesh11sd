@@ -634,7 +634,8 @@ config mesh11sd 'setup'
 	#
 	# Specifies the mountpoint of storage to be used for the mesh11sd logging system
 	# Default: /tmp
-	# A subdirectory "mesh11sd" will be created in the mountpoint where all logs and temporary files will be stored
+	# A subdirectory "mesh11sd" will be created in the mountpoint for the log file
+	# Runtime state remains in /tmp/mesh11sd and does not survive reboot
 	# Ensure this mountpoint is NOT in system flash memory as it will lead to premature flash failure
 	# Typically a removable (and replaceable) usb drive is ideal.
 	#

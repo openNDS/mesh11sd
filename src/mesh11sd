@@ -21,7 +21,7 @@ fixup1=0
 failcount=0
 network_restart=0
 
-# initial tmpdir, use $log_mountpoint/mesh11sd once startup begins
+# Runtime state stays on volatile storage. Logs use $log_mountpoint/mesh11sd.
 tmpdir="/tmp/mesh11sd"
 outputfile="$tmpdir/wifidetect"
 mkdir -p "$tmpdir"
@@ -218,6 +218,7 @@ get_current_setup() {
 
 	if [ -z "$mountcheck" ]; then
 		log_mountpoint="/tmp"
+		mountcheck=$(df | grep -w  "$log_mountpoint")
 	fi
 
 	syslogmessage="option log_mountpoint [ $log_mountpoint ]"
@@ -225,7 +226,7 @@ get_current_setup() {
 	mute="$mutestate"
 	write_to_syslog
 
-	tmpdir="$log_mountpoint/mesh11sd"
+	mkdir -p "$log_mountpoint/mesh11sd"
 	mkdir -p "$tmpdir"
 
 	#####
@@ -1466,60 +1467,58 @@ wait_for_interface() {
 write_log() {
 	local logdir="$log_mountpoint/mesh11sd"
 	local logfile="$logdir/mesh11sd_log.log"
-	local awkcmd="awk ""'\$6==""\"$log_mountpoint\"""{print \$4}'"
+	local min_freespace_to_log_ratio=10
+	local available
+	local filesize
+	local sizeratio
+	local datetime
+
+	if [ -z "$mountcheck" ]; then
+		echo "Log location is NOT a mountpoint - logs would fill storage space - logging disabled" | logger -p "daemon.err" -s -t "mesh11sd[$mesh11sdpid]: "
+		return 0
+	fi
 
 	if [ ! -d "$logdir" ]; then
 		mkdir -p "$logdir"
 	fi
 
-	if [ ! -z "$mountcheck" ]; then
-		# Truncate the log file if max_log_entries is set
+	# Truncate the log file if max_log_entries is set
+	log_entries=$(wc -l "$logfile" 2>/dev/null | awk '{printf "%d", $1}')
 
-		log_entries=$(wc -l "$logfile" 2>/dev/null | awk '{printf "%d", $1}')
+	if [ -z "$log_entries" ]; then
+		log_entries="0"
+	fi
 
-		if [ -z "$log_entries" ]; then
-			log_entries="0"
+	if [ "$log_entries" -gt "$max_log_entries" ]; then
+		mv "$logfile" "$logfile.cut" 2>/dev/null
+		tail -n "$max_log_entries" "$logfile.cut" 2>/dev/null >> "$logfile"
+		rm "$logfile.cut" 2>/dev/null
+	fi
+
+	available=$(df | grep -w "$log_mountpoint" | awk '{print $4; exit}')
+	filesize=$(ls -s -1 "$logfile" 2>/dev/null | awk '{print $1}')
+
+	if [ -z "$available" ]; then
+		available=0
+	fi
+
+	if [ -z "$filesize" ] || [ "$filesize" -eq 0 ]; then
+		filesize=1
+	fi
+
+	sizeratio=$((available / filesize))
+
+	if [ "$sizeratio" -ge "$min_freespace_to_log_ratio" ]; then
+		datetime=$(date)
+		datetime="$datetime "
+
+		if [ ! -f "$logfile" ]; then
+			echo "$datetime""New log file created" > "$logfile"
 		fi
 
-		if [ "$log_entries" -gt "$max_log_entries" ]; then
-			mv "$logfile" "$logfile.cut" 2>/dev/null
-			tail -n "$max_log_entries" "$logfile.cut" 2>/dev/null >> "$logfile"
-			rm "$logfile.cut" 2>/dev/null
-		fi
-
-		available=$(df | grep -w  "$log_mountpoint" | eval "$awkcmd")
-
-		if [ "$log_mountpoint" = "$mountpoint" ]; then
-			# Check the logfile is not too big
-			min_freespace_to_log_ratio=10
-			filesize=$(ls -s -1 $logfile | awk -F' ' '{print $1}')
-
-			if [ $filesize -eq 0 ]; then
-				filesize=1
-			fi
-			sizeratio=$(($available/$filesize))
-
-			if [ $sizeratio -ge $min_freespace_to_log_ratio ]; then
-				echo "$datetime""$loginfo" >> $logfile
-			else
-				echo "Log file too big, please archive contents and reduce max_log_entries" | logger -p "daemon.err" -s -t "mesh11sd[$mesh11sdpid]: "
-			fi
-		else
-			if [ "$available" -gt 10 ];then
-				datetime=$(date)
-				datetime="$datetime "
-
-				if [ ! -f "$logfile" ]; then
-					echo "$datetime""New log file created" > $logfile
-				fi
-
-				echo "$datetime""daemon.$debugtype mesh11sd[$mesh11sdpid]: $logmessage" >> $logfile
-			else
-				echo "Log file too big, please archive contents and reduce max_log_entries" | logger -p "daemon.err" -s -t "mesh11sd[$mesh11sdpid]: "
-			fi
-		fi
+		echo "$datetime""daemon.$debugtype mesh11sd[$mesh11sdpid]: $logmessage" >> "$logfile"
 	else
-		echo "Log location is NOT a mountpoint - logs would fill storage space - logging disabled" | logger -p "daemon.err" -s -t "mesh11sd[$mesh11sdpid]: "
+		echo "Log file too big, please archive contents and reduce max_log_entries" | logger -p "daemon.err" -s -t "mesh11sd[$mesh11sdpid]: "
 	fi
 }
 
@@ -10708,7 +10707,7 @@ elif [ "$1" = "daemon" ]; then
 	mute=0
 	# Detect what we are running on - Write $tmpdir/wifidetect file with os, device wireless chipset and driver info
 	# vars Sdriver, $chipset labelmac and others are set
-	outputfile="/$tmpdir/wifidetect"
+	outputfile="$tmpdir/wifidetect"
 	wifi_chipset_detect
 	installver="legacy"
 
