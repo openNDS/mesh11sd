@@ -303,7 +303,7 @@ MBP/TPN: WAN is added to `br-tun$tun_id`. MRP portal may serve DHCPv4/RA on vtun
 | `apmon_verbose_debug_enable` | 0 | |
 | `mesh_backhaul_led` | `auto` | `none` to disable; or `color:function` from `/sys/class/leds`. |
 | `manage_opennds_startup` | 1 | If opennds is installed. |
-| `log_mountpoint` | `/tmp` | Not on system flash for long-term logs. Subdir `mesh11sd`. |
+| `log_mountpoint` | `/tmp` | Not on system flash for long-term logs. Subdir `mesh11sd` holds the log only. Runtime state stays in `/tmp/mesh11sd`. |
 | `max_log_entries` | 500 | `mesh11sd read_log`. |
 | `use_default_beacon_interval` | 0 | 1 forces beacon interval 100. ath11k, mt76_wmac, and a multi-band wiphy force 100 even when this is 0. |
 | `mesh_dtim_period` | 2 | Overridden by mobility level unless the driver ignores it. |
@@ -1096,7 +1096,8 @@ config mesh11sd 'setup'
 	#
 	# Specifies the mountpoint of storage to be used for the mesh11sd logging system
 	# Default: /tmp
-	# A subdirectory "mesh11sd" will be created in the mountpoint where all logs and temporary files will be stored
+	# A subdirectory "mesh11sd" will be created in the mountpoint for the log file
+	# Runtime state remains in /tmp/mesh11sd and does not survive reboot
 	# Ensure this mountpoint is NOT in system flash memory as it will lead to premature flash failure
 	# Typically a removable (and replaceable) usb drive is ideal.
 	#
