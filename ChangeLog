@@ -1,9 +1,10 @@
 mesh11sd (7.3.2~be7a)
+  * Add - OpenWrt package template at linux_openwrt/mesh11sd/Makefile [bluewavenet]
   * Fix - keep runtime state in /tmp/mesh11sd when log_mountpoint is persistent storage [bluewavenet]
   * Fix - apply the log free-space ratio check and remountcheck after falling back to /tmp [bluewavenet]
   * Fix - PKG_LICENSE GPL-2.0-or-later to match the source header [bluewavenet]
 
- -- Rob White <dot@blue-wave.net>  Thu, 22 Oct 2026 10:25:50 +0000
+ -- Rob White <dot@blue-wave.net>  Thu, 22 Oct 2026 10:43:14 +0000
 
 mesh11sd (7.3.1)
   * Fix - the portal watchdog returns after a network restart and probes again before rebooting [bluewavenet]

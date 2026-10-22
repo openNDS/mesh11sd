@@ -6,7 +6,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=mesh11sd
-PKG_VERSION:=6.2.1
+PKG_VERSION:=7.3.2
 PKG_RELEASE:=1
 
 PKG_MAINTAINER:=Rob White <rob@blue-wave.net>
@@ -30,15 +30,17 @@ endef
 
 define Package/mesh11sd/description
   Mesh11sd autonomously manages all aspects of an 802.11s mesh network.
-  It acts as a service daemon.
+  It functions as a service daemon.
   Mesh parameters are dynamically set across all nodes.
-  Point to multi-point vxlan tunneling is provided by default.
-  Custom vlan trunking over the vxlan tunnel is fully supported.
-  Cabled sections of backhaul are fully supported.
-  Access Point usage data is collected in a central database.
-  A command line interface is provided for many functions.
-  An optional Customer/Client Premises Equipment (CPE) mode is provided
-  CPE mode greatly simplifies rollout of community WISP projects.
+  Island Mesh zones, contiguous mesh backhaul zones
+  that are out of range of each other but joined by cable
+  or other non-mesh media, are fully supported.
+  Multiple upstream portals can be connected,
+  giving load balancing on a peer basis with automatic failover.
+  Access Point usage data is collected in a central database
+  accessible in json format via a CLI command.
+  An optional Customer/Client Premises Equipment (CPE) mode
+  is provided for use in community WISP projects.
 endef
 
 define Package/mesh11sd/install
