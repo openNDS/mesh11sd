@@ -24,3 +24,4 @@ portal_live.c
 wan.c
 wan_live.c
 status.c
+wpad_guard.c

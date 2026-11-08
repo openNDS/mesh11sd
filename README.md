@@ -134,7 +134,18 @@ qualification is a source-bound configured-DNS check. It does not establish
 general Internet reachability.
 
 The read-only planner (`mesh11sd-plan --fixture` on the host, and
-`mesh11sd-v8-plan` on the target) does not apply configuration.
+`mesh11sd-v8-plan` on the target) does not apply configuration. `--version`
+and a status query also stay available when wpad is missing.
+
+A mutating OpenWrt startup (`--run-openwrt-auto-ipv4`, `--run-openwrt-peer`,
+or `--run-openwrt-ipv4-mrp`) waits until the apk database names
+`wpad-mbedtls`, `wpad-openssl`, or `wpad-wolfssl` and that package's file list
+matches the `/usr/sbin/wpad` multicall links. Unsuffixed `wpad` is the internal
+build and is rejected: OpenWrt 25.12.6 does not enable `CONFIG_MESH` or
+`CONFIG_OWE` for it. basic, mini, and mesh-only packages are rejected. The process logs that at most once every 60 seconds and
+does not open the bus or create network state. `SIGHUP` rechecks immediately.
+`SIGTERM` and `SIGINT` leave the wait. A privately built full wpad installed
+under another package name is not recognized. `ubus get_features` is not used.
 
 ## Outstanding before any hardware beta
 

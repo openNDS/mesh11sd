@@ -87,6 +87,11 @@ case "$mode" in
         "$output/test-core" > "$output/tests.log"
         "$output/mesh11sd-plan" --fixture > "$output/fixture.log"
         python3 "$root/tests/test_cli.py" "$output/mesh11sd-plan" > "$output/cli-smoke.log"
+        # shellcheck disable=SC2086
+        "$compiler" $flags -std=gnu11 -Wall -Wextra -Werror -D_DEFAULT_SOURCE -I"$lib" \
+            "$root/tests/test_wpad_guard.c" "$lib/wpad_guard.c" "$lib/safeio.c" "$lib/sha256.c" \
+            -o "$output/test-wpad-guard"
+        "$output/test-wpad-guard" > "$output/wpad-guard-tests.log"
         ;;
     sdk-*)
         printf 'SDK=%s\nCC=%s\n' "$sdk" "$compiler" > "$output/sdk.txt"

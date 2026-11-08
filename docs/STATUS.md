@@ -10,6 +10,7 @@ Packaging identifier: `0.0.0_pre8-r0`. Unpublished. No tag and no feed entry.
   `libuci` / `libubus` / `libubox` / `libblobmsg-json` only
 - Queryable `mesh11sd.v8` `status` object and a thin procd init
 - Install-time refusal of enable and start
+- Mutating startup waits for `wpad-mbedtls`, `wpad-openssl`, or `wpad-wolfssl` and matching multicall links. Unsuffixed `wpad`, basic, mini, and mesh-only stay inactive
 
 ## Inactive or unfinished
 

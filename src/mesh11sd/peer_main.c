@@ -12,6 +12,7 @@
 #include "portal_runtime.h"
 #include "wan.h"
 #include "status.h"
+#include "wpad_guard.h"
 #include <arpa/inet.h>
 #include <net/if.h>
 #include <fcntl.h>
@@ -20,6 +21,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/resource.h>
+#include <time.h>
 #include <unistd.h>
 
 static volatile sig_atomic_t stopping;
@@ -54,6 +56,38 @@ static bool safe_no_mesh(struct mesh_peer *peer, const char *ifname)
 	}
 	mesh_runtime_data_clear(&current);
 	return safe;
+}
+
+static uint64_t mesh_wpad_monotonic_ms(void *context)
+{
+	struct timespec now;
+	(void)context;
+	if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) {
+		return 0;
+	}
+	return (uint64_t)now.tv_sec * 1000u + (uint64_t)now.tv_nsec / 1000000u;
+}
+
+static int mesh_wpad_sleep_ms(void *context, unsigned int milliseconds)
+{
+	struct timespec remaining;
+	(void)context;
+	remaining.tv_sec = milliseconds / 1000u;
+	remaining.tv_nsec = (long)(milliseconds % 1000u) * 1000000L;
+	while (nanosleep(&remaining, &remaining) != 0) {
+		if (errno != EINTR) {
+			return -1;
+		}
+		return 0;
+	}
+	return 0;
+}
+
+static void mesh_wpad_log_stderr(void *context, const char *line)
+{
+	(void)context;
+	fputs(line, stderr);
+	fputc('\n', stderr);
 }
 
 static int run_native(int argc, char **argv)
@@ -140,6 +174,28 @@ static int run_native(int argc, char **argv)
 	if (strstr(release, "DISTRIB_ID='OpenWrt'") == NULL) {
 		goto done;
 	}
+	memset(&action, 0, sizeof(action));
+	action.sa_handler = signal_stop;
+	sigemptyset(&action.sa_mask);
+	if (sigaction(SIGTERM, &action, NULL) != 0 || sigaction(SIGINT, &action, NULL) != 0 ||
+		sigaction(SIGHUP, &action, NULL) != 0) {
+		goto done;
+	}
+	/* Full wpad (802.11s and OWE) is required before any bus, journal, or
+	 * network operation, including crash recovery. --version and status return
+	 * above this point. */
+	{
+		struct mesh_wpad_time wpad_time;
+		memset(&wpad_time, 0, sizeof(wpad_time));
+		wpad_time.now_ms = mesh_wpad_monotonic_ms;
+		wpad_time.sleep_ms = mesh_wpad_sleep_ms;
+		wpad_time.stop = &stopping;
+		wpad_time.reload = &reload_requested;
+		wpad_time.log_line = mesh_wpad_log_stderr;
+		if (mesh_wpad_full_wait(root, &wpad_time) != 0) {
+			goto done;
+		}
+	}
 	bus = mesh_live_bus_open(true);
 	if (bus == NULL || (mkdir("/var/run/mesh11sd-v8", 0700) != 0 && errno != EEXIST)) {
 		goto done;
@@ -153,13 +209,6 @@ static int run_native(int argc, char **argv)
 	status_service = mesh_status_open(&public_status,NULL);
 	if (status_service == NULL) {
 		fputs("exclusive mesh11sd.v8 status ownership unavailable\n",stderr);
-		goto done;
-	}
-	memset(&action, 0, sizeof(action));
-	action.sa_handler = signal_stop;
-	sigemptyset(&action.sa_mask);
-	if (sigaction(SIGTERM, &action, NULL) != 0 || sigaction(SIGINT, &action, NULL) != 0 ||
-		sigaction(SIGHUP, &action, NULL) != 0) {
 		goto done;
 	}
 	peer.cancelled = &stopping;
