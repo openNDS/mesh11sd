@@ -1,3 +1,11 @@
+mesh11sd (0.0.0_pre8-r0) UNRELEASED working tree
+  * Layout - place the experimental C sources in an apmond-style tree:
+    src/lib, src/mesh11sd, tests, openwrt/mesh11sd, root CMakeLists.txt.
+    Packaging identifier remains 0.0.0_pre8-r0. This entry is not a release,
+    not a tag, and not hardware validation.
+  * The 7.x notes below describe the shell daemon. That daemon remains on
+    branch 7.3.2beta at 4988d06ab817213c57b9cd39b4beb3d8a2731f80.
+
 mesh11sd (7.3.2~be7a)
   * Add - OpenWrt package template at linux_openwrt/mesh11sd/Makefile [bluewavenet]
   * Fix - keep runtime state in /tmp/mesh11sd when log_mountpoint is persistent storage [bluewavenet]

@@ -1,0 +1,73 @@
+#!/bin/sh /etc/rc.common
+# Experimental opt-in only. No installation start/enable, including upgrades.
+set +x
+START=95
+STOP=10
+USE_PROCD=1
+
+install_context() {
+    [ -n "${IPKG_INSTROOT:-}" ] || [ "${pkgname:-}" = mesh11sd-v8-experimental ]
+}
+
+# SDK25.12 apk default_postinst unconditionally calls enable/start before the
+# package's own postinst. Guard BOTH, not a too-late postinst disable/stop.
+enable() {
+    install_context && return 0
+    local enabled
+    config_load mesh11sd_v8_runtime
+    config_get enabled core enabled 0
+    [ "$enabled" = 1 ] || return 1
+    # The pinned rc.common enable implementation, scoped to this fixed name.
+    ln -sf ../init.d/mesh11sd-v8-experimental /etc/rc.d/S95mesh11sd-v8-experimental || return 1
+    ln -sf ../init.d/mesh11sd-v8-experimental /etc/rc.d/K10mesh11sd-v8-experimental
+}
+
+start_service() {
+    install_context && return 0
+    local enabled
+    local mode
+    local argument
+    config_load mesh11sd_v8_runtime
+    config_get enabled core enabled 0
+    [ "$enabled" = 1 ] || return 0
+    config_get mode core mode auto-ipv4
+    case "$mode" in
+        auto-ipv4)
+            argument=--run-openwrt-auto-ipv4
+            ;;
+        peer)
+            argument=--run-openwrt-peer
+            ;;
+        ipv4-mrp)
+            argument=--run-openwrt-ipv4-mrp
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+    procd_open_instance main
+    procd_set_param command /usr/sbin/mesh11sd-v8 "$argument"
+    procd_set_param stdout 0
+    procd_set_param stderr 1
+    procd_set_param term_timeout 120
+    # No respawn: WAN qualification failure withdraws and needs explicit restart.
+    procd_close_instance
+}
+
+reload_service() {
+    install_context && return 0
+    local enabled
+    config_load mesh11sd_v8_runtime
+    config_get enabled core enabled 0
+    if [ "$enabled" != 1 ]; then
+        stop
+        return
+    fi
+    # Native HUP is ordered restore/replan/start under one lifetime lock.
+    # Changing runtime mode requires stop/start, not a HUP with old argv.
+    procd_send_signal mesh11sd-v8-experimental main 1
+}
+
+status_service() {
+    /usr/sbin/mesh11sd-v8 --status
+}
