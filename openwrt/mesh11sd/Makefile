@@ -6,7 +6,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=mesh11sd
-PKG_VERSION:=8.0.0_alpha3
+PKG_VERSION:=8.0.0_alpha4
 PKG_RELEASE:=1
 
 PKG_MAINTAINER:=Rob White <rob@blue-wave.net>
@@ -33,8 +33,8 @@ endef
 
 define Package/mesh11sd/description
   Mesh11sd autonomously manages all aspects of an 802.11s mesh network.
-  Version 8 is a C port of v7 behaviour. Alpha3 adds portal/peer detect,
-  peer handoff (lan proto dhcp), ULA, ccpy peer scan, bridge MAC/STP/vxlan.
+  Version 8 is a C port of v7 behaviour. Alpha4 adds mobility/HWMP/channel,
+  portal ULA metrics/MBP upstream, remote CLI, and commit_all/revert_all.
 endef
 
 define Package/mesh11sd/conffiles
