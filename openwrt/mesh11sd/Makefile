@@ -6,7 +6,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=mesh11sd
-PKG_VERSION:=8.0.0_alpha5
+PKG_VERSION:=8.0.0_alpha6
 PKG_RELEASE:=1
 
 PKG_MAINTAINER:=Rob White <rob@blue-wave.net>
@@ -33,8 +33,8 @@ endef
 
 define Package/mesh11sd/description
   Mesh11sd autonomously manages all aspects of an 802.11s mesh network.
-  Version 8 is a C port of v7 behaviour. Alpha5 adds full status JSON,
-  LED helpers, and v7-faithful auto_config CLI.
+  Version 8 is a C port of v7 behaviour. Alpha6 fixes auto_config band
+  enable and the v7 network/wifi/dnsmasq/firewall apply sequence.
 endef
 
 define Package/mesh11sd/conffiles
