@@ -102,7 +102,7 @@ assert names
 assert all(n == source_top or n.startswith(source_top + "/") for n in names)
 assert source_top + "/CMakeLists.txt" in names
 assert source_top + "/src/mesh11sd/main.c" in names
-assert not any(n.startswith(source_top + "/.git") for n in names)
+assert not any(n == source_top + "/.git" or n.startswith(source_top + "/.git/") for n in names)
 assert not any(n.startswith(source_top + "/build/") or n == source_top + "/build" for n in names)
 
 # Drop leftover experimental package dir if present
