@@ -7,7 +7,7 @@
 #include <sys/types.h>
 
 #ifndef MESH11SD_VERSION
-#define MESH11SD_VERSION "8.0.0_alpha12"
+#define MESH11SD_VERSION "8.0.0_alpha13"
 #endif
 
 #define MESH11SD_TMPDIR "/tmp/mesh11sd"
@@ -110,6 +110,7 @@ struct mesh_ctx {
 	int vtun_path_cost;
 	int vtun_isolate;
 	int move_ethernet_to_vxlan_bridge;
+	char vxlan_group[64]; /* override for create_vxlan_if; empty → ff02::$tun_id */
 	char cpe_mode[16];
 
 	char iflist[MESH11SD_MAX_IFACES][32];
@@ -219,6 +220,7 @@ int mesh_set_bridge_mac_addresses(struct mesh_ctx *ctx);
 int mesh_set_root_bridge_priority(struct mesh_ctx *ctx);
 int mesh_check_vtunnel(struct mesh_ctx *ctx);
 int mesh_create_vxlan_if(struct mesh_ctx *ctx);
+int mesh_update_vxlan_for_active_portal(struct mesh_ctx *ctx);
 int mesh_block_bridge_loops(struct mesh_ctx *ctx);
 int mesh_move_ethernet_to_vxlan_bridge(struct mesh_ctx *ctx);
 int mesh_probe_interface_mac(struct mesh_ctx *ctx);

@@ -7,7 +7,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <fcntl.h>
 #include <unistd.h>
+#include <sys/wait.h>
 
 int mesh_convert_to_la(const char *mac, char *out, size_t outlen)
 {
@@ -552,34 +554,360 @@ int mesh_set_root_bridge_priority(struct mesh_ctx *ctx)
 
 int mesh_create_vxlan_if(struct mesh_ctx *ctx)
 {
-	char vxname[32];
-	char setl[192];
-	unsigned vni = 69;
+	/* v7 create_vxlan_if: ip-full `ip -6 link add ... type vxlan` (NOT netifd
+	 * vxlan device — OpenWrt vxlan UCI is buggy). Baby-jumbo: mesh/backhaul
+	 * MTU 1600, vxlan MTU 1500. Attach to br-tun$tun_id via brctl addif. */
+	char vxname[32], brname[32], device[64];
+	char vxmac[32] = "";
+	char linklocal[64] = "";
+	char group[64];
+	char vni_s[16];
+	char out[512], status[16];
+	char conf[320];
+	unsigned vni;
+	int retry;
+	char *show[] = { "ip", "link", "show", vxname, NULL };
 
 	if (!ctx->vtun_enable)
 		return 0;
-	mesh_set_ula_prefix(ctx, "get");
-	if (ctx->ula_subnet[0])
-		vni = (unsigned)strtoul(ctx->ula_subnet, NULL, 16);
-	snprintf(vxname, sizeof(vxname), "vxlan%s", ctx->tun_id[0] ? ctx->tun_id : "69");
+	snprintf(vxname, sizeof(vxname), "vxlan%s",
+		 ctx->tun_id[0] ? ctx->tun_id : "69");
+	snprintf(brname, sizeof(brname), "br-tun%s",
+		 ctx->tun_id[0] ? ctx->tun_id : "69");
+	show[3] = vxname;
+	if (mesh_run_capture(show, out, sizeof(out)) == 0)
+		return 0; /* already exists */
 
-	/* network UCI for vtunlan — v7 ~5450: device, ipaddr, netmask, ip6assign */
-	{
-		char brdev[32];
-		const char *proto = "static";
-		snprintf(brdev, sizeof(brdev), "br-tun%s",
+	mesh_set_ula_prefix(ctx, "get");
+	vni = ctx->ula_subnet[0] ? (unsigned)strtoul(ctx->ula_subnet, NULL, 16) : 69;
+	if (!vni)
+		vni = 69;
+	snprintf(vni_s, sizeof(vni_s), "%u", vni);
+
+	/* indexed MAC for vxlan netdev (v7 get_indexed_mac) */
+	if (mesh_get_indexed_mac(ctx, vxname, vxmac, sizeof(vxmac)) < 0 && !vxmac[0]) {
+		mesh_log_err(ctx, "create_vxlan_if: no indexed mac for %s", vxname);
+		return 1;
+	}
+
+	if (ctx->portal_detect == 3)
+		snprintf(device, sizeof(device), "br-wan");
+	else
+		snprintf(device, sizeof(device), "br-%s",
+			 ctx->auto_mesh_network[0] ? ctx->auto_mesh_network : "lan");
+
+	/* group: override from update_vxlan, else ff02::$tun_id (NOT ula_subnet) */
+	if (ctx->vxlan_group[0])
+		snprintf(group, sizeof(group), "%s", ctx->vxlan_group);
+	else
+		snprintf(group, sizeof(group), "ff02::%s",
 			 ctx->tun_id[0] ? ctx->tun_id : "69");
+
+	/* link-local on underlay bridge — required by ip -6 vxlan */
+	{
+		char *a[] = { "ip", "-6", "addr", "show", "dev", device, "scope", "link", NULL };
+		if (mesh_run_capture(a, out, sizeof(out)) == 0) {
+			char *p = strstr(out, "inet6 ");
+			if (p) {
+				p += 6;
+				sscanf(p, "%63s", linklocal);
+				{
+					char *sl = strchr(linklocal, '/');
+					if (sl)
+						*sl = '\0';
+				}
+			}
+		}
+	}
+	if (!linklocal[0]) {
+		mesh_log_err(ctx, "create_vxlan_if: no link-local on %s", device);
+		return 1;
+	}
+
+	if (!ctx->active_mesh_ifname[0] &&
+	    access(MESH11SD_TMPDIR "/active_mesh_ifname", R_OK) == 0) {
+		FILE *f = fopen(MESH11SD_TMPDIR "/active_mesh_ifname", "r");
+		char line[128];
+		if (f && fgets(line, sizeof(line), f)) {
+			char *q = strstr(line, "active_mesh_ifname=\"");
+			if (q)
+				sscanf(q + 20, "%63[^\"]", ctx->active_mesh_ifname);
+		}
+		if (f)
+			fclose(f);
+	}
+
+	mesh_log_debug(ctx,
+		       "create_vxlan_if [ %s ], id [ %s ], address [ %s ], link_local [ %s ], group [ %s ], device [ %s ]",
+		       vxname, vni_s, vxmac, linklocal, group, device);
+	snprintf(conf, sizeof(conf),
+		 "vxlan_if=\"%s\"; id=\"%s\"; address=\"%s\"; link_local=\"%s\"; group=\"%s\"; device=\"%s\"\n",
+		 vxname, vni_s, vxmac, linklocal, group, device);
+	mesh_file_write(MESH11SD_TMPDIR "/vxlan_conf", conf);
+
+	/* Exact v7: ip -6 link add $vx address $mac type vxlan id $vni dstport 4789
+	 * local $ll group $g dev $device ttl 5 */
+	{
+		char *argv[] = {
+			"ip", "-6", "link", "add", vxname,
+			"address", vxmac,
+			"type", "vxlan",
+			"id", vni_s,
+			"dstport", "4789",
+			"local", linklocal,
+			"group", group,
+			"dev", device,
+			"ttl", "5",
+			NULL
+		};
+		if (mesh_run_capture(argv, NULL, 0) != 0) {
+			mesh_log_err(ctx, "create_vxlan_if: ip -6 link add %s failed", vxname);
+			return 1;
+		}
+	}
+	{
+		char *up[] = { "ip", "link", "set", vxname, "up", NULL };
+		mesh_run_capture(up, NULL, 0);
+	}
+
+	for (retry = 0; retry < 16; retry++) {
+		mesh_wait_for_interface(ctx, vxname, status, sizeof(status));
+		if (!strcmp(status, "down")) {
+			char *up[] = { "ip", "link", "set", vxname, "up", NULL };
+			mesh_run_capture(up, NULL, 0);
+			sleep(1);
+			continue;
+		}
+		if (!strcmp(status, "up") || !strcmp(status, "unknown")) {
+			/* baby-jumbo: mesh + underlay 1600, vxlan 1500 */
+			if (ctx->active_mesh_ifname[0]) {
+				char *m[] = { "ip", "link", "set", ctx->active_mesh_ifname,
+					      "mtu", "1600", NULL };
+				mesh_run_capture(m, NULL, 0);
+			}
+			{
+				char *m[] = { "ip", "link", "set", device, "mtu", "1600", NULL };
+				mesh_run_capture(m, NULL, 0);
+			}
+			{
+				char *m[] = { "ip", "link", "set", vxname, "mtu", "1500", NULL };
+				mesh_run_capture(m, NULL, 0);
+			}
+			{
+				char *brshow[] = { "ip", "link", "show", brname, NULL };
+				if (mesh_run_capture(brshow, out, sizeof(out)) == 0) {
+					char *addif[] = { "brctl", "addif", brname, vxname, NULL };
+					mesh_run_capture(addif, NULL, 0);
+				}
+			}
+			break;
+		}
+		sleep(1);
+	}
+
+	/* dhcp.vtunlan portal vs peer (v7) */
+	if (!strcmp(ctx->detected_state, "portal") ||
+	    ctx->portal_detect == 0 ||
+	    (ctx->portal_detect == 1 && !strcmp(ctx->detected_state, "portal"))) {
+		mesh_uci_batch_line("set dhcp.vtunlan.dhcpv4='server'");
+		mesh_uci_batch_line("set dhcp.vtunlan.dhcpv6='server'");
+		mesh_uci_batch_line("set dhcp.vtunlan.ra='server'");
+		mesh_uci_batch_line("set dhcp.vtunlan.ignore='0'");
+		mesh_uci_batch_line("del_list dhcp.vtunlan.ra_flags='none'");
+		mesh_uci_batch_line("del_list dhcp.vtunlan.ra_flags='managed-config'");
+		mesh_uci_batch_line("del_list dhcp.vtunlan.ra_flags='other-config'");
+		mesh_uci_batch_line("add_list dhcp.vtunlan.ra_flags='managed-config'");
+		mesh_uci_batch_line("add_list dhcp.vtunlan.ra_flags='other-config'");
+		mesh_uci_batch_line("set dhcp.@dnsmasq[0].rebind_protection='1'");
+	} else {
+		mesh_uci_batch_line("set dhcp.vtunlan.dhcpv4='disabled'");
+		mesh_uci_batch_line("set dhcp.vtunlan.dhcpv6='disabled'");
+		mesh_uci_batch_line("set dhcp.vtunlan.ra='disabled'");
+		mesh_uci_batch_line("set dhcp.vtunlan.ignore='1'");
+		mesh_uci_batch_line("del_list dhcp.vtunlan.ra_flags='managed-config'");
+		mesh_uci_batch_line("del_list dhcp.vtunlan.ra_flags='other-config'");
+		mesh_uci_batch_line("del_list dhcp.vtunlan.ra_flags='none'");
+		mesh_uci_batch_line("add_list dhcp.vtunlan.ra_flags='none'");
+	}
+	mesh_log_info(ctx, "vxlan_if created");
+	/* non-blocking dnsmasq restart (v7) */
+	{
+		char *dns[] = { "/sbin/service", "dnsmasq", "restart", NULL };
+		if (fork() == 0) {
+			int dn = open("/dev/null", O_RDWR);
+			if (dn >= 0) {
+				dup2(dn, 0); dup2(dn, 1); dup2(dn, 2);
+				if (dn > 2) close(dn);
+			}
+			execvp(dns[0], dns);
+			_exit(127);
+		}
+	}
+	return 0;
+}
+
+int mesh_check_vtunnel(struct mesh_ctx *ctx)
+{
+	/* v7 check_vtunnel: UCI vtunnel/vtunlan + firewall once, network restart,
+	 * then create_vxlan_if (ip-full). Recreate vxlan after netifd wipe. */
+	char vxname[32], brname[32], setl[192], out[256], vtun_uci[64] = "";
+	int vxlan_missing, recreate = 0;
+	const char *proto = "dhcp";
+	char *show[] = { "ip", "link", "show", vxname, NULL };
+
+	if (!ctx->vtun_enable)
+		return 0;
+	if (access(MESH11SD_TMPDIR "/active_mesh_ifname", R_OK) != 0)
+		return 0;
+	if (access(MESH11SD_TMPDIR "/is_portal", R_OK) != 0)
+		return 0;
+	if (!ctx->detected_state[0]) {
+		FILE *f = fopen(MESH11SD_TMPDIR "/is_portal", "r");
+		char line[160];
+		if (f && fgets(line, sizeof(line), f)) {
+			char *p = strstr(line, "detected_state=\"");
+			if (p)
+				sscanf(p + 16, "%15[^\"]", ctx->detected_state);
+		}
+		if (f)
+			fclose(f);
+	}
+
+	snprintf(vxname, sizeof(vxname), "vxlan%s",
+		 ctx->tun_id[0] ? ctx->tun_id : "69");
+	snprintf(brname, sizeof(brname), "br-tun%s",
+		 ctx->tun_id[0] ? ctx->tun_id : "69");
+	show[3] = vxname;
+	vxlan_missing = (mesh_run_capture(show, out, sizeof(out)) != 0);
+
+	if (!vxlan_missing)
+		return 0;
+	if (ctx->commit_all)
+		return 0;
+
+	mesh_log_debug(ctx, "check_vtunnel. Vxlan Status [ missing ]");
+	mesh_set_ula_prefix(ctx, "get");
+
+	/* Ensure dhcp.vtunlan + firewall once */
+	if (mesh_uci_get("dhcp.vtunlan", vtun_uci, sizeof(vtun_uci)) != 0 || !vtun_uci[0]) {
+		mesh_log_debug(ctx, "vxtunnel configuration");
+		mesh_uci_batch_line("set dhcp.vtunlan=dhcp");
+		mesh_uci_batch_line("set dhcp.vtunlan.interface='vtunlan'");
+		mesh_uci_batch_line("set dhcp.vtunlan.start='100'");
+		mesh_uci_batch_line("set dhcp.vtunlan.limit='150'");
+		mesh_uci_batch_line("set dhcp.vtunlan.leasetime='12h'");
+		mesh_uci_batch_line("set dhcp.vtunlan.ra_slaac='1'");
+		mesh_uci_batch_line("del_list dhcp.vtunlan.ra_flags='managed-config'");
+		mesh_uci_batch_line("del_list dhcp.vtunlan.ra_flags='other-config'");
+		mesh_uci_batch_line("add_list dhcp.vtunlan.ra_flags='managed-config'");
+		mesh_uci_batch_line("add_list dhcp.vtunlan.ra_flags='other-config'");
+		mesh_uci_batch_line("set dhcp.vtunlan.ignore='1'");
+		mesh_uci_batch_line("set dhcp.vtunlan.ra_default='2'");
+
+		mesh_uci_batch_line("set firewall.vtunlan=zone");
+		mesh_uci_batch_line("set firewall.vtunlan.name='vtunlan'");
+		mesh_uci_batch_line("set firewall.vtunlan.network='vtunlan'");
+		mesh_uci_batch_line("set firewall.vtunlan.input='ACCEPT'");
+		mesh_uci_batch_line("set firewall.vtunlan.output='ACCEPT'");
+		mesh_uci_batch_line("set firewall.vtunlan.forward='ACCEPT'");
+
+		snprintf(setl, sizeof(setl), "set firewall.dhcptun%s=rule",
+			 ctx->tun_id[0] ? ctx->tun_id : "69");
+		mesh_uci_batch_line(setl);
+		snprintf(setl, sizeof(setl), "set firewall.dhcptun%s.name='VTUN-DHCP-Renew'",
+			 ctx->tun_id[0] ? ctx->tun_id : "69");
+		mesh_uci_batch_line(setl);
+		snprintf(setl, sizeof(setl), "set firewall.dhcptun%s.src='vtunlan'",
+			 ctx->tun_id[0] ? ctx->tun_id : "69");
+		mesh_uci_batch_line(setl);
+		snprintf(setl, sizeof(setl), "set firewall.dhcptun%s.proto='udp'",
+			 ctx->tun_id[0] ? ctx->tun_id : "69");
+		mesh_uci_batch_line(setl);
+		snprintf(setl, sizeof(setl), "set firewall.dhcptun%s.dest_port='67'",
+			 ctx->tun_id[0] ? ctx->tun_id : "69");
+		mesh_uci_batch_line(setl);
+		snprintf(setl, sizeof(setl), "set firewall.dhcptun%s.target='ACCEPT'",
+			 ctx->tun_id[0] ? ctx->tun_id : "69");
+		mesh_uci_batch_line(setl);
+		snprintf(setl, sizeof(setl), "set firewall.dhcptun%s.family='ipv4'",
+			 ctx->tun_id[0] ? ctx->tun_id : "69");
+		mesh_uci_batch_line(setl);
+
+		snprintf(setl, sizeof(setl), "set firewall.dnstun%s=rule",
+			 ctx->tun_id[0] ? ctx->tun_id : "69");
+		mesh_uci_batch_line(setl);
+		snprintf(setl, sizeof(setl), "set firewall.dnstun%s.name='VTUN-Allow-DNS'",
+			 ctx->tun_id[0] ? ctx->tun_id : "69");
+		mesh_uci_batch_line(setl);
+		snprintf(setl, sizeof(setl), "set firewall.dnstun%s.src='vtunlan'",
+			 ctx->tun_id[0] ? ctx->tun_id : "69");
+		mesh_uci_batch_line(setl);
+		snprintf(setl, sizeof(setl), "set firewall.dnstun%s.proto='udp tcp'",
+			 ctx->tun_id[0] ? ctx->tun_id : "69");
+		mesh_uci_batch_line(setl);
+		snprintf(setl, sizeof(setl), "set firewall.dnstun%s.dest_port='53'",
+			 ctx->tun_id[0] ? ctx->tun_id : "69");
+		mesh_uci_batch_line(setl);
+		snprintf(setl, sizeof(setl), "set firewall.dnstun%s.target='ACCEPT'",
+			 ctx->tun_id[0] ? ctx->tun_id : "69");
+		mesh_uci_batch_line(setl);
+		snprintf(setl, sizeof(setl), "set firewall.dnstun%s.family='ipv4'",
+			 ctx->tun_id[0] ? ctx->tun_id : "69");
+		mesh_uci_batch_line(setl);
+
+		mesh_uci_batch_line("set firewall.vxlan=rule");
+		mesh_uci_batch_line("set firewall.vxlan.name='Allow-vxlan'");
+		mesh_uci_batch_line("set firewall.vxlan.src='lan'");
+		mesh_uci_batch_line("set firewall.vxlan.proto='udp'");
+		mesh_uci_batch_line("set firewall.vxlan.dest_port='4789'");
+		mesh_uci_batch_line("set firewall.vxlan.target='ACCEPT'");
+		mesh_uci_batch_line("set firewall.vxlan_fwd=forwarding");
+		mesh_uci_batch_line("set firewall.vxlan_fwd.src='vtunlan'");
+		mesh_uci_batch_line("set firewall.vxlan_fwd.dest='wan'");
+		if (ctx->vtun_isolate == 0) {
+			mesh_uci_batch_line("set firewall.lan_tun=forwarding");
+			mesh_uci_batch_line("set firewall.lan_tun.src='vtunlan'");
+			mesh_uci_batch_line("set firewall.lan_tun.dest='lan'");
+		}
+		{
+			char *fw[] = { "/sbin/service", "firewall", "restart", NULL };
+			mesh_run_capture(fw, NULL, 0);
+		}
+	}
+
+	/* If vtunlan UCI already exists, only recreate the ip-full vxlan netdev
+	 * (network reload/restart deletes it). */
+	vtun_uci[0] = '\0';
+	if (mesh_uci_get("network.vtunlan", vtun_uci, sizeof(vtun_uci)) == 0 &&
+	    vtun_uci[0]) {
+		mesh_log_debug(ctx, "vxlan%s missing, vtunlan exists, recreating",
+			       ctx->tun_id[0] ? ctx->tun_id : "69");
+		mesh_create_vxlan_if(ctx);
+		recreate = 1;
+	}
+
+	if (!recreate) {
+		if (ctx->portal_detect == 0 ||
+		    (ctx->portal_detect == 1 && !strcmp(ctx->detected_state, "portal")) ||
+		    ctx->portal_detect == 3 || ctx->portal_detect == 4)
+			proto = "static";
+		else
+			proto = "dhcp";
+
 		mesh_uci_batch_line("set network.vtunnel=device");
-		snprintf(setl, sizeof(setl), "set network.vtunnel.name='%s'", brdev);
+		snprintf(setl, sizeof(setl), "set network.vtunnel.name='%s'", brname);
 		mesh_uci_batch_line(setl);
 		mesh_uci_batch_line("set network.vtunnel.type='bridge'");
 		mesh_uci_batch_line("set network.vtunnel.bridge_empty='1'");
+		/* Do NOT add vxlan as a netifd port permanently in a way that
+		 * fights ip-full — v7 still lists it so br comes up; attach
+		 * live via brctl after create. */
 		snprintf(setl, sizeof(setl), "del_list network.vtunnel.ports='%s'", vxname);
 		mesh_uci_batch_line(setl);
 		snprintf(setl, sizeof(setl), "add_list network.vtunnel.ports='%s'", vxname);
 		mesh_uci_batch_line(setl);
 		mesh_uci_batch_line("set network.vtunlan=interface");
-		snprintf(setl, sizeof(setl), "set network.vtunlan.device='%s'", brdev);
+		snprintf(setl, sizeof(setl), "set network.vtunlan.device='%s'", brname);
 		mesh_uci_batch_line(setl);
 		if (ctx->vtun_ip[0] && strcmp(ctx->vtun_ip, "auto") != 0) {
 			snprintf(setl, sizeof(setl), "set network.vtunlan.ipaddr='%s'",
@@ -589,12 +917,6 @@ int mesh_create_vxlan_if(struct mesh_ctx *ctx)
 		snprintf(setl, sizeof(setl), "set network.vtunlan.netmask='%s'",
 			 ctx->vtun_mask[0] ? ctx->vtun_mask : "255.255.255.0");
 		mesh_uci_batch_line(setl);
-		if (!strcmp(ctx->detected_state, "portal") ||
-		    ctx->portal_detect == 0 || ctx->portal_detect == 3 ||
-		    ctx->portal_detect == 4)
-			proto = "static";
-		else
-			proto = "dhcp";
 		snprintf(setl, sizeof(setl), "set network.vtunlan.proto='%s'", proto);
 		mesh_uci_batch_line(setl);
 		mesh_uci_batch_line("set network.vtunlan.ip6assign='64'");
@@ -602,57 +924,99 @@ int mesh_create_vxlan_if(struct mesh_ctx *ctx)
 			 ctx->ula_vxsubnet);
 		mesh_uci_batch_line(setl);
 		mesh_uci_batch_line("set network.vtunlan.ip6privacy='0'");
-	}
+		mesh_uci_batch_line("set dhcp.vtunlan.ra_lifetime='3600'");
+		mesh_uci_batch_line("set dhcp.vtunlan.ra_mininterval='20'");
+		mesh_uci_batch_line("set dhcp.vtunlan.ra_maxinterval='60'");
 
-	{
-		char vni_s[16], group[64];
-		char *argv[] = {
-			"ip", "link", "add", vxname, "type", "vxlan",
-			"id", vni_s, "dstport", "4789", "group", group, NULL
-		};
-		snprintf(vni_s, sizeof(vni_s), "%u", vni ? vni : 69);
-		snprintf(group, sizeof(group), "ff02::%s",
-			 ctx->ula_subnet[0] ? ctx->ula_subnet : "1");
-		mesh_run_capture(argv, NULL, 0);
-	}
-	{
-		char br[32];
-		snprintf(br, sizeof(br), "br-tun%s", ctx->tun_id[0] ? ctx->tun_id : "69");
 		{
-			char *a[] = { "ip", "link", "add", "name", br, "type", "bridge", NULL };
-			mesh_run_capture(a, NULL, 0);
+			char *fw[] = { "/sbin/service", "firewall", "restart", NULL };
+			char *nr[] = { "/sbin/service", "network", "restart", NULL };
+			mesh_run_capture(fw, NULL, 0);
+			mesh_run_capture(nr, NULL, 0);
 		}
 		{
-			char *a[] = { "ip", "link", "set", vxname, "master", br, NULL };
-			mesh_run_capture(a, NULL, 0);
+			char st[16];
+			mesh_wait_for_interface(ctx, ctx->device[0] ? ctx->device : "br-lan",
+						st, sizeof(st));
 		}
+		/* network restart wiped any live vxlan — create via ip-full now */
+		mesh_create_vxlan_if(ctx);
 		{
-			char *a[] = { "ip", "link", "set", vxname, "up", NULL };
-			mesh_run_capture(a, NULL, 0);
-		}
-		{
-			char *a[] = { "ip", "link", "set", br, "up", NULL };
-			mesh_run_capture(a, NULL, 0);
+			char *dns[] = { "/sbin/service", "dnsmasq", "reload", NULL };
+			mesh_run_capture(dns, NULL, 0);
 		}
 	}
-	(void)setl;
 	return 0;
 }
 
-int mesh_check_vtunnel(struct mesh_ctx *ctx)
+int mesh_update_vxlan_for_active_portal(struct mesh_ctx *ctx)
 {
-	char vxname[32];
-	char out[256];
-	char *argv[] = { "ip", "link", "show", vxname, NULL };
+	/* v7 update_vxlan_for_active_portal: group ff02::$portal_ula_subnet */
+	char vxname[32], new_group[64], cur_group[64] = "";
+	char out[512];
+	char *show[] = { "ip", "link", "show", vxname, NULL };
 
 	if (!ctx->vtun_enable)
 		return 0;
-	snprintf(vxname, sizeof(vxname), "vxlan%s", ctx->tun_id[0] ? ctx->tun_id : "69");
-	argv[3] = vxname;
-	if (mesh_run_capture(argv, out, sizeof(out)) != 0)
+	snprintf(vxname, sizeof(vxname), "vxlan%s",
+		 ctx->tun_id[0] ? ctx->tun_id : "69");
+	show[3] = vxname;
+
+	mesh_get_portal_ula(ctx, "get");
+	if (!ctx->portal_ula[0]) {
 		mesh_create_vxlan_if(ctx);
+		return 0;
+	}
+	if (!ctx->ula_subnet[0]) {
+		/* 4th hextet of portal_ula */
+		char *p = ctx->portal_ula;
+		int col = 0;
+		char hextet[8] = "";
+		while (*p && col < 3) {
+			if (*p++ == ':')
+				col++;
+		}
+		sscanf(p, "%7[^:]", hextet);
+		if (hextet[0])
+			snprintf(ctx->ula_subnet, sizeof(ctx->ula_subnet), "%s", hextet);
+	}
+	snprintf(new_group, sizeof(new_group), "ff02::%s",
+		 ctx->ula_subnet[0] ? ctx->ula_subnet : (ctx->tun_id[0] ? ctx->tun_id : "69"));
+
+	if (access(MESH11SD_TMPDIR "/vxlan_conf", R_OK) == 0) {
+		FILE *f = fopen(MESH11SD_TMPDIR "/vxlan_conf", "r");
+		char line[320];
+		if (f && fgets(line, sizeof(line), f)) {
+			char *g = strstr(line, "group=\"");
+			if (g)
+				sscanf(g + 7, "%63[^\"]", cur_group);
+		}
+		if (f)
+			fclose(f);
+	}
+	if (!cur_group[0] && mesh_run_capture(show, out, sizeof(out)) == 0) {
+		/* fall through — parse not critical */
+	}
+	if (cur_group[0] && !strcmp(cur_group, new_group) &&
+	    mesh_run_capture(show, out, sizeof(out)) == 0) {
+		mesh_log_debug(ctx, "VXLAN already using correct group %s", new_group);
+		return 0;
+	}
+
+	mesh_log_info(ctx, "Portal change detected - switching VXLAN to group %s (portal %s)",
+		      new_group, ctx->portal_ula);
+	if (mesh_run_capture(show, out, sizeof(out)) == 0) {
+		char *del[] = { "ip", "link", "del", vxname, NULL };
+		mesh_run_capture(del, NULL, 0);
+		sleep(2);
+	}
+	snprintf(ctx->vxlan_group, sizeof(ctx->vxlan_group), "%s", new_group);
+	mesh_create_vxlan_if(ctx);
+	ctx->vxlan_group[0] = '\0';
+	mesh_log_info(ctx, "VXLAN successfully reconfigured for new portal");
 	return 0;
 }
+
 
 int mesh_block_bridge_loops(struct mesh_ctx *ctx)
 {

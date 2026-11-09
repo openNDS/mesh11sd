@@ -257,8 +257,11 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 				mesh_check_portal(ctx);
 		}
 
-		if (ctx->vtun_enable)
+		if (ctx->vtun_enable) {
 			mesh_check_vtunnel(ctx);
+			/* v7: update_vxlan_for_active_portal after check_vtunnel path */
+			mesh_update_vxlan_for_active_portal(ctx);
+		}
 
 		mesh_get_portal_type(ctx);
 		mesh_ccpy_setup(ctx);

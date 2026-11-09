@@ -104,6 +104,9 @@ int mesh_set_ula_prefix(struct mesh_ctx *ctx, const char *mode)
 		snprintf(setl, sizeof(setl), "set network.%s.ip6hint='%s'",
 			 ctx->auto_mesh_network, ctx->ula_subnet);
 		mesh_uci_batch_line(setl);
+		snprintf(setl, sizeof(setl), "set network.%s.ip6assign='64'",
+			 ctx->auto_mesh_network);
+		mesh_uci_batch_line(setl);
 		mesh_log_debug(ctx, "ULA prefix set to %s (LAN hint: %s, VXLAN hint: %s)",
 			       ctx->ula_prefix, ctx->ula_subnet, ctx->ula_vxsubnet);
 	}
