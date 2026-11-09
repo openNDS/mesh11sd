@@ -20,7 +20,17 @@ start_service() {
 	procd_close_instance
 }
 
+# OpenWrt calls stop_service BEFORE procd_kill. v7 (and earlier alphas) put
+# uci revert here; the still-running daemon (or an in-flight/orphan
+# network|dnsmasq restart child) can then apply the reverted stock UCI —
+# lan IP / DHCP change with mesh still up. v7 intent is restore only, do
+# not activate (no network/wifi/dnsmasq reload). Defer restore until after
+# the daemon is dead.
 stop_service() {
+	return 0
+}
+
+service_stopped() {
 	/sbin/uci revert mesh11sd
 	/sbin/uci revert wireless
 	/sbin/uci revert dhcp

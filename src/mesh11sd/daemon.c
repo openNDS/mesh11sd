@@ -1,10 +1,21 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "mesh11sd.h"
 
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+
+/* Set by SIGTERM/SIGINT so stop can kill us without a further loop pass
+ * that might network/dnsmasq reload against a just-reverted stock UCI. */
+static volatile sig_atomic_t mesh_daemon_stop;
+
+static void mesh_daemon_on_signal(int sig)
+{
+	(void)sig;
+	mesh_daemon_stop = 1;
+}
 
 static int has_mesh_uci(void)
 {
@@ -45,6 +56,13 @@ static void ensure_factory_mac(struct mesh_ctx *ctx)
 int mesh_daemon_run(struct mesh_ctx *ctx)
 {
 	char *nft_argv[] = { "nft", "destroy", "table", "bridge", "mesh11s", NULL };
+	struct sigaction sa;
+
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_handler = mesh_daemon_on_signal;
+	sigemptyset(&sa.sa_mask);
+	sigaction(SIGTERM, &sa, NULL);
+	sigaction(SIGINT, &sa, NULL);
 
 	ctx->mute = 0;
 	ctx->firstloop = 1;
@@ -178,6 +196,11 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 	for (;;) {
 		int loop_interval = ctx->checkinterval;
 		char buf[64];
+
+		if (mesh_daemon_stop) {
+			mesh_log_notice(ctx, "Mesh11sd is shutting down");
+			break;
+		}
 
 		/* v7 main loop only refreshes debuglevel; full option dump is startup-only */
 		if (mesh_uci_get("mesh11sd.setup.debuglevel", buf, sizeof(buf)) == 0) {
@@ -337,6 +360,10 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 		}
 		mesh_log_info(ctx, "Checkinterval [%d]", loop_interval);
 		sleep((unsigned)loop_interval);
+		if (mesh_daemon_stop) {
+			mesh_log_notice(ctx, "Mesh11sd is shutting down");
+			break;
+		}
 	}
 	return 0;
 }
