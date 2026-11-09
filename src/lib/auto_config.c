@@ -138,6 +138,44 @@ int mesh_mesh_gate_state(struct mesh_ctx *ctx)
 			mesh_uci_batch_line(setl);
 		}
 	}
+	/* v7: separate vxradio pass — disable vxradio on the mesh radio when
+	 * mesh_gate_enable=2 (gates only on non-mesh radios). */
+	if (ctx->mesh_gate_enable == 2 && mesh_device[0]) {
+		char *uargv[] = { "uci", "show", "wireless", NULL };
+		char raw[16384];
+		if (mesh_run_capture(uargv, raw, sizeof(raw)) == 0) {
+			p = raw;
+			while ((line = strsep(&p, "\n")) != NULL) {
+				char sect[96], key[128], gate_device[64], setl[160];
+				if (!strstr(line, "vtunlan"))
+					continue;
+				/* wireless.vxradioN.network='vtunlan' */
+				if (!strstr(line, ".network="))
+					continue;
+				{
+					char *dot = strchr(line, '.');
+					char *dot2;
+					if (!dot)
+						continue;
+					dot2 = strchr(dot + 1, '.');
+					if (!dot2)
+						continue;
+					snprintf(sect, sizeof(sect), "%.*s",
+						 (int)(dot2 - (dot + 1)), dot + 1);
+				}
+				if (strncmp(sect, "vxradio", 7) != 0)
+					continue;
+				snprintf(key, sizeof(key), "wireless.%s.device", sect);
+				if (mesh_uci_get(key, gate_device, sizeof(gate_device)) != 0)
+					continue;
+				if (!strcmp(gate_device, mesh_device)) {
+					snprintf(setl, sizeof(setl),
+						 "set wireless.%s.disabled='1'", sect);
+					mesh_uci_batch_line(setl);
+				}
+			}
+		}
+	}
 	return 0;
 }
 

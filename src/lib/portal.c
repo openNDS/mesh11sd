@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <fcntl.h>
 
 static void write_is_portal(struct mesh_ctx *ctx)
 {
@@ -34,6 +35,22 @@ static void service_cmd(const char *svc, const char *action)
 {
 	char *argv[] = { "/sbin/service", (char *)svc, (char *)action, NULL };
 	mesh_run_capture(argv, NULL, 0);
+}
+
+/* v7: dnsmasq restart must not block — with br-lan down it waits forever */
+static void service_cmd_bg(const char *svc, const char *action)
+{
+	pid_t pid = fork();
+	if (pid == 0) {
+		char *argv[] = { "/sbin/service", (char *)svc, (char *)action, NULL };
+		int dn = open("/dev/null", O_RDWR);
+		if (dn >= 0) {
+			dup2(dn, 0); dup2(dn, 1); dup2(dn, 2);
+			if (dn > 2) close(dn);
+		}
+		execvp(argv[0], argv);
+		_exit(127);
+	}
 }
 
 int mesh_set_ula_prefix(struct mesh_ctx *ctx, const char *mode)
@@ -474,7 +491,11 @@ static void portal_handoff(struct mesh_ctx *ctx)
 {
 	char setl[192];
 	char path[128];
+	char vxname[32];
+	char out[128];
 	FILE *f;
+	int vxlan_up = 0;
+	int vxlan_pending = 1;
 
 	mesh_uci_set("mesh11sd.mesh_params.mesh_connected_to_as", "1");
 	snprintf(path, sizeof(path), "/var/run/udhcpc-%s.pid", ctx->device);
@@ -486,6 +507,16 @@ static void portal_handoff(struct mesh_ctx *ctx)
 	}
 
 	mesh_log_debug(ctx, "This meshnode is an upstream portal");
+	snprintf(vxname, sizeof(vxname), "vxlan%s",
+		 ctx->tun_id[0] ? ctx->tun_id : "69");
+	{
+		char *show[] = { "ip", "link", "show", vxname, NULL };
+		vxlan_up = (mesh_run_capture(show, out, sizeof(out)) == 0);
+		vxlan_pending = !vxlan_up;
+	}
+	if (vxlan_up)
+		mesh_uci_batch_line("set network.vtunlan.proto='static'");
+
 	snprintf(setl, sizeof(setl), "set network.%s.proto='static'", ctx->auto_mesh_network);
 	mesh_uci_batch_line(setl);
 	mesh_set_ula_prefix(ctx, "set");
@@ -493,12 +524,26 @@ static void portal_handoff(struct mesh_ctx *ctx)
 	 * handoff must not leave a stale address for restore_ipv4 to stack). */
 	if (ctx->portal_detect != 5)
 		mesh_apply_portal_ipv4(ctx);
-	service_cmd("network", "reload");
+	/* v7: if vxlan is about to be created, check_vtunnel will network restart */
+	if (!ctx->vtun_enable || !vxlan_pending)
+		service_cmd("network", "reload");
 
 	if (!ctx->portal_ula[0])
 		mesh_get_portal_ula(ctx, "get");
 
 	mesh_uci_batch_line("set dhcp.@dnsmasq[0].authoritative='1'");
+	mesh_uci_batch_line("set dhcp.@dnsmasq[0].logfacility='-'");
+	mesh_uci_batch_line("set dhcp.@dnsmasq[0].quietdhcp='1'");
+	{
+		char cfgip[64] = "";
+		char key[96];
+		snprintf(key, sizeof(key), "network.%s.ipaddr", ctx->auto_mesh_network);
+		if (mesh_uci_get(key, cfgip, sizeof(cfgip)) == 0 && cfgip[0]) {
+			snprintf(setl, sizeof(setl),
+				 "del_list dhcp.@dnsmasq[0].server='%s'", cfgip);
+			mesh_uci_batch_line(setl);
+		}
+	}
 	snprintf(setl, sizeof(setl), "set dhcp.%s.ignore='0'", ctx->auto_mesh_network);
 	mesh_uci_batch_line(setl);
 	snprintf(setl, sizeof(setl), "set dhcp.%s.ra_default='2'", ctx->auto_mesh_network);
@@ -512,6 +557,12 @@ static void portal_handoff(struct mesh_ctx *ctx)
 	snprintf(setl, sizeof(setl), "del_list dhcp.%s.ra_flags='none'", ctx->auto_mesh_network);
 	mesh_uci_batch_line(setl);
 	snprintf(setl, sizeof(setl),
+		 "del_list dhcp.%s.ra_flags='managed-config'", ctx->auto_mesh_network);
+	mesh_uci_batch_line(setl);
+	snprintf(setl, sizeof(setl),
+		 "del_list dhcp.%s.ra_flags='other-config'", ctx->auto_mesh_network);
+	mesh_uci_batch_line(setl);
+	snprintf(setl, sizeof(setl),
 		 "add_list dhcp.%s.ra_flags='managed-config'", ctx->auto_mesh_network);
 	mesh_uci_batch_line(setl);
 	snprintf(setl, sizeof(setl),
@@ -519,12 +570,28 @@ static void portal_handoff(struct mesh_ctx *ctx)
 	mesh_uci_batch_line(setl);
 	mesh_uci_batch_line("set dhcp.@dnsmasq[0].rebind_protection='1'");
 
+	/* v7: enable vtunlan DHCP when vxlan is already up */
+	if (vxlan_up) {
+		mesh_uci_batch_line("set dhcp.vtunlan.dhcpv4='server'");
+		mesh_uci_batch_line("set dhcp.vtunlan.dhcpv6='server'");
+		mesh_uci_batch_line("set dhcp.vtunlan.ra='server'");
+		mesh_uci_batch_line("set dhcp.vtunlan.ignore='0'");
+		mesh_uci_batch_line("del_list dhcp.vtunlan.ra_flags='none'");
+		mesh_uci_batch_line("del_list dhcp.vtunlan.ra_flags='managed-config'");
+		mesh_uci_batch_line("del_list dhcp.vtunlan.ra_flags='other-config'");
+		mesh_uci_batch_line("add_list dhcp.vtunlan.ra_flags='managed-config'");
+		mesh_uci_batch_line("add_list dhcp.vtunlan.ra_flags='other-config'");
+		mesh_uci_batch_line("set dhcp.@dnsmasq[0].rebind_protection='1'");
+	}
+
 	/* v7 restore_ipv4: only if netifd did not put the address on yet */
 	if (ctx->portal_detect != 4)
 		mesh_restore_ipv4(ctx);
 
-	service_cmd("dnsmasq", "restart");
-	service_cmd("odhcpd", "restart");
+	/* Non-blocking — v7 create_vxlan warns blocking restart hangs on br-lan down */
+	mesh_log_debug(ctx, "dnsmasq restarting");
+	service_cmd_bg("dnsmasq", "restart");
+	service_cmd_bg("odhcpd", "restart");
 	service_cmd("system", "restart");
 	{
 		char sysf[160];
@@ -535,6 +602,7 @@ static void portal_handoff(struct mesh_ctx *ctx)
 	if (ctx->daemon_startup)
 		ctx->daemon_startup = 0;
 }
+
 
 int mesh_check_portal(struct mesh_ctx *ctx)
 {

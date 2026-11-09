@@ -7,7 +7,7 @@
 #include <sys/types.h>
 
 #ifndef MESH11SD_VERSION
-#define MESH11SD_VERSION "8.0.0_alpha13"
+#define MESH11SD_VERSION "8.0.0_alpha14"
 #endif
 
 #define MESH11SD_TMPDIR "/tmp/mesh11sd"
@@ -222,6 +222,8 @@ int mesh_check_vtunnel(struct mesh_ctx *ctx);
 int mesh_create_vxlan_if(struct mesh_ctx *ctx);
 int mesh_update_vxlan_for_active_portal(struct mesh_ctx *ctx);
 int mesh_block_bridge_loops(struct mesh_ctx *ctx);
+int mesh_pin_active_portal_arp(struct mesh_ctx *ctx); /* v7 ARP pin */
+int mesh_pin_active_portal_arp_clear(struct mesh_ctx *ctx);
 int mesh_move_ethernet_to_vxlan_bridge(struct mesh_ctx *ctx);
 int mesh_probe_interface_mac(struct mesh_ctx *ctx);
 int mesh_set_iface_path_cost(struct mesh_ctx *ctx, int path_cost,

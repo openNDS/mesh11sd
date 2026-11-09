@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/wait.h>
@@ -1037,6 +1038,375 @@ int mesh_block_bridge_loops(struct mesh_ctx *ctx)
 			};
 			mesh_run_capture(c, NULL, 0);
 		}
+	}
+	return 0;
+}
+
+
+/* v7 pin_active_portal_arp_clear — drop MRP ARP pin when active portal is MBP */
+int mesh_pin_active_portal_arp_clear(struct mesh_ctx *ctx)
+{
+	char *flush[] = {
+		"nft", "flush", "chain", "bridge", "mesh11s", "mesh_ARP", NULL
+	};
+	char *del[] = {
+		"nft", "delete", "chain", "bridge", "mesh11s", "mesh_ARP", NULL
+	};
+	char *list[] = {
+		"nft", "list", "chain", "bridge", "mesh11s", "mesh_ARP", NULL
+	};
+	char out[256];
+
+	unlink(MESH11SD_TMPDIR "/arp_portal_pin");
+	if (mesh_run_capture(list, out, sizeof(out)) == 0) {
+		mesh_run_capture(flush, NULL, 0);
+		mesh_run_capture(del, NULL, 0);
+	}
+	(void)ctx;
+	return 0;
+}
+
+/* v7 pin_active_portal_arp — drop gateway ARP on mesh ifaces from any MAC
+ * except the active MRP (and its bridge MAC when distinct). Lets every
+ * portal run DHCP without clients flapping between portals. */
+int mesh_pin_active_portal_arp(struct mesh_ctx *ctx)
+{
+	char mesh_bridge[64];
+	char portal_ula[128] = "";
+	char portal_mac[32] = "";
+	char own_mac[32] = "";
+	char bridge_mac[32] = "";
+	char gw_ip[32] = "";
+	char pin_sig[384];
+	char prev_sig[384] = "";
+	char out[4096];
+	char path[160];
+	FILE *f;
+	int i;
+	int is_self_portal = 0;
+
+	/* Load is_portal overlay into detected_state if file present */
+	if (access(MESH11SD_TMPDIR "/is_portal", R_OK) == 0) {
+		f = fopen(MESH11SD_TMPDIR "/is_portal", "r");
+		if (f) {
+			char line[256];
+			if (fgets(line, sizeof(line), f)) {
+				char *p = strstr(line, "detected_state=\"");
+				if (p) {
+					char ds[32] = "";
+					sscanf(p + 16, "%31[^\"]", ds);
+					if (ds[0])
+						snprintf(ctx->detected_state,
+							 sizeof(ctx->detected_state), "%s", ds);
+				}
+			}
+			fclose(f);
+		}
+	}
+
+	/* MBP: gateway is upstream router — do not pin */
+	if (ctx->portal_detect == 4 ||
+	    (!strcmp(ctx->portal_type, "MBP") &&
+	     strcmp(ctx->detected_state, "portal") != 0)) {
+		mesh_pin_active_portal_arp_clear(ctx);
+		mesh_log_notice(ctx,
+				"ARP pin: not applied, active portal is an MBP (gateway is the upstream router)");
+		return 0;
+	}
+
+	snprintf(mesh_bridge, sizeof(mesh_bridge), "br-%s", ctx->auto_mesh_network);
+
+	if (access(MESH11SD_TMPDIR "/active_portal", R_OK) != 0) {
+		mesh_log_info(ctx, "ARP pin: no active_portal file");
+		return 0;
+	}
+	f = fopen(MESH11SD_TMPDIR "/active_portal", "r");
+	if (f) {
+		char line[512];
+		if (fgets(line, sizeof(line), f)) {
+			char *p;
+			p = strstr(line, "portal_ula=\"");
+			if (p)
+				sscanf(p + 12, "%127[^\"]", portal_ula);
+			p = strstr(line, "portal_mac=\"");
+			if (p)
+				sscanf(p + 12, "%31[^\"]", portal_mac);
+		}
+		fclose(f);
+	}
+
+	if (access(MESH11SD_TMPDIR "/factory_mac", R_OK) == 0) {
+		f = fopen(MESH11SD_TMPDIR "/factory_mac", "r");
+		if (f) {
+			char line[256];
+			if (fgets(line, sizeof(line), f)) {
+				char *p = strstr(line, "factory_mac=\"");
+				if (p)
+					sscanf(p + 13, "%31[^\"]", own_mac);
+			}
+			fclose(f);
+		}
+	}
+	if (!own_mac[0] && ctx->factory_mac[0])
+		snprintf(own_mac, sizeof(own_mac), "%s", ctx->factory_mac);
+
+	if (strlen(portal_mac) != 17 &&
+	    !strcmp(ctx->detected_state, "portal") &&
+	    strlen(own_mac) == 17)
+		snprintf(portal_mac, sizeof(portal_mac), "%s", own_mac);
+
+	if (strlen(portal_mac) != 17) {
+		mesh_log_notice(ctx, "ARP pin: active_portal has no portal_mac");
+		return 0;
+	}
+
+	is_self_portal = (!strcmp(ctx->detected_state, "portal") ||
+			  (own_mac[0] && !strcasecmp(portal_mac, own_mac)));
+
+	if (is_self_portal) {
+		snprintf(path, sizeof(path), "/sys/class/net/%s/address", mesh_bridge);
+		f = fopen(path, "r");
+		if (f) {
+			if (fgets(bridge_mac, sizeof(bridge_mac), f)) {
+				char *nl = strchr(bridge_mac, '\n');
+				if (nl)
+					*nl = '\0';
+			}
+			fclose(f);
+		}
+		/* Prefer .1 address on mesh bridge */
+		{
+			char *argv[] = {
+				"ip", "-4", "addr", "show", "dev", mesh_bridge, NULL
+			};
+			if (mesh_run_capture(argv, out, sizeof(out)) == 0) {
+				char *p = out, *line;
+				while ((line = strsep(&p, "\n")) != NULL) {
+					char ip[32], *slash;
+					if (!strstr(line, "inet "))
+						continue;
+					if (sscanf(line, " inet %31s", ip) != 1 &&
+					    sscanf(line, "inet %31s", ip) != 1)
+						continue;
+					slash = strchr(ip, '/');
+					if (slash)
+						*slash = '\0';
+					if (strlen(ip) >= 2 &&
+					    ip[strlen(ip) - 2] == '.' &&
+					    ip[strlen(ip) - 1] == '1') {
+						snprintf(gw_ip, sizeof(gw_ip), "%s", ip);
+						break;
+					}
+				}
+			}
+		}
+		if (!gw_ip[0]) {
+			char key[96];
+			snprintf(key, sizeof(key), "network.%s.ipaddr",
+				 ctx->auto_mesh_network);
+			mesh_uci_get(key, gw_ip, sizeof(gw_ip));
+		}
+	} else {
+		if (portal_ula[0]) {
+			char *argv[] = { "ip", "-6", "neigh", NULL };
+			if (mesh_run_capture(argv, out, sizeof(out)) == 0) {
+				char *p = out, *line;
+				while ((line = strsep(&p, "\n")) != NULL) {
+					char *ll;
+					if (!strstr(line, portal_ula))
+						continue;
+					ll = strstr(line, "lladdr ");
+					if (!ll)
+						continue;
+					sscanf(ll + 7, "%31s", bridge_mac);
+					if (strlen(bridge_mac) == 17)
+						break;
+					bridge_mac[0] = '\0';
+				}
+			}
+		}
+		{
+			char *argv[] = {
+				"ip", "-4", "route", "show", "default", "dev",
+				mesh_bridge, NULL
+			};
+			if (mesh_run_capture(argv, out, sizeof(out)) == 0) {
+				char *via = strstr(out, "via ");
+				if (via)
+					sscanf(via + 4, "%31s", gw_ip);
+			}
+		}
+		if (!gw_ip[0]) {
+			char key[96];
+			snprintf(key, sizeof(key), "network.%s.ipaddr",
+				 ctx->auto_mesh_network);
+			mesh_uci_get(key, gw_ip, sizeof(gw_ip));
+		}
+	}
+
+	if (bridge_mac[0] && !strcasecmp(bridge_mac, portal_mac))
+		bridge_mac[0] = '\0';
+
+	{
+		char canon[32];
+		if (mesh_is_ipv4addr_valid(gw_ip, canon, sizeof(canon)) != 0) {
+			mesh_log_notice(ctx,
+					"ARP pin: no gateway IPv4 for active portal [ %s ]",
+					portal_mac);
+			return 0;
+		}
+		snprintf(gw_ip, sizeof(gw_ip), "%s", canon);
+	}
+
+	mesh_get_mesh_iflist(ctx);
+	if (ctx->iflist_count <= 0) {
+		mesh_log_info(ctx, "ARP pin: no mesh interface");
+		return 0;
+	}
+
+	{
+		char ifs[256] = "";
+		size_t off = 0;
+		for (i = 0; i < ctx->iflist_count; i++) {
+			int n = snprintf(ifs + off, sizeof(ifs) - off, "%s%s",
+					 off ? " " : "", ctx->iflist[i]);
+			if (n < 0 || (size_t)n >= sizeof(ifs) - off)
+				break;
+			off += (size_t)n;
+		}
+		snprintf(pin_sig, sizeof(pin_sig), "v2 %s %s %s %s",
+			 gw_ip, portal_mac, bridge_mac, ifs);
+	}
+
+	f = fopen(MESH11SD_TMPDIR "/arp_portal_pin", "r");
+	if (f) {
+		if (fgets(prev_sig, sizeof(prev_sig), f)) {
+			char *nl = strchr(prev_sig, '\n');
+			if (nl)
+				*nl = '\0';
+		}
+		fclose(f);
+	}
+
+	if (!strcmp(pin_sig, prev_sig)) {
+		char *list[] = {
+			"nft", "list", "chain", "bridge", "mesh11s", "mesh_ARP", NULL
+		};
+		if (mesh_run_capture(list, out, sizeof(out)) != 0 ||
+		    !strstr(out, portal_mac))
+			prev_sig[0] = '\0';
+	}
+	if (!strcmp(pin_sig, prev_sig))
+		return 0;
+
+	{
+		char *tbl[] = { "nft", "list", "table", "bridge", "mesh11s", NULL };
+		if (mesh_run_capture(tbl, out, sizeof(out)) != 0) {
+			char *add[] = {
+				"nft", "add", "table", "bridge", "mesh11s", NULL
+			};
+			mesh_run_capture(add, NULL, 0);
+		}
+	}
+	{
+		char *addc[] = {
+			"nft", "add", "chain", "bridge", "mesh11s", "mesh_ARP",
+			"{", "type", "filter", "hook", "prerouting",
+			"priority", "-400;", "}",
+			NULL
+		};
+		mesh_run_capture(addc, NULL, 0);
+	}
+	{
+		char *flush[] = {
+			"nft", "flush", "chain", "bridge", "mesh11s", "mesh_ARP", NULL
+		};
+		mesh_run_capture(flush, NULL, 0);
+	}
+
+	for (i = 0; i < ctx->iflist_count; i++) {
+		const char *mesh_if = ctx->iflist[i];
+		int rc;
+
+		if (strlen(bridge_mac) == 17) {
+			char *reply[] = {
+				"nft", "add", "rule", "bridge", "mesh11s", "mesh_ARP",
+				"meta", "iifname", (char *)mesh_if,
+				"ether", "type", "arp",
+				"arp", "operation", "reply",
+				"arp", "saddr", "ip", gw_ip,
+				"ether", "saddr", "!=", portal_mac,
+				"ether", "saddr", "!=", bridge_mac,
+				"counter", "drop",
+				NULL
+			};
+			rc = mesh_run_capture(reply, out, sizeof(out));
+			if (rc != 0) {
+				mesh_log_notice(ctx, "ARP pin failed on [ %s ]: %s",
+						mesh_if, out);
+				return 0;
+			}
+			{
+				char *req[] = {
+					"nft", "add", "rule", "bridge", "mesh11s", "mesh_ARP",
+					"meta", "iifname", (char *)mesh_if,
+					"ether", "type", "arp",
+					"arp", "operation", "request",
+					"arp", "saddr", "ip", gw_ip,
+					"arp", "saddr", "ether", "!=", portal_mac,
+					"arp", "saddr", "ether", "!=", bridge_mac,
+					"counter", "drop",
+					NULL
+				};
+				mesh_run_capture(req, NULL, 0);
+			}
+		} else {
+			char *reply[] = {
+				"nft", "add", "rule", "bridge", "mesh11s", "mesh_ARP",
+				"meta", "iifname", (char *)mesh_if,
+				"ether", "type", "arp",
+				"arp", "operation", "reply",
+				"arp", "saddr", "ip", gw_ip,
+				"ether", "saddr", "!=", portal_mac,
+				"counter", "drop",
+				NULL
+			};
+			rc = mesh_run_capture(reply, out, sizeof(out));
+			if (rc != 0) {
+				mesh_log_notice(ctx, "ARP pin failed on [ %s ]: %s",
+						mesh_if, out);
+				return 0;
+			}
+			{
+				char *req[] = {
+					"nft", "add", "rule", "bridge", "mesh11s", "mesh_ARP",
+					"meta", "iifname", (char *)mesh_if,
+					"ether", "type", "arp",
+					"arp", "operation", "request",
+					"arp", "saddr", "ip", gw_ip,
+					"arp", "saddr", "ether", "!=", portal_mac,
+					"counter", "drop",
+					NULL
+				};
+				mesh_run_capture(req, NULL, 0);
+			}
+		}
+	}
+
+	mesh_file_write(MESH11SD_TMPDIR "/arp_portal_pin", pin_sig);
+	{
+		char ifs[256] = "";
+		size_t off = 0;
+		for (i = 0; i < ctx->iflist_count; i++) {
+			int n = snprintf(ifs + off, sizeof(ifs) - off, "%s%s",
+					 off ? " " : "", ctx->iflist[i]);
+			if (n < 0 || (size_t)n >= sizeof(ifs) - off)
+				break;
+			off += (size_t)n;
+		}
+		mesh_log_notice(ctx,
+				"ARP pin: replies for [ %s ] on mesh [ %s ] accepted from portal [ %s ] bridge [ %s ]",
+				gw_ip, ifs, portal_mac, bridge_mac);
 	}
 	return 0;
 }

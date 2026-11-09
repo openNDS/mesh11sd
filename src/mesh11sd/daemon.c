@@ -275,6 +275,7 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 		mesh_move_ethernet_to_vxlan_bridge(ctx);
 		mesh_set_root_bridge_priority(ctx);
 		mesh_block_bridge_loops(ctx);
+		mesh_pin_active_portal_arp(ctx);
 
 		mesh_rootmode(ctx);
 		mesh_mobility_settings(ctx, "runtime");
