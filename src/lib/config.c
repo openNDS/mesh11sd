@@ -104,7 +104,8 @@ static void hash_mesh_key(struct mesh_ctx *ctx, const char *raw_key)
 		snprintf(seed, sizeof(seed), "%s%s", ctx->auto_mesh_id, default_suffix);
 	else
 		snprintf(seed, sizeof(seed), "%s%s", ctx->auto_mesh_id, raw_key);
-	if (mesh_sha256_hex(seed, hash, sizeof(hash)) == 0)
+	/* v7: echo "$auto_mesh_id""$suffix" | sha256sum — newline in digest */
+	if (mesh_sha256_hex_echo(seed, hash, sizeof(hash)) == 0)
 		snprintf(ctx->auto_mesh_key, sizeof(ctx->auto_mesh_key), "%s", hash);
 	else
 		snprintf(ctx->auto_mesh_key, sizeof(ctx->auto_mesh_key), "%s", seed);

@@ -33,6 +33,33 @@ static void radio_index_str(const char *radio, char *out, size_t outlen)
 	snprintf(out, outlen, "%x", n);
 }
 
+
+/* From "wireless.<section>.mode='ap'" return section name. */
+static int wifi_section_from_mode_line(const char *line, char *sect, size_t sectlen)
+{
+	const char *dot, *dot2, *eq;
+
+	if (!line || !sect || sectlen == 0)
+		return -1;
+	sect[0] = '\0';
+	dot = strchr(line, '.');
+	if (!dot)
+		return -1;
+	dot2 = strchr(dot + 1, '.');
+	eq = strchr(line, '=');
+	if (!dot2 || !eq || dot2 > eq)
+		return -1;
+	{
+		size_t n = (size_t)(dot2 - (dot + 1));
+		if (n >= sectlen)
+			n = sectlen - 1;
+		memcpy(sect, dot + 1, n);
+		sect[n] = '\0';
+	}
+	return sect[0] ? 0 : -1;
+}
+
+
 int mesh_backup_defaults(struct mesh_ctx *ctx)
 {
 	const char *configs[] = {
@@ -69,54 +96,51 @@ int mesh_mesh_gate_state(struct mesh_ctx *ctx)
 		if (mesh_uci_show_filter("wireless", filter, show, sizeof(show)) == 0) {
 			p = show;
 			while ((line = strsep(&p, " \n")) != NULL) {
-				char *dot = strchr(line, '.');
 				char key[96], val[64];
-				if (!dot)
+				char sect[96];
+				char *eq = strchr(line, '=');
+				if (!eq)
 					continue;
-				snprintf(key, sizeof(key), "%s.device", line);
-				/* line may be wireless.m11s0=... - strip = */
-				{
-					char sect[96];
-					char *eq = strchr(line, '=');
-					snprintf(sect, sizeof(sect), "%s", line);
-					if (eq) {
-						sect[eq - line] = '\0';
-					}
-					snprintf(key, sizeof(key), "%s.device", sect);
-					if (mesh_uci_get(key, val, sizeof(val)) == 0)
-						snprintf(mesh_device, sizeof(mesh_device), "%s", val);
-				}
+				snprintf(sect, sizeof(sect), "%s", line);
+				sect[eq - line] = '\0';
+				snprintf(key, sizeof(key), "%s.device", sect);
+				if (mesh_uci_get(key, val, sizeof(val)) == 0)
+					snprintf(mesh_device, sizeof(mesh_device), "%s", val);
 				break;
 			}
 		}
 	}
 
-	if (mesh_uci_show_filter("wireless", "mode='ap'", show, sizeof(show)) != 0)
-		return 0;
-	p = show;
-	while ((line = strsep(&p, " \n")) != NULL) {
-		char sect[96], key[128], gate_device[64], setl[160];
-		char *eq = strchr(line, '=');
-		if (!eq)
-			continue;
-		snprintf(sect, sizeof(sect), "%s", line);
-		sect[eq - line] = '\0';
-		snprintf(key, sizeof(key), "%s.device", sect);
-		if (mesh_uci_get(key, gate_device, sizeof(gate_device)) != 0)
-			continue;
-		if (ctx->mesh_gate_enable == 1)
-			snprintf(setl, sizeof(setl), "set %s.disabled='0'", sect);
-		else if (ctx->mesh_gate_enable == 0)
-			snprintf(setl, sizeof(setl), "set %s.disabled='1'", sect);
-		else if (ctx->mesh_gate_enable == 2 && mesh_device[0] &&
-			 !strcmp(gate_device, mesh_device))
-			snprintf(setl, sizeof(setl), "set %s.disabled='1'", sect);
-		else
-			snprintf(setl, sizeof(setl), "set %s.disabled='0'", sect);
-		mesh_uci_batch_line(setl);
+	{
+		char *uargv[] = { "uci", "show", "wireless", NULL };
+		char raw[16384];
+		if (mesh_run_capture(uargv, raw, sizeof(raw)) != 0)
+			return 0;
+		p = raw;
+		while ((line = strsep(&p, "\n")) != NULL) {
+			char sect[96], key[128], gate_device[64], setl[160];
+			if (!strstr(line, ".mode='ap'") && !strstr(line, ".mode=ap"))
+				continue;
+			if (wifi_section_from_mode_line(line, sect, sizeof(sect)) != 0)
+				continue;
+			snprintf(key, sizeof(key), "wireless.%s.device", sect);
+			if (mesh_uci_get(key, gate_device, sizeof(gate_device)) != 0)
+				continue;
+			if (ctx->mesh_gate_enable == 1)
+				snprintf(setl, sizeof(setl), "set wireless.%s.disabled='0'", sect);
+			else if (ctx->mesh_gate_enable == 0)
+				snprintf(setl, sizeof(setl), "set wireless.%s.disabled='1'", sect);
+			else if (ctx->mesh_gate_enable == 2 && mesh_device[0] &&
+				 !strcmp(gate_device, mesh_device))
+				snprintf(setl, sizeof(setl), "set wireless.%s.disabled='1'", sect);
+			else
+				snprintf(setl, sizeof(setl), "set wireless.%s.disabled='0'", sect);
+			mesh_uci_batch_line(setl);
+		}
 	}
 	return 0;
 }
+
 
 int mesh_apply_mesh_params(struct mesh_ctx *ctx)
 {
@@ -219,42 +243,77 @@ int mesh_auto_config(struct mesh_ctx *ctx)
 	mesh_uci_batch_line("set dhcp.@dnsmasq[0].logfacility='-'");
 	mesh_uci_batch_line("set dhcp.@dnsmasq[0].quietdhcp='1'");
 
-	/* vxlan APs if enabled */
+	/* vxlan APs if enabled — v7 ~3811 */
 	if (ctx->vtun_enable) {
-		char show[4096];
+		char show[8192];
 		char *p, *line;
 		if (mesh_uci_show_filter("wireless", "mode='ap'", show, sizeof(show)) == 0) {
 			p = show;
-			while ((line = strsep(&p, " \n")) != NULL) {
-				char sect[96], device[64], *eq;
+			while ((line = strsep(&p, "\n")) != NULL) {
+				char sect[96], device[64], key[128];
 				int radio_index;
-				eq = strchr(line, '=');
-				if (!eq)
+
+				/* filter joins matches with spaces; also split on space */
+				if (!line[0])
 					continue;
-				snprintf(sect, sizeof(sect), "%s", line);
-				sect[eq - line] = '\0';
-				snprintf(setl, sizeof(setl), "%s.device", sect);
-				if (mesh_uci_get(setl, device, sizeof(device)) != 0)
-					continue;
-				if (strncmp(device, "radio", 5))
-					continue;
-				radio_index = atoi(device + 5);
-				snprintf(setl, sizeof(setl), "set wireless.vxradio%d=wifi-iface", radio_index);
-				mesh_uci_batch_line(setl);
-				snprintf(setl, sizeof(setl), "set wireless.vxradio%d.device='radio%d'", radio_index, radio_index);
-				mesh_uci_batch_line(setl);
-				snprintf(setl, sizeof(setl), "set wireless.vxradio%d.network='vtunlan'", radio_index);
-				mesh_uci_batch_line(setl);
-				snprintf(setl, sizeof(setl), "set wireless.vxradio%d.mode='ap'", radio_index);
-				mesh_uci_batch_line(setl);
-				snprintf(setl, sizeof(setl), "set wireless.vxradio%d.ifname='vxradio%d'", radio_index, radio_index);
-				mesh_uci_batch_line(setl);
-				snprintf(setl, sizeof(setl), "set wireless.vxradio%d.ssid='%s'", radio_index, ctx->vtun_base_ssid);
-				mesh_uci_batch_line(setl);
-				snprintf(setl, sizeof(setl), "set wireless.vxradio%d.encryption='none'", radio_index);
-				mesh_uci_batch_line(setl);
-				snprintf(setl, sizeof(setl), "set wireless.vxradio%d.disabled='%d'", radio_index, ifdisable);
-				mesh_uci_batch_line(setl);
+				/* each token may be a full wireless.*.mode='ap' line */
+				{
+					char *tok = line;
+					char *sp;
+					for (; tok && *tok; tok = sp ? sp + 1 : NULL) {
+						sp = strchr(tok, ' ');
+						if (sp)
+							*sp = '\0';
+						if (wifi_section_from_mode_line(tok, sect, sizeof(sect)) != 0) {
+							if (!sp)
+								break;
+							continue;
+						}
+						snprintf(key, sizeof(key), "wireless.%s.device", sect);
+						if (mesh_uci_get(key, device, sizeof(device)) != 0) {
+							if (!sp)
+								break;
+							continue;
+						}
+						if (strncmp(device, "radio", 5)) {
+							if (!sp)
+								break;
+							continue;
+						}
+						radio_index = atoi(device + 5);
+						snprintf(setl, sizeof(setl),
+							 "set wireless.vxradio%d=wifi-iface", radio_index);
+						mesh_uci_batch_line(setl);
+						snprintf(setl, sizeof(setl),
+							 "set wireless.vxradio%d.device='radio%d'",
+							 radio_index, radio_index);
+						mesh_uci_batch_line(setl);
+						snprintf(setl, sizeof(setl),
+							 "set wireless.vxradio%d.network='vtunlan'", radio_index);
+						mesh_uci_batch_line(setl);
+						snprintf(setl, sizeof(setl),
+							 "set wireless.vxradio%d.mode='ap'", radio_index);
+						mesh_uci_batch_line(setl);
+						snprintf(setl, sizeof(setl),
+							 "set wireless.vxradio%d.ifname='vxradio%d'",
+							 radio_index, radio_index);
+						mesh_uci_batch_line(setl);
+						snprintf(setl, sizeof(setl),
+							 "set wireless.vxradio%d.ssid='%s'",
+							 radio_index, ctx->vtun_base_ssid[0] ?
+							 ctx->vtun_base_ssid : "VTunnel");
+						mesh_uci_batch_line(setl);
+						snprintf(setl, sizeof(setl),
+							 "set wireless.vxradio%d.encryption='none'", radio_index);
+						mesh_uci_batch_line(setl);
+						snprintf(setl, sizeof(setl),
+							 "set wireless.vxradio%d.disabled='%d'",
+							 radio_index, ifdisable);
+						mesh_uci_batch_line(setl);
+						if (!sp)
+							break;
+					}
+				}
 			}
 		}
 	}
@@ -460,17 +519,17 @@ int mesh_auto_config(struct mesh_ctx *ctx)
 		}
 	}
 
-	/* AP ssid suffix + encryption */
+	/* AP ssid suffix + encryption — v7 ~4040-4100 */
 	{
-		char show[8192];
 		char *p, *line;
 		char suffix[8] = "0000";
 		int ifindex = 0;
 		const char *enc_type = "none";
 		const char *vx_enc = "none";
+		char *uargv[] = { "uci", "show", "wireless", NULL };
+		char raw[16384];
 
 		if (ctx->factory_mac[0] && strlen(ctx->factory_mac) >= 17) {
-			/* last two octets */
 			snprintf(suffix, sizeof(suffix), "%c%c%c%c",
 				 ctx->factory_mac[12], ctx->factory_mac[13],
 				 ctx->factory_mac[15], ctx->factory_mac[16]);
@@ -498,63 +557,90 @@ int mesh_auto_config(struct mesh_ctx *ctx)
 			mesh_run_capture(argv, NULL, 0);
 		}
 
-		if (mesh_uci_show_filter("wireless", "='ap'", show, sizeof(show)) == 0) {
-			p = show;
-			while ((line = strsep(&p, " \n")) != NULL) {
-				char sect[96], *eq, radio[64], band[16], ssid[64], ifname[64];
-				char phy[32], phyhex[8], radiohex[8];
+		/* First pass: ifname + ssid (v7 walks aplist twice) */
+		if (mesh_run_capture(uargv, raw, sizeof(raw)) == 0) {
+			p = raw;
+			while ((line = strsep(&p, "\n")) != NULL) {
+				char sect[96], radio[64], band[16], ssid[64], ifname[64];
+				char phy[32], phyhex[8], radiohex[8], key[128];
 				int is_vx;
 
-				eq = strchr(line, '=');
-				if (!eq)
+				if (!strstr(line, ".mode='ap'") && !strstr(line, ".mode=ap"))
 					continue;
-				snprintf(sect, sizeof(sect), "%s", line);
-				sect[eq - line] = '\0';
+				if (wifi_section_from_mode_line(line, sect, sizeof(sect)) != 0)
+					continue;
 				is_vx = strstr(sect, "vxradio") != NULL;
-
-				snprintf(setl, sizeof(setl), "%s.device", sect);
-				if (mesh_uci_get(setl, radio, sizeof(radio)) != 0)
+				snprintf(key, sizeof(key), "wireless.%s.device", sect);
+				if (mesh_uci_get(key, radio, sizeof(radio)) != 0)
 					continue;
 				mesh_radiophy(radio, phy, sizeof(phy));
 				snprintf(phyhex, sizeof(phyhex), "%x", phy_index_hex(phy));
 				radio_index_str(radio, radiohex, sizeof(radiohex));
-				snprintf(setl, sizeof(setl), "wireless.%s.band", radio);
-				if (mesh_uci_get(setl, band, sizeof(band)) != 0)
+				snprintf(key, sizeof(key), "wireless.%s.band", radio);
+				if (mesh_uci_get(key, band, sizeof(band)) != 0)
 					band[0] = '\0';
-				snprintf(setl, sizeof(setl), "%s.ssid", sect);
-				if (mesh_uci_get(setl, ssid, sizeof(ssid)) != 0)
+				{
+					char *sp = strchr(band, ' ');
+					if (sp)
+						*sp = '\0';
+				}
+				snprintf(key, sizeof(key), "wireless.%s.ssid", sect);
+				if (mesh_uci_get(key, ssid, sizeof(ssid)) != 0)
 					ssid[0] = '\0';
-				snprintf(setl, sizeof(setl), "%s.ifname", sect);
-				if (mesh_uci_get(setl, ifname, sizeof(ifname)) != 0 || !ifname[0]) {
-					snprintf(ifname, sizeof(ifname), "%s-ap%d", phy[0] ? phy : "phy0", ifindex);
+				snprintf(key, sizeof(key), "wireless.%s.ifname", sect);
+				if (mesh_uci_get(key, ifname, sizeof(ifname)) != 0 || !ifname[0]) {
+					snprintf(ifname, sizeof(ifname), "%s-ap%d",
+						 phy[0] ? phy : "phy0", ifindex);
 					ifindex++;
-					snprintf(setl, sizeof(setl), "set %s.ifname='%s'", sect, ifname);
+					snprintf(setl, sizeof(setl),
+						 "set wireless.%s.ifname='%s'", sect, ifname);
 					mesh_uci_batch_line(setl);
 				}
-				if (strcmp(ssid, ctx->vtun_base_ssid) != 0 && ctx->mesh_gate_base_ssid[0])
+				if (strcmp(ssid, ctx->vtun_base_ssid) != 0 &&
+				    ctx->mesh_gate_base_ssid[0])
 					snprintf(ssid, sizeof(ssid), "%s", ctx->mesh_gate_base_ssid);
 				if (ctx->ssid_suffix_enable) {
 					snprintf(setl, sizeof(setl),
-						 "set %s.ssid='%s-%s-%s-r%sp%s'",
+						 "set wireless.%s.ssid='%s-%s-%s-r%sp%s'",
 						 sect, ssid, band, suffix, radiohex, phyhex);
 				} else {
-					snprintf(setl, sizeof(setl), "set %s.ssid='%s'", sect, ssid);
+					snprintf(setl, sizeof(setl),
+						 "set wireless.%s.ssid='%s'", sect, ssid);
 				}
 				mesh_uci_batch_line(setl);
+				(void)is_vx;
+			}
+		}
 
+		/* Second pass: encryption + key */
+		if (mesh_run_capture(uargv, raw, sizeof(raw)) == 0) {
+			p = raw;
+			while ((line = strsep(&p, "\n")) != NULL) {
+				char sect[96], key[128];
+				int is_vx;
+
+				if (!strstr(line, ".mode='ap'") && !strstr(line, ".mode=ap"))
+					continue;
+				if (wifi_section_from_mode_line(line, sect, sizeof(sect)) != 0)
+					continue;
+				is_vx = strstr(sect, "vxradio") != NULL;
 				if (!is_vx) {
-					snprintf(setl, sizeof(setl), "set %s.encryption='%s'", sect, enc_type);
+					snprintf(setl, sizeof(setl),
+						 "set wireless.%s.encryption='%s'", sect, enc_type);
 					mesh_uci_batch_line(setl);
 					if (ctx->mesh_gate_key[0]) {
-						snprintf(setl, sizeof(setl), "set %s.key='%s'",
+						snprintf(setl, sizeof(setl),
+							 "set wireless.%s.key='%s'",
 							 sect, ctx->mesh_gate_key);
 						mesh_uci_batch_line(setl);
 					}
 				} else {
-					snprintf(setl, sizeof(setl), "set %s.encryption='%s'", sect, vx_enc);
+					snprintf(setl, sizeof(setl),
+						 "set wireless.%s.encryption='%s'", sect, vx_enc);
 					mesh_uci_batch_line(setl);
 					if (ctx->vtun_gate_key[0]) {
-						snprintf(setl, sizeof(setl), "set %s.key='%s'",
+						snprintf(setl, sizeof(setl),
+							 "set wireless.%s.key='%s'",
 							 sect, ctx->vtun_gate_key);
 						mesh_uci_batch_line(setl);
 					}

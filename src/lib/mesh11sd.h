@@ -7,7 +7,7 @@
 #include <sys/types.h>
 
 #ifndef MESH11SD_VERSION
-#define MESH11SD_VERSION "8.0.0_alpha8"
+#define MESH11SD_VERSION "8.0.0_alpha9"
 #endif
 
 #define MESH11SD_TMPDIR "/tmp/mesh11sd"
@@ -123,6 +123,7 @@ struct mesh_ctx {
 /* util */
 int mesh_run_capture(char *const argv[], char *out, size_t outlen);
 int mesh_sha256_hex(const char *in, char *out, size_t outlen);
+int mesh_sha256_hex_echo(const char *in, char *out, size_t outlen); /* v7 echo|sha256sum */
 int mesh_is_installed(const char *package);
 int mesh_check_package_any(const char *const *names, int *installed_flags);
 int mesh_file_write(const char *path, const char *content);

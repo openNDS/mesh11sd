@@ -48,7 +48,8 @@ int mesh_set_ula_prefix(struct mesh_ctx *ctx, const char *mode)
 		return 1;
 	if (!ctx->factory_mac[0])
 		mesh_get_factory_mac(ctx, ctx->factory_mac, sizeof(ctx->factory_mac));
-	if (mesh_sha256_hex(ctx->factory_mac, factory_hash, sizeof(factory_hash)) != 0)
+	/* v7: factory_hash=$(echo "$factory_mac" | sha256sum) — newline in digest */
+	if (mesh_sha256_hex_echo(ctx->factory_mac, factory_hash, sizeof(factory_hash)) != 0)
 		snprintf(factory_hash, sizeof(factory_hash), "%s", ctx->factory_mac);
 
 	mesh_uci_get("network.globals.ula_prefix", current, sizeof(current));

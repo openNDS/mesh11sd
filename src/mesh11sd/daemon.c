@@ -152,6 +152,9 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 			char *nr[] = { "/sbin/service", "network", "restart", NULL };
 			mesh_run_capture(nr, NULL, 0);
 		}
+		/* v7 restore_ipv4: ensure calculated portal address is on the bridge */
+		if (ctx->portal_detect != 5 && ctx->portal_use_default_ipv4 == 0)
+			mesh_restore_ipv4(ctx);
 		mesh_move_ethernet_to_vxlan_bridge(ctx);
 		mesh_set_bridge_mac_addresses(ctx);
 		{

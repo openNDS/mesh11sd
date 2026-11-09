@@ -61,7 +61,7 @@ int mesh_run_capture(char *const argv[], char *out, size_t outlen)
 	return 0;
 }
 
-int mesh_sha256_hex(const char *in, char *out, size_t outlen)
+static int mesh_sha256_hex_internal(const char *in, char *out, size_t outlen, int add_nl)
 {
 	char *argv[] = { "sha256sum", NULL };
 	int pipefd[2];
@@ -70,9 +70,11 @@ int mesh_sha256_hex(const char *in, char *out, size_t outlen)
 	char buf[128];
 	ssize_t n;
 	size_t total = 0;
+	size_t inlen;
 
 	if (!in || !out || outlen < 65)
 		return -1;
+	inlen = strlen(in);
 	if (pipe(pipefd) < 0)
 		return -1;
 	pid = fork();
@@ -90,7 +92,10 @@ int mesh_sha256_hex(const char *in, char *out, size_t outlen)
 			close(pstdin[0]);
 			close(pipefd[0]);
 			close(pipefd[1]);
-			write(pstdin[1], in, strlen(in));
+			if (inlen)
+				write(pstdin[1], in, inlen);
+			if (add_nl)
+				write(pstdin[1], "\n", 1);
 			close(pstdin[1]);
 			_exit(0);
 		}
@@ -118,7 +123,6 @@ int mesh_sha256_hex(const char *in, char *out, size_t outlen)
 	waitpid(pid, &status, 0);
 	if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
 		return -1;
-	/* first 64 hex chars */
 	for (n = 0; n < 64 && buf[n]; n++) {
 		if (!((buf[n] >= '0' && buf[n] <= '9') ||
 		      (buf[n] >= 'a' && buf[n] <= 'f')))
@@ -130,6 +134,19 @@ int mesh_sha256_hex(const char *in, char *out, size_t outlen)
 	out[64] = '\0';
 	return 0;
 }
+
+/* v7 printf "...' | sha256sum — no trailing newline */
+int mesh_sha256_hex(const char *in, char *out, size_t outlen)
+{
+	return mesh_sha256_hex_internal(in, out, outlen, 0);
+}
+
+/* v7 echo "..." | sha256sum — trailing newline included in digest */
+int mesh_sha256_hex_echo(const char *in, char *out, size_t outlen)
+{
+	return mesh_sha256_hex_internal(in, out, outlen, 1);
+}
+
 
 int mesh_is_installed(const char *package)
 {
@@ -213,7 +230,7 @@ int mesh_generate_ipv4_base(struct mesh_ctx *ctx, const char *seed, char *out, s
 		char pair[3];
 		unsigned subnet;
 		int s, skip = 0;
-		char show[4096];
+		char show[16384];
 		size_t hlen = strlen(hash);
 		size_t start;
 
@@ -254,9 +271,10 @@ int mesh_apply_portal_ipv4(struct mesh_ctx *ctx)
 	char seed[128];
 	char newip[32];
 	char setl[160];
+	char cur[64] = "";
 
-	/* v7 autostartup: when portal_use_default_ipv4=0, all nodes calculate
-	 * the same address; portals keep proto=static and use it. */
+	/* v7 autostartup ~10925: when portal_use_default_ipv4=0, all nodes
+	 * calculate the same address; portals keep proto=static and use it. */
 	if (ctx->portal_use_default_ipv4 != 0)
 		return 0;
 	if (ctx->portal_detect == 3) {
@@ -266,14 +284,27 @@ int mesh_apply_portal_ipv4(struct mesh_ctx *ctx)
 	} else {
 		snprintf(seed, sizeof(seed), "%s", ctx->auto_mesh_id);
 	}
-	if (!seed[0] || mesh_generate_ipv4_base(ctx, seed, newip, sizeof(newip)) != 0)
+	if (!seed[0]) {
+		mesh_log_err(ctx, "portal ipv4: empty seed (auto_mesh_id/factory_mac)");
 		return -1;
+	}
+	if (mesh_generate_ipv4_base(ctx, seed, newip, sizeof(newip)) != 0) {
+		mesh_log_err(ctx, "portal ipv4: generate_ipv4_base failed");
+		return -1;
+	}
+	/* Drop prior CIDR or plain ipaddr so the set sticks (OpenWrt may have
+	 * network.lan.ipaddr='192.168.1.1/24'). */
+	mesh_uci_batch_line("delete network.lan.ipaddr");
 	snprintf(setl, sizeof(setl), "set network.lan.ipaddr='%s'", newip);
-	mesh_uci_batch_line(setl);
+	if (mesh_uci_batch_line(setl) != 0)
+		mesh_log_err(ctx, "portal ipv4: failed to set network.lan.ipaddr");
 	mesh_uci_batch_line("set network.lan.netmask='255.255.255.0'");
 	mesh_uci_batch_line("set network.lan.ip6assign='64'");
 	mesh_uci_batch_line("set network.wan6.reqprefix='auto'");
 	mesh_uci_batch_line("set network.wan6.reqaddress='try'");
-	mesh_log_notice(ctx, "portal ipv4 [ %s ] (seeded from mesh config)", newip);
+	if (mesh_uci_get("network.lan.ipaddr", cur, sizeof(cur)) == 0)
+		mesh_log_notice(ctx, "lan ip address set to [ %s ]", cur);
+	else
+		mesh_log_notice(ctx, "portal ipv4 [ %s ] (seeded from mesh config)", newip);
 	return 0;
 }
