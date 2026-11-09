@@ -69,6 +69,27 @@ struct mesh_ctx {
 	char devicemac[32];
 	char active_mesh_ifname[64];
 
+	/* portal/peer runtime (tmpdir/is_portal etc.) */
+	char detected_state[16];	/* portal|peer */
+	char last_state[16];	/* initial|portal|peer */
+	char is_portal[32];
+	char portal_ula[64];
+	char ula_prefix[48];
+	char ula_base[32];
+	char ula_subnet[8];
+	char ula_vxsubnet[8];
+	char portal_type[16];
+	int link_to_portal;
+	int failcount;
+	int network_restart;
+	int firstloop;
+	int changed;
+	int daemon_startup;
+	int leechmode;
+	int reboot_on_error;
+	int stop_on_error;
+	int swconfig_mac_skip;
+
 	char iflist[MESH11SD_MAX_IFACES][32];
 	int iflist_count;
 	char radios[MESH11SD_MAX_RADIOS][32];
@@ -137,6 +158,26 @@ int mesh_auto_config(struct mesh_ctx *ctx);
 int mesh_mesh_gate_state(struct mesh_ctx *ctx);
 int mesh_restart_mesh(struct mesh_ctx *ctx);
 int mesh_apply_mesh_params(struct mesh_ctx *ctx);
+
+/* portal / peer */
+int mesh_get_portal_state(struct mesh_ctx *ctx);
+int mesh_check_portal(struct mesh_ctx *ctx);
+int mesh_portal_watchdog(struct mesh_ctx *ctx);
+int mesh_set_ula_prefix(struct mesh_ctx *ctx, const char *mode);
+int mesh_get_portal_ula(struct mesh_ctx *ctx, const char *mode);
+int mesh_get_portal_type(struct mesh_ctx *ctx);
+int mesh_restore_ipv4(struct mesh_ctx *ctx);
+int mesh_ccpy_setup(struct mesh_ctx *ctx);
+int mesh_get_peers(struct mesh_ctx *ctx);
+
+/* bridge / vxlan / STP */
+int mesh_convert_to_la(const char *mac, char *out, size_t outlen);
+int mesh_get_indexed_mac(struct mesh_ctx *ctx, const char *devname, char *out, size_t outlen);
+int mesh_set_bridge_mac_addresses(struct mesh_ctx *ctx);
+int mesh_set_root_bridge_priority(struct mesh_ctx *ctx);
+int mesh_check_vtunnel(struct mesh_ctx *ctx);
+int mesh_create_vxlan_if(struct mesh_ctx *ctx);
+int mesh_block_bridge_loops(struct mesh_ctx *ctx);
 
 int mesh_cli_dispatch(struct mesh_ctx *ctx, int argc, char **argv);
 int mesh_daemon_run(struct mesh_ctx *ctx);

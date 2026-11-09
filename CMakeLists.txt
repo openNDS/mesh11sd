@@ -32,6 +32,8 @@ set(MESH11SD_SOURCES
 	src/lib/factory_mac.c
 	src/lib/wireless.c
 	src/lib/auto_config.c
+	src/lib/portal.c
+	src/lib/bridge.c
 )
 
 add_executable(mesh11sd ${MESH11SD_SOURCES})

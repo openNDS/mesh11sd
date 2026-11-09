@@ -255,6 +255,33 @@ int mesh_cli_dispatch(struct mesh_ctx *ctx, int argc, char **argv)
 	if (!strcmp(cmd, "daemon"))
 		return mesh_daemon_run(ctx);
 
+	if (!strcmp(cmd, "get_portal_ula")) {
+		mesh_get_portal_ula(ctx, argc >= 3 ? argv[2] : "get");
+		if (access(MESH11SD_TMPDIR "/active_portal", R_OK) == 0) {
+			FILE *f = fopen(MESH11SD_TMPDIR "/active_portal", "r");
+			char line[256];
+			if (f && fgets(line, sizeof(line), f))
+				fputs(line, stdout);
+			if (f)
+				fclose(f);
+		}
+		return 0;
+	}
+
+	if (!strcmp(cmd, "get_portal_type")) {
+		mesh_get_portal_type(ctx);
+		printf("%s\n", ctx->portal_type[0] ? ctx->portal_type : "UNKNOWN");
+		return 0;
+	}
+
+	if (!strcmp(cmd, "set_ula_prefix")) {
+		const char *mode = argc >= 3 ? argv[2] : "get";
+		mesh_set_ula_prefix(ctx, mode);
+		fputs(ctx->ula_prefix, stdout);
+		return 0;
+	}
+
+
 	if (!strcmp(cmd, "txpower"))
 		return mesh_cli_txpower(ctx, argc >= 3 ? argv[2] : NULL);
 

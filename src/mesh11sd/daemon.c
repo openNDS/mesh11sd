@@ -26,10 +26,8 @@ static void ensure_factory_mac(struct mesh_ctx *ctx)
 		char line[128];
 		if (f && fgets(line, sizeof(line), f)) {
 			char *p = strstr(line, "factory_mac=\"");
-			if (p) {
-				p += 13;
-				sscanf(p, "%31[^\"]", ctx->factory_mac);
-			}
+			if (p)
+				sscanf(p + 13, "%31[^\"]", ctx->factory_mac);
 		}
 		if (f)
 			fclose(f);
@@ -46,17 +44,19 @@ static void ensure_factory_mac(struct mesh_ctx *ctx)
 
 int mesh_daemon_run(struct mesh_ctx *ctx)
 {
-	int firstloop = 1;
-	int changed = 0;
 	char *nft_argv[] = { "nft", "destroy", "table", "bridge", "mesh11s", NULL };
 
 	ctx->mute = 0;
+	ctx->firstloop = 1;
+	ctx->daemon_startup = 1;
+	snprintf(ctx->last_state, sizeof(ctx->last_state), "initial");
 	mesh_ctx_load_setup(ctx);
 	mesh_run_capture(nft_argv, NULL, 0);
 	ensure_factory_mac(ctx);
 	unlink(MESH11SD_TMPDIR "/last_mac_indexed");
 	unlink(MESH11SD_TMPDIR "/maclist");
 	unlink(MESH11SD_TMPDIR "/loop_interval");
+	unlink(MESH11SD_TMPDIR "/active_mesh_ifname");
 
 	mesh_log_notice(ctx, "mesh11sd is in startup");
 	mesh_refresh_bridgemac(ctx);
@@ -68,7 +68,8 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 	if (ctx->auto_config > 0 ||
 	    access(MESH11SD_TMPDIR "/auto_config_test", F_OK) == 0) {
 		mesh_backup_defaults(ctx);
-		/* basic portal dhcp defaults for portal_detect 0/1 */
+		if (ctx->portal_detect == 0 || ctx->portal_detect == 4)
+			mesh_set_ula_prefix(ctx, "set");
 		if (ctx->portal_detect != 3 && ctx->portal_detect != 4 &&
 		    ctx->portal_detect != 5) {
 			char setl[160];
@@ -88,14 +89,13 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 				 "set network.%s.proto='static'", ctx->auto_mesh_network);
 			mesh_uci_batch_line(setl);
 		}
-		/* pick existing active mesh ifname if present */
 		if (has_mesh_uci()) {
 			char show[4096];
 			char *p, *line;
 			mesh_uci_show_filter("wireless", "mode='mesh'", show, sizeof(show));
 			p = show;
 			while ((line = strsep(&p, " \n")) != NULL) {
-				char sect[96], *eq, dis[8], ifn[64];
+				char sect[96], *eq, dis[128], ifn[128];
 				eq = strchr(line, '=');
 				if (!eq)
 					continue;
@@ -121,6 +121,7 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 
 	mesh_check_config_params(ctx);
 	mesh_sys_setup(ctx);
+	mesh_get_portal_ula(ctx, "discover");
 	mesh_log_notice(ctx, "Starting daemon service...");
 
 	for (;;) {
@@ -138,7 +139,7 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 			    access(MESH11SD_TMPDIR "/auto_config_test", F_OK) == 0) {
 				mesh_log_debug(ctx, "Starting auto configure process");
 				if (mesh_auto_config(ctx) == 0)
-					changed = 1;
+					ctx->changed = 1;
 			} else {
 				mesh_log_err(ctx, "auto_config is disabled. Please configure a mesh interface or enable auto_config....");
 				mesh_log_info(ctx, "Checkinterval [%d]", ctx->checkinterval);
@@ -150,10 +151,34 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 			mesh_apply_mesh_params(ctx);
 		}
 
-		if (firstloop || changed) {
-			firstloop = 0;
-			changed = 0;
+		/* portal_detect=0 forced MRP also uses check_portal */
+		if (ctx->portal_detect == 0 || ctx->portal_detect == 1 ||
+		    ctx->portal_detect == 3 || ctx->portal_detect == 4 ||
+		    ctx->portal_detect == 5) {
+			if (!ctx->firstloop)
+				mesh_check_portal(ctx);
+		}
+
+		if (ctx->vtun_enable)
+			mesh_check_vtunnel(ctx);
+
+		mesh_get_portal_type(ctx);
+		mesh_ccpy_setup(ctx);
+
+		if (ctx->auto_config != 0 ||
+		    access(MESH11SD_TMPDIR "/auto_config_test", F_OK) == 0 ||
+		    has_mesh_uci()) {
+			mesh_set_bridge_mac_addresses(ctx);
+		}
+
+		mesh_set_root_bridge_priority(ctx);
+		mesh_block_bridge_loops(ctx);
+
+		if (ctx->firstloop || ctx->changed) {
+			ctx->firstloop = 0;
+			ctx->changed = 0;
 			mesh_set_txpower_uci(ctx);
+			mesh_set_bridge_mac_addresses(ctx);
 		}
 
 		{

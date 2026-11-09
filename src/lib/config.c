@@ -39,6 +39,13 @@ void mesh_ctx_init(struct mesh_ctx *ctx, int is_daemon)
 	snprintf(ctx->portal_channel, sizeof(ctx->portal_channel), "default");
 	snprintf(ctx->tun_id, sizeof(ctx->tun_id), "69");
 	snprintf(ctx->vtun_base_ssid, sizeof(ctx->vtun_base_ssid), "VTunnel");
+	snprintf(ctx->detected_state, sizeof(ctx->detected_state), "peer");
+	snprintf(ctx->last_state, sizeof(ctx->last_state), "initial");
+	ctx->firstloop = 1;
+	ctx->daemon_startup = 1;
+	ctx->link_to_portal = 1;
+	ctx->reboot_on_error = 1;
+	ctx->stop_on_error = 0;
 	mesh_mkdir_p(MESH11SD_TMPDIR);
 }
 
@@ -414,6 +421,19 @@ int mesh_ctx_load_setup(struct mesh_ctx *ctx)
 		ctx->odhcpd_log_level = parse_int_default(buf, 3);
 	else
 		ctx->odhcpd_log_level = 3;
+
+	if (mesh_uci_get("mesh11sd.setup.reboot_on_error", buf, sizeof(buf)) == 0)
+		ctx->reboot_on_error = parse_int_default(buf, 1) ? 1 : 0;
+	else
+		ctx->reboot_on_error = 1;
+	if (mesh_uci_get("mesh11sd.setup.stop_on_error", buf, sizeof(buf)) == 0)
+		ctx->stop_on_error = parse_int_default(buf, 0) ? 1 : 0;
+	else
+		ctx->stop_on_error = 0;
+	if (mesh_uci_get("mesh11sd.setup.swconfig_mac_skip", buf, sizeof(buf)) == 0)
+		ctx->swconfig_mac_skip = !strcmp(buf, "1") ? 1 : 0;
+	else
+		ctx->swconfig_mac_skip = 0;
 
 	(void)saved_mute;
 	return 0;
