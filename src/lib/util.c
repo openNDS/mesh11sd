@@ -196,3 +196,84 @@ int mesh_mkdir_p(const char *path)
 	}
 	return mkdir(tmp, 0755) == 0 || errno == EEXIST ? 0 : -1;
 }
+
+int mesh_generate_ipv4_base(struct mesh_ctx *ctx, const char *seed, char *out, size_t outlen)
+{
+	char hash[72];
+	int i;
+	const int skips[] = { 168, 167, 8, 1, 0, -1 };
+
+	if (!seed || !out || outlen < 16)
+		return -1;
+	out[0] = '\0';
+	if (mesh_sha256_hex(seed, hash, sizeof(hash)) != 0)
+		return -1;
+	/* v7: for i in seq 9 1 64; take last i chars of digest, first 2 as hex subnet */
+	for (i = 9; i <= 64; i++) {
+		char pair[3];
+		unsigned subnet;
+		int s, skip = 0;
+		char show[4096];
+		size_t hlen = strlen(hash);
+		size_t start;
+
+		if ((size_t)i > hlen)
+			continue;
+		start = hlen - (size_t)i;
+		pair[0] = hash[start];
+		pair[1] = hash[start + 1];
+		pair[2] = '\0';
+		subnet = (unsigned)strtoul(pair, NULL, 16);
+		if (subnet >= 255)
+			continue;
+		for (s = 0; skips[s] >= 0; s++) {
+			if ((int)subnet == skips[s]) {
+				skip = 1;
+				break;
+			}
+		}
+		if (skip)
+			continue;
+		snprintf(out, outlen, "192.168.%u.1", subnet);
+		/* v7: is_used=$(uci show network | grep -c "$newipaddr") */
+		{
+			char *uargv[] = { "uci", "show", "network", NULL };
+			if (mesh_run_capture(uargv, show, sizeof(show)) == 0 &&
+			    strstr(show, out))
+				continue;
+		}
+		mesh_log_debug(ctx, "Validated ipv4 address [ %s ] using seed value [ %s ]",
+			       out, seed);
+		return 0;
+	}
+	return -1;
+}
+
+int mesh_apply_portal_ipv4(struct mesh_ctx *ctx)
+{
+	char seed[128];
+	char newip[32];
+	char setl[160];
+
+	/* v7 autostartup: when portal_use_default_ipv4=0, all nodes calculate
+	 * the same address; portals keep proto=static and use it. */
+	if (ctx->portal_use_default_ipv4 != 0)
+		return 0;
+	if (ctx->portal_detect == 3) {
+		if (!ctx->factory_mac[0])
+			mesh_get_factory_mac(ctx, ctx->factory_mac, sizeof(ctx->factory_mac));
+		snprintf(seed, sizeof(seed), "%s", ctx->factory_mac);
+	} else {
+		snprintf(seed, sizeof(seed), "%s", ctx->auto_mesh_id);
+	}
+	if (!seed[0] || mesh_generate_ipv4_base(ctx, seed, newip, sizeof(newip)) != 0)
+		return -1;
+	snprintf(setl, sizeof(setl), "set network.lan.ipaddr='%s'", newip);
+	mesh_uci_batch_line(setl);
+	mesh_uci_batch_line("set network.lan.netmask='255.255.255.0'");
+	mesh_uci_batch_line("set network.lan.ip6assign='64'");
+	mesh_uci_batch_line("set network.wan6.reqprefix='auto'");
+	mesh_uci_batch_line("set network.wan6.reqaddress='try'");
+	mesh_log_notice(ctx, "portal ipv4 [ %s ] (seeded from mesh config)", newip);
+	return 0;
+}

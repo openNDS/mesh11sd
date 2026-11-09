@@ -44,6 +44,20 @@ int mesh_get_mesh_iflist(struct mesh_ctx *ctx)
 	return 0;
 }
 
+int mesh_iface_is_up(const char *ifname)
+{
+	char out[512];
+	char *argv[] = { "ip", "link", "show", (char *)ifname, NULL };
+
+	if (!ifname || !ifname[0])
+		return 0;
+	if (mesh_run_capture(argv, out, sizeof(out)) != 0)
+		return 0;
+	if (strstr(out, "state UP") || strstr(out, "state UNKNOWN"))
+		return 1;
+	return 0;
+}
+
 int mesh_wait_for_interface(struct mesh_ctx *ctx, const char *ifname,
 			    char *status_out, size_t status_len)
 {

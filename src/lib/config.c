@@ -43,6 +43,7 @@ void mesh_ctx_init(struct mesh_ctx *ctx, int is_daemon)
 	snprintf(ctx->detected_state, sizeof(ctx->detected_state), "peer");
 	snprintf(ctx->last_state, sizeof(ctx->last_state), "initial");
 	ctx->firstloop = 1;
+	ctx->macfixup = 0;
 	ctx->daemon_startup = 1;
 	ctx->link_to_portal = 1;
 	ctx->reboot_on_error = 1;

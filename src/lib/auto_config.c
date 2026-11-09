@@ -569,3 +569,102 @@ int mesh_auto_config(struct mesh_ctx *ctx)
 	mesh_log_info(ctx, "auto_config: mesh bring-up done (wifi applied)");
 	return 0;
 }
+
+/* v7 ~11225: set mesh/AP macaddr in UCI before wifi so runtime MAC walk is a no-op. */
+int mesh_fixup_wireless_macaddrs(struct mesh_ctx *ctx)
+{
+	char *p, *line;
+	int did = 0;
+
+	if (ctx->macfixup)
+		return 0;
+	if (!ctx->factory_mac[0])
+		mesh_get_factory_mac(ctx, ctx->factory_mac, sizeof(ctx->factory_mac));
+	if (!ctx->factory_mac[0])
+		return -1;
+
+	mesh_refresh_bridgemac(ctx);
+	mesh_get_wiphys(ctx);
+
+	/* Mesh ifaces: factory MAC when unset and commit_all=0 */
+	for (int ri = 0; ri < ctx->radio_count; ri++) {
+		char radiohex[8], sect[32], key[96], cur[64], ifn[64], setl[160];
+		const char *radio = ctx->radios[ri];
+		const char *digits = radio;
+
+		if (!strncmp(radio, "radio", 5))
+			digits = radio + 5;
+		snprintf(radiohex, sizeof(radiohex), "%x", atoi(digits));
+		snprintf(sect, sizeof(sect), "m11s%s", radiohex);
+		snprintf(key, sizeof(key), "wireless.%s.macaddr", sect);
+		if (mesh_uci_get(key, cur, sizeof(cur)) == 0 && cur[0])
+			continue;
+		if (ctx->commit_all != 0)
+			continue;
+		/* section must exist */
+		snprintf(key, sizeof(key), "wireless.%s", sect);
+		if (mesh_uci_get(key, cur, sizeof(cur)) != 0)
+			continue;
+		snprintf(key, sizeof(key), "wireless.%s.ifname", sect);
+		if (mesh_uci_get(key, ifn, sizeof(ifn)) != 0)
+			ifn[0] = '\0';
+		snprintf(setl, sizeof(setl), "set wireless.%s.macaddr='%s'",
+			 sect, ctx->factory_mac);
+		mesh_uci_batch_line(setl);
+		mesh_log_notice(ctx, "Setting mac address of mesh interface %s to [ %s ]",
+				ifn[0] ? ifn : sect, ctx->factory_mac);
+		ctx->changed = 1;
+		did = 1;
+	}
+
+	/* AP ifaces: indexed LA MAC when unset and commit_all=0 (v7 ~11252) */
+	{
+		char *uargv[] = { "uci", "show", "wireless", NULL };
+		char raw[16384];
+		if (mesh_run_capture(uargv, raw, sizeof(raw)) == 0) {
+			p = raw;
+			while ((line = strsep(&p, "\n")) != NULL) {
+				char sect[96], key[128], cur[64], ifn[64], want[32], setl[160];
+				char *dot, *dot2, *eq;
+				if (!strstr(line, ".mode='ap'") && !strstr(line, ".mode=ap"))
+					continue;
+				dot = strchr(line, '.');
+				if (!dot)
+					continue;
+				dot2 = strchr(dot + 1, '.');
+				eq = strchr(line, '=');
+				if (!dot2 || !eq || dot2 > eq)
+					continue;
+				{
+					size_t n = (size_t)(dot2 - (dot + 1));
+					if (n >= sizeof(sect))
+						n = sizeof(sect) - 1;
+					memcpy(sect, dot + 1, n);
+					sect[n] = '\0';
+				}
+				if (!sect[0])
+					continue;
+				snprintf(key, sizeof(key), "wireless.%s.macaddr", sect);
+				if (mesh_uci_get(key, cur, sizeof(cur)) == 0 && cur[0])
+					continue;
+				if (ctx->commit_all != 0)
+					continue;
+				snprintf(key, sizeof(key), "wireless.%s.ifname", sect);
+				if (mesh_uci_get(key, ifn, sizeof(ifn)) != 0 || !ifn[0])
+					continue;
+				if (mesh_get_indexed_mac(ctx, ifn, want, sizeof(want)) < 0)
+					continue;
+				snprintf(setl, sizeof(setl), "set wireless.%s.macaddr='%s'",
+					 sect, want);
+				mesh_uci_batch_line(setl);
+				mesh_log_notice(ctx, "Setting mac address of %s to [ %s ]",
+						ifn, want);
+				did = 1;
+			}
+		}
+	}
+
+	ctx->macfixup = 1;
+	(void)did;
+	return 0;
+}

@@ -380,12 +380,11 @@ static void read_txpower(struct mesh_ctx *ctx, char *out, size_t outlen)
 	out[0] = '\0';
 	mesh_get_mesh_iflist(ctx);
 	for (i = 0; i < ctx->iflist_count; i++) {
-		char status[16];
 		char *argv[] = { "iwinfo", NULL };
 		char buf[4096];
 		char *p;
-		mesh_wait_for_interface(ctx, ctx->iflist[i], status, sizeof(status));
-		if (!strcmp(status, "down"))
+		/* status must not block: never sleep-wait for a down/dormant iface */
+		if (!mesh_iface_is_up(ctx->iflist[i]))
 			continue;
 		if (mesh_run_capture(argv, buf, sizeof(buf)) != 0)
 			break;
@@ -564,7 +563,6 @@ int mesh_cli_status(struct mesh_ctx *ctx)
 
 	fputs("  \"mesh_interfaces\": {\n", stdout);
 	for (i = 0; i < ctx->iflist_count; i++) {
-		char status[16];
 		char params[8192];
 		char meshconfig[96] = "";
 		char show[4096];
@@ -575,8 +573,7 @@ int mesh_cli_status(struct mesh_ctx *ctx)
 		int emitted = 0;
 		char *p, *line;
 
-		mesh_wait_for_interface(ctx, ctx->iflist[i], status, sizeof(status));
-		if (!strcmp(status, "down"))
+		if (!mesh_iface_is_up(ctx->iflist[i]))
 			continue;
 		if (mesh_get_mesh_params_dump(ctx->iflist[i], params, sizeof(params)) != 0)
 			continue;

@@ -48,6 +48,7 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 
 	ctx->mute = 0;
 	ctx->firstloop = 1;
+	ctx->macfixup = 0;
 	ctx->daemon_startup = 1;
 	snprintf(ctx->last_state, sizeof(ctx->last_state), "initial");
 	mesh_ctx_load_setup(ctx);
@@ -106,6 +107,18 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 				 "set network.%s.proto='static'", ctx->auto_mesh_network);
 			mesh_uci_batch_line(setl);
 		}
+		/* v7 ~10925: deterministic lan IPv4 when portal_use_default_ipv4=0.
+		 * All nodes calculate it; portals (proto=static) apply/use it. */
+		if (ctx->portal_detect != 5)
+			mesh_apply_portal_ipv4(ctx);
+		if (ctx->portal_detect != 3) {
+			snprintf(setl, sizeof(setl),
+				 "set network.%s.ip6assign='64'", ctx->auto_mesh_network);
+			mesh_uci_batch_line(setl);
+		}
+		mesh_uci_batch_line("set dhcp.lan.ra_lifetime='3600'");
+		mesh_uci_batch_line("set dhcp.lan.ra_mininterval='20'");
+		mesh_uci_batch_line("set dhcp.lan.ra_maxinterval='60'");
 		if (has_mesh_uci()) {
 			char show[4096];
 			char *p, *line;
@@ -159,8 +172,16 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 
 	for (;;) {
 		int loop_interval = ctx->checkinterval;
+		char buf[64];
 
-		mesh_ctx_load_setup(ctx);
+		/* v7 main loop only refreshes debuglevel; full option dump is startup-only */
+		if (mesh_uci_get("mesh11sd.setup.debuglevel", buf, sizeof(buf)) == 0) {
+			int dl = atoi(buf);
+			if (dl >= 0 && dl <= 3)
+				ctx->debuglevel = dl;
+		}
+		if (mesh_uci_get("mesh11sd.setup.enabled", buf, sizeof(buf)) == 0)
+			ctx->enabled = atoi(buf) ? 1 : 0;
 		if (access(MESH11SD_TMPDIR "/auto_config_test", F_OK) == 0 &&
 		    ctx->auto_config == 0)
 			mesh_log_warn(ctx, "Auto Config is in TEST mode");
@@ -183,7 +204,6 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 						char *fw[] = { "/sbin/service", "firewall", "restart", NULL };
 						mesh_run_capture(nr, NULL, 0);
 						mesh_move_ethernet_to_vxlan_bridge(ctx);
-						mesh_set_bridge_mac_addresses(ctx);
 						mesh_run_capture(dns, NULL, 0);
 						mesh_run_capture(fw, NULL, 0);
 					}
@@ -195,7 +215,27 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 				sleep((unsigned)ctx->checkinterval);
 				continue;
 			}
-		} else {
+		}
+
+		if (has_mesh_uci()) {
+			/* v7 ~11225: UCI macaddr before wifi so runtime MAC walk is a no-op */
+			mesh_fixup_wireless_macaddrs(ctx);
+		}
+
+		/* v7: firstloop/changed → all_nodes_rssi_update/restart_mesh BEFORE
+		 * set_bridge_mac_addresses, so the mesh vif comes up with UCI macaddr. */
+		if (ctx->firstloop || ctx->changed) {
+			int need_wifi = ctx->changed;
+			ctx->firstloop = 0;
+			ctx->changed = 0;
+			mesh_set_txpower_uci(ctx);
+			if (need_wifi) {
+				mesh_file_write(MESH11SD_TMPDIR "/meshinterface", "");
+				mesh_restart_mesh(ctx);
+			}
+		}
+
+		if (has_mesh_uci()) {
 			mesh_get_mesh_iflist(ctx);
 			mesh_apply_mesh_params(ctx);
 		}
@@ -232,13 +272,8 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 			mesh_check_channel(ctx);
 		mesh_maybe_silent_commit_all(ctx);
 		mesh_check_mesh_active_led(ctx);
-
-		if (ctx->firstloop || ctx->changed) {
-			ctx->firstloop = 0;
-			ctx->changed = 0;
-			mesh_set_txpower_uci(ctx);
-			mesh_set_bridge_mac_addresses(ctx);
-		}
+		/* v7 end-of-loop MAC walk */
+		mesh_set_bridge_mac_addresses(ctx);
 
 		{
 			char content[64];

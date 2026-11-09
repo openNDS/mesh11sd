@@ -7,7 +7,7 @@
 #include <sys/types.h>
 
 #ifndef MESH11SD_VERSION
-#define MESH11SD_VERSION "8.0.0_alpha7"
+#define MESH11SD_VERSION "8.0.0_alpha8"
 #endif
 
 #define MESH11SD_TMPDIR "/tmp/mesh11sd"
@@ -91,6 +91,7 @@ struct mesh_ctx {
 	int network_restart;
 	int firstloop;
 	int changed;
+	int macfixup;
 	int daemon_startup;
 	int leechmode;
 	int reboot_on_error;
@@ -126,6 +127,9 @@ int mesh_is_installed(const char *package);
 int mesh_check_package_any(const char *const *names, int *installed_flags);
 int mesh_file_write(const char *path, const char *content);
 int mesh_mkdir_p(const char *path);
+int mesh_generate_ipv4_base(struct mesh_ctx *ctx, const char *seed, char *out, size_t outlen);
+int mesh_apply_portal_ipv4(struct mesh_ctx *ctx); /* v7 autostartup portal_use_default_ipv4=0 */
+int mesh_fixup_wireless_macaddrs(struct mesh_ctx *ctx); /* v7 ~11225 macaddr UCI before wifi */
 
 /* uci_ops: v7 uncommitted default; commit_all mode honoured by callers */
 int mesh_uci_get(const char *tuple, char *buf, size_t buflen);
@@ -161,6 +165,7 @@ int mesh_get_factory_mac(struct mesh_ctx *ctx, char *mac_out, size_t mac_len);
 /* wireless helpers */
 int mesh_get_mesh_iflist(struct mesh_ctx *ctx);
 int mesh_wait_for_interface(struct mesh_ctx *ctx, const char *ifname, char *status_out, size_t status_len);
+int mesh_iface_is_up(const char *ifname); /* non-blocking; 1=up/unknown, 0=down/absent */
 int mesh_radiophy(const char *radio_or_section, char *phy_out, size_t phy_len);
 int mesh_get_wiphys(struct mesh_ctx *ctx);
 int mesh_get_valid_channels(char *out, size_t outlen);
