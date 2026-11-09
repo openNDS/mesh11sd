@@ -231,17 +231,17 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 			mesh_fixup_wireless_macaddrs(ctx);
 		}
 
-		/* v7: firstloop/changed → all_nodes_rssi_update/restart_mesh BEFORE
-		 * set_bridge_mac_addresses, so the mesh vif comes up with UCI macaddr. */
+		/* v7: firstloop/changed → all_nodes_rssi_update → restart_mesh (wifi).
+		 * Previously only wifi'd when changed; firstloop alone skipped wifi so
+		 * 5g APs could stay half-up (beacon/TX ok, rx_packets=0, no DHCP) after
+		 * service restart until a manual `wifi`. */
 		if (ctx->firstloop || ctx->changed) {
-			int need_wifi = ctx->changed;
 			ctx->firstloop = 0;
 			ctx->changed = 0;
 			mesh_set_txpower_uci(ctx);
-			if (need_wifi) {
-				mesh_file_write(MESH11SD_TMPDIR "/meshinterface", "");
-				mesh_restart_mesh(ctx);
-			}
+			mesh_file_write(MESH11SD_TMPDIR "/meshinterface", "");
+			unlink(MESH11SD_TMPDIR "/meshinterface");
+			mesh_restart_mesh(ctx);
 		}
 
 		if (has_mesh_uci()) {
@@ -284,6 +284,32 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 		/* v7: portal nodes also run manage_fallback_ula_route every loop */
 		if (!strcmp(ctx->detected_state, "portal"))
 			mesh_manage_fallback_ula_route(ctx);
+
+		/* v7 ~11457: mesh_mac_forced_forwarding + gateway_proxy_arp each loop */
+		{
+			FILE *f;
+			char path[192];
+			const char *meshif = ctx->active_mesh_ifname;
+			const char *br = ctx->device[0] ? ctx->device : NULL;
+			if (meshif[0]) {
+				snprintf(path, sizeof(path),
+					 "/proc/sys/net/ipv4/conf/%s/proxy_arp_pvlan", meshif);
+				f = fopen(path, "w");
+				if (f) {
+					fputs(ctx->mesh_mac_forced_forwarding ? "1\n" : "0\n", f);
+					fclose(f);
+				}
+			}
+			if (br && br[0]) {
+				snprintf(path, sizeof(path),
+					 "/proc/sys/net/ipv4/conf/%s/proxy_arp", br);
+				f = fopen(path, "w");
+				if (f) {
+					fputs(ctx->gateway_proxy_arp ? "1\n" : "0\n", f);
+					fclose(f);
+				}
+			}
+		}
 
 		mesh_block_bridge_loops(ctx);
 		mesh_pin_active_portal_arp(ctx);

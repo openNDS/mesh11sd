@@ -781,8 +781,14 @@ int mesh_check_vtunnel(struct mesh_ctx *ctx)
 	show[3] = vxname;
 	vxlan_missing = (mesh_run_capture(show, out, sizeof(out)) != 0);
 
-	if (!vxlan_missing)
+	if (!vxlan_missing) {
+		/* v7 check_vtunnel always ends with set_iface_path_cost on br-tun
+		 * (enables STP + path costs). Early-return skipped that and left
+		 * br-tun STP off — broadcast loops via vxlan can saturate radio1
+		 * TX and starve 5g AP RX/DHCP. */
+		mesh_set_iface_path_cost(ctx, ctx->vtun_path_cost, brname, vxname);
 		return 0;
+	}
 	if (ctx->commit_all)
 		return 0;
 
@@ -946,6 +952,8 @@ int mesh_check_vtunnel(struct mesh_ctx *ctx)
 			char *dns[] = { "/sbin/service", "dnsmasq", "reload", NULL };
 			mesh_run_capture(dns, NULL, 0);
 		}
+		/* v7: set_iface_path_cost after vtun ready */
+		mesh_set_iface_path_cost(ctx, ctx->vtun_path_cost, brname, vxname);
 	}
 	return 0;
 }

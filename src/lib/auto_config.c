@@ -785,6 +785,9 @@ int mesh_fixup_wireless_macaddrs(struct mesh_ctx *ctx)
 				mesh_uci_batch_line(setl);
 				mesh_log_notice(ctx, "Setting mac address of %s to [ %s ]",
 						ifn, want);
+				/* v7 leaves changed alone for AP, but firstloop always wifi'd.
+				 * Mark changed so a non-firstloop macfixup still triggers wifi. */
+				ctx->changed = 1;
 				did = 1;
 			}
 		}
