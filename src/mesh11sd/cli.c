@@ -266,6 +266,13 @@ int mesh_cli_dispatch(struct mesh_ctx *ctx, int argc, char **argv)
 	if (!strcmp(cmd, "is_installed"))
 		return mesh_cli_is_installed(ctx, argc >= 3 ? argv[2] : NULL);
 
+	if (!strcmp(cmd, "commit_changes"))
+		return mesh_cli_commit_changes(ctx, argc, argv);
+	if (!strcmp(cmd, "commit_all"))
+		return mesh_cli_commit_all(ctx, argc, argv);
+	if (!strcmp(cmd, "revert_all"))
+		return mesh_cli_revert_all(ctx, argc, argv);
+
 	if (!strcmp(cmd, "daemon"))
 		return mesh_daemon_run(ctx);
 

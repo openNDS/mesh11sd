@@ -180,6 +180,7 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 		mesh_check_path_changes(ctx);
 		if (ctx->portal_detect != 4)
 			mesh_check_channel(ctx);
+		mesh_maybe_silent_commit_all(ctx);
 
 		if (ctx->firstloop || ctx->changed) {
 			ctx->firstloop = 0;
