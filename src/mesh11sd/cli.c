@@ -80,33 +80,29 @@ static int cmd_status(struct mesh_ctx *ctx)
 	FILE *f;
 
 	mesh_get_factory_mac(ctx, ctx->factory_mac, sizeof(ctx->factory_mac));
-
 	f = popen("/etc/init.d/mesh11sd status 2>/dev/null", "r");
 	if (f) {
 		if (!fgets(procd, sizeof(procd), f))
 			snprintf(procd, sizeof(procd), "unknown");
 		pclose(f);
-		/* trim */
 		{
 			size_t n = strlen(procd);
 			while (n > 0 && (procd[n - 1] == '\n' || procd[n - 1] == '\r'))
 				procd[--n] = '\0';
 		}
 	}
-
 	printf("{\n");
 	printf("  \"setup\":{\n");
 	printf("    \"version\":\"%s\",\n", MESH11SD_VERSION);
 	printf("    \"enabled\":\"%d\",\n", ctx->enabled);
-	printf("    \"procd_status\":\"%s\",\n", procd);
-	printf("    \"debuglevel\":\"%d\",\n", ctx->debuglevel);
-	printf("    \"commit_all\":\"%d\",\n", ctx->commit_all);
 	printf("    \"auto_config\":\"%d\",\n", ctx->auto_config);
-	printf("    \"auto_mesh_band\":\"%s\",\n", ctx->auto_mesh_band);
+	printf("    \"commit_all\":\"%d\",\n", ctx->commit_all);
 	printf("    \"portal_detect\":\"%d\",\n", ctx->portal_detect);
-	if (ctx->factory_mac[0])
-		printf("    \"label_mac\":\"%s\",\n", ctx->factory_mac);
-	printf("    \"checkinterval\":\"%d\"\n", ctx->checkinterval);
+	printf("    \"debuglevel\":\"%d\",\n", ctx->debuglevel);
+	printf("    \"detected_state\":\"%s\",\n",
+	       ctx->detected_state[0] ? ctx->detected_state : "unknown");
+	printf("    \"factory_mac\":\"%s\",\n", ctx->factory_mac);
+	printf("    \"procd_status\":\"%s\"\n", procd);
 	printf("  }\n");
 	printf("}\n");
 	return 0;

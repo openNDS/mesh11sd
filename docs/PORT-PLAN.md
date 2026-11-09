@@ -39,9 +39,9 @@ Out of Stage 1 (do not port): apmond, write_node_data, send_ap_data, get_ap_data
 4. **auto_config** (done — core auto_config + backups; ccpy peer scan in chunk 5): mesh/AP iface creation, backups `_mesh11sd_default`, encryption/OWE, mesh_params apply; honour `commit_all` when set.
 5. **Portal detect + ccpy peer scan** (done): get_portal_state/type, check_portal, portal_watchdog, ULA, peer/portal handoff with `network.<zone>.proto='dhcp'` (not none), ccpy_setup + ndp_scan_peer for join.
 6. **Bridge/vxlan/STP** (done): set_bridge_mac_addresses (LA indexed), vtunnel/vxlan, block_bridge_loops (nft mesh_PRE), root bridge STP priority.
-7. **Mobility + channel track**: mobility_settings, check_channel, check_gate, HWMP rootmode, path changes.
-8. **CLI remote/ops**: connect, copy, mesh_leechmode, mesh_node_mobility_level, force_ipv4_download, download_revert_to_default, dhcp4_renew, is_installed, set_ula_prefix, get_portal_ula.
-9. **commit_changes / commit_all / revert_all**: selective commit of runtime mesh11sd changes; full commit of mesh11sd/wireless/dhcp/network/firewall/system; restore from `_mesh11sd_default` + reboot; `auto_config=2` silent commit_all. Both UCI modes complete here.
-10. **Status JSON + LEDs**: full status JSON output, LED helpers. No apmond / ap_data / cgi.
+7. **Mobility + channel track** (done): mobility_settings, check_channel, check_gate, HWMP rootmode, path cost, path changes; portal_ula metric/hysteresis + MBP ethernet upstream detect.
+8. **CLI remote/ops** (done): connect, copy, mesh_leechmode, mesh_node_mobility_level, force_ipv4_download, download_revert_to_default, dhcp4_renew, is_installed, set_ula_prefix, get_portal_ula.
+9. **commit_changes / commit_all / revert_all** (done): selective commit of runtime mesh11sd changes; full commit of mesh11sd/wireless/dhcp/network/firewall/system; restore from `_mesh11sd_default` + reboot; `auto_config=2` silent commit_all. Both UCI modes complete here.
+10. **Status JSON + LEDs**: full status JSON output (reuse Spod apmond json_str/json_field style from /workspace/apmond — see src/lib/json_fmt.c), LED helpers. No apmond / ap_data / cgi.
 
 Shelved (reference only): branches `8.0.0alpha`, `8.0.0alpha-uci-handoff`; `/workspace/mesh11sd-testbed/*`. May copy proven pieces (factory MAC chain, wpad check, PHY) into later chunks. Explicitly not porting apmond.

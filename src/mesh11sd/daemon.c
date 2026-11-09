@@ -174,6 +174,13 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 		mesh_set_root_bridge_priority(ctx);
 		mesh_block_bridge_loops(ctx);
 
+		mesh_rootmode(ctx);
+		mesh_mobility_settings(ctx, "runtime");
+		mesh_check_gate(ctx);
+		mesh_check_path_changes(ctx);
+		if (ctx->portal_detect != 4)
+			mesh_check_channel(ctx);
+
 		if (ctx->firstloop || ctx->changed) {
 			ctx->firstloop = 0;
 			ctx->changed = 0;

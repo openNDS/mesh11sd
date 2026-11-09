@@ -118,82 +118,61 @@ static int ping_portal(struct mesh_ctx *ctx, const char *addr)
 
 int mesh_get_portal_ula(struct mesh_ctx *ctx, const char *mode)
 {
-	char content[256];
+	char m[16];
 
 	mesh_set_ula_prefix(ctx, "get");
-	if (!mode || !mode[0])
-		mode = "get";
+	snprintf(m, sizeof(m), "%s", mode && mode[0] ? mode : "get");
 
 	if (!strcmp(ctx->detected_state, "portal")) {
 		snprintf(ctx->portal_ula, sizeof(ctx->portal_ula), "%s:%s::1",
 			 ctx->ula_base, ctx->ula_subnet);
 		ctx->link_to_portal = 0;
-		snprintf(content, sizeof(content),
-			 "portal_ula=\"%s\"; ula_subnet=\"%s\"; portal_mac=\"%s\"; metric=0; hops=0\n",
-			 ctx->portal_ula, ctx->ula_subnet, ctx->factory_mac);
-		mesh_file_write(MESH11SD_TMPDIR "/active_portal", content);
+		ctx->portal_metric = 0;
+		ctx->portal_hops = 0;
+		{
+			char content[192];
+			snprintf(content, sizeof(content),
+				 "portal_ula=\"%s\"; ula_subnet=\"%s\"; portal_mac=\"%s\"; metric=0; hops=0\n",
+				 ctx->portal_ula, ctx->ula_subnet, ctx->factory_mac);
+			mesh_file_write(MESH11SD_TMPDIR "/active_portal", content);
+		}
 		return 0;
 	}
 
-	if (!strcmp(mode, "get") && access(MESH11SD_TMPDIR "/active_portal", R_OK) == 0) {
+	if (!strcmp(m, "get") && access(MESH11SD_TMPDIR "/active_portal", R_OK) == 0) {
 		FILE *f = fopen(MESH11SD_TMPDIR "/active_portal", "r");
 		char line[256];
 		if (f && fgets(line, sizeof(line), f)) {
 			char *p = strstr(line, "portal_ula=\"");
-			if (p) {
+			if (p)
 				sscanf(p + 12, "%63[^\"]", ctx->portal_ula);
-				ctx->link_to_portal = ping_portal(ctx, ctx->portal_ula);
+			p = strstr(line, "metric=");
+			if (p)
+				ctx->portal_metric = atoi(p + 7);
+			p = strstr(line, "hops=");
+			if (p)
+				ctx->portal_hops = atoi(p + 5);
+			p = strstr(line, "portal_mac=\"");
+			if (p)
+				sscanf(p + 12, "%31[^\"]", ctx->portal_mac);
+			ctx->link_to_portal = ping_portal(ctx, ctx->portal_ula);
+			if (ctx->link_to_portal == 0) {
 				fclose(f);
-				if (ctx->link_to_portal == 0)
-					return 0;
-				mode = "discover";
-			} else {
-				fclose(f);
-				mode = "discover";
+				return 0;
 			}
-		} else {
-			if (f)
-				fclose(f);
-			mode = "discover";
+			snprintf(m, sizeof(m), "discover");
 		}
+		if (f)
+			fclose(f);
+		else
+			snprintf(m, sizeof(m), "discover");
+	} else if (!strcmp(m, "get")) {
+		snprintf(m, sizeof(m), "discover");
 	}
 
-	if (!strcmp(mode, "discover")) {
-		/* Scan RAs / known ::1 neighbours on the mesh bridge */
-		char out[4096];
-		char *argv[] = { "ip", "-6", "neigh", NULL };
-		char br[64];
-		char *p, *line;
-
-		snprintf(br, sizeof(br), "br-%s", ctx->auto_mesh_network);
-		mesh_log_debug(ctx, "Discovering Portal");
-		if (mesh_run_capture(argv, out, sizeof(out)) == 0) {
-			p = out;
-			while ((line = strsep(&p, "\n")) != NULL) {
-				char addr[64], dev[64];
-				if (!strstr(line, "router"))
-					continue;
-				if (sscanf(line, "%63s dev %63s", addr, dev) != 2)
-					continue;
-				if (strcmp(dev, br) != 0 && strcmp(dev, ctx->device) != 0)
-					continue;
-				if (!strstr(addr, "::1"))
-					continue;
-				if (ping_portal(ctx, addr) == 0) {
-					snprintf(ctx->portal_ula, sizeof(ctx->portal_ula), "%s", addr);
-					ctx->link_to_portal = 0;
-					snprintf(content, sizeof(content),
-						 "portal_ula=\"%s\"; ula_subnet=\"%s\"; portal_mac=\"\"; metric=0; hops=0\n",
-						 ctx->portal_ula, ctx->ula_subnet);
-					mesh_file_write(MESH11SD_TMPDIR "/active_portal", content);
-					return 0;
-				}
-			}
-		}
-		ctx->link_to_portal = 1;
-		return 1;
-	}
-	return 0;
+	if (!strcmp(m, "discover"))
+		return mesh_portal_ula_discover(ctx);
+	return 1;
 }
 
 int mesh_get_portal_state(struct mesh_ctx *ctx)
@@ -222,11 +201,16 @@ int mesh_get_portal_state(struct mesh_ctx *ctx)
 		return 0;
 	}
 	if (ctx->portal_detect == 4) {
-		snprintf(ctx->detected_state, sizeof(ctx->detected_state), "portal");
-		/* MBP: treat as portal; upstream detect simplified */
-		mesh_uci_get("network.wan.device", up_zone, sizeof(up_zone));
-		if (up_zone[0] && iface_is_up(up_zone))
+		/* MBP: ethernet upstream via detect_mbp_upstream (v7) */
+		if (mesh_detect_mbp_upstream(ctx) == 0) {
 			snprintf(ctx->is_portal, sizeof(ctx->is_portal), "detected");
+			snprintf(ctx->detected_state, sizeof(ctx->detected_state), "portal");
+			mesh_log_debug(ctx, "Node has upstream gateway(s), zone [ %s ], [ %s ], [ %s ]",
+				       ctx->up_zone, ctx->default_ipv6_gw, ctx->default_ipv4_gw);
+		} else {
+			ctx->is_portal[0] = '\0';
+			snprintf(ctx->detected_state, sizeof(ctx->detected_state), "peer");
+		}
 		write_is_portal(ctx);
 		return 0;
 	}

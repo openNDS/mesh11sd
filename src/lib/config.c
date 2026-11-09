@@ -21,6 +21,7 @@ void mesh_ctx_init(struct mesh_ctx *ctx, int is_daemon)
 	ctx->portal_detect = 1;
 	ctx->portal_detect_threshold = 5;
 	ctx->mesh_path_cost = 65525;
+	ctx->mesh_metric_threshold = 50;
 	ctx->ssid_suffix_enable = 1;
 	ctx->mesh_gate_encryption = 4;
 	ctx->mesh_gate_enable = 1;
@@ -197,7 +198,13 @@ int mesh_ctx_load_setup(struct mesh_ctx *ctx)
 		ctx->mesh_path_cost = parse_int_default(buf, 65525);
 	else
 		ctx->mesh_path_cost = 65525;
+	ctx->mesh_metric_threshold = 50;
 	mesh_log_info(ctx, "option mesh_path_cost [ %d ]", ctx->mesh_path_cost);
+	if (mesh_uci_get("mesh11sd.setup.mesh_metric_threshold", buf, sizeof(buf)) == 0)
+		ctx->mesh_metric_threshold = parse_int_default(buf, 50);
+	else
+		ctx->mesh_metric_threshold = 50;
+	mesh_log_info(ctx, "option mesh_metric_threshold [ %d ]", ctx->mesh_metric_threshold);
 
 	if (mesh_uci_get("mesh11sd.setup.interface_timeout", buf, sizeof(buf)) == 0)
 		ctx->interface_timeout = parse_int_default(buf, 10);

@@ -34,6 +34,8 @@ set(MESH11SD_SOURCES
 	src/lib/auto_config.c
 	src/lib/portal.c
 	src/lib/bridge.c
+	src/lib/portal_metrics.c
+	src/lib/mobility.c
 )
 
 add_executable(mesh11sd ${MESH11SD_SOURCES})

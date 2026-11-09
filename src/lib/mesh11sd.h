@@ -30,6 +30,7 @@ struct mesh_ctx {
 	int portal_detect_threshold;
 	int channel_tracking_checkinterval;
 	int mesh_path_cost;
+	int mesh_metric_threshold;
 	int ssid_suffix_enable;
 	int mesh_gate_encryption;
 	int mesh_gate_enable;
@@ -80,6 +81,12 @@ struct mesh_ctx {
 	char ula_vxsubnet[8];
 	char portal_type[16];
 	int link_to_portal;
+	int portal_metric;
+	int portal_hops;
+	char portal_mac[32];
+	char up_zone[64];
+	char default_ipv6_gw[64];
+	char default_ipv4_gw[64];
 	int failcount;
 	int network_restart;
 	int firstloop;
@@ -169,6 +176,14 @@ int mesh_get_portal_type(struct mesh_ctx *ctx);
 int mesh_restore_ipv4(struct mesh_ctx *ctx);
 int mesh_ccpy_setup(struct mesh_ctx *ctx);
 int mesh_get_peers(struct mesh_ctx *ctx);
+int mesh_detect_mbp_upstream(struct mesh_ctx *ctx);
+int mesh_detect_l3_upstream(struct mesh_ctx *ctx);
+int mesh_update_known_portals_from_ras(struct mesh_ctx *ctx);
+int mesh_calc_airtime_metric(struct mesh_ctx *ctx, const char *peer_mac,
+			     int *metric_out, int *hops_out);
+int mesh_get_metrics_from_ula(struct mesh_ctx *ctx, const char *ula,
+			      int *metric_out, int *hops_out, char *peer_mac, size_t peer_len);
+int mesh_portal_ula_discover(struct mesh_ctx *ctx);
 
 /* bridge / vxlan / STP */
 int mesh_convert_to_la(const char *mac, char *out, size_t outlen);
@@ -178,6 +193,37 @@ int mesh_set_root_bridge_priority(struct mesh_ctx *ctx);
 int mesh_check_vtunnel(struct mesh_ctx *ctx);
 int mesh_create_vxlan_if(struct mesh_ctx *ctx);
 int mesh_block_bridge_loops(struct mesh_ctx *ctx);
+int mesh_set_iface_path_cost(struct mesh_ctx *ctx, int path_cost,
+			     const char *bridge, const char *iface);
+
+/* mobility / HWMP / channel / gate */
+int mesh_mobility_settings(struct mesh_ctx *ctx, const char *mode);
+int mesh_rootmode(struct mesh_ctx *ctx);
+int mesh_check_path_changes(struct mesh_ctx *ctx);
+int mesh_check_channel(struct mesh_ctx *ctx);
+int mesh_check_gate(struct mesh_ctx *ctx);
+int mesh_scan_channel(struct mesh_ctx *ctx);
+
+/* remote CLI ops */
+int mesh_cli_connect(struct mesh_ctx *ctx, int argc, char **argv);
+int mesh_cli_copy(struct mesh_ctx *ctx, int argc, char **argv);
+int mesh_cli_mesh_leechmode(struct mesh_ctx *ctx, const char *arg);
+int mesh_cli_mesh_node_mobility_level(struct mesh_ctx *ctx, const char *arg);
+int mesh_cli_force_ipv4_download(struct mesh_ctx *ctx);
+int mesh_cli_download_revert_to_default(struct mesh_ctx *ctx);
+int mesh_cli_dhcp4_renew(struct mesh_ctx *ctx, const char *dev);
+int mesh_cli_is_installed(struct mesh_ctx *ctx, const char *pkg);
+
+/* commit / revert */
+int mesh_cli_commit_changes(struct mesh_ctx *ctx, int argc, char **argv);
+int mesh_cli_commit_all(struct mesh_ctx *ctx, int argc, char **argv);
+int mesh_cli_revert_all(struct mesh_ctx *ctx, int argc, char **argv);
+int mesh_maybe_silent_commit_all(struct mesh_ctx *ctx);
+
+/* apmond-style JSON (Spod) — reuse for status etc. */
+void mesh_json_str(const char *in, char *out, size_t outlen);
+void mesh_json_field(const char *indent, const char *key, const char *value, int last);
+void mesh_json_field_int(const char *indent, const char *key, long value, int last);
 
 int mesh_cli_dispatch(struct mesh_ctx *ctx, int argc, char **argv);
 int mesh_daemon_run(struct mesh_ctx *ctx);
