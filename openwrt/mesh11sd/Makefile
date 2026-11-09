@@ -33,8 +33,8 @@ endef
 
 define Package/mesh11sd/description
   Mesh11sd autonomously manages all aspects of an 802.11s mesh network.
-  Version 8 is a C port of v7 behaviour. Alpha2 covers config load,
-  wireless helpers, auto_config mesh bring-up and default backups.
+  Version 8 is a C port of v7 behaviour. Alpha3 adds portal/peer detect,
+  peer handoff (lan proto dhcp), ULA, ccpy peer scan, bridge MAC/STP/vxlan.
 endef
 
 define Package/mesh11sd/conffiles
