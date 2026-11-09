@@ -1,6 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later
- * Chunk 4: v7 auto_config, backups, mesh_gate_state, restart_mesh. */
- * v7 auto_config, backups, mesh_gate_state, restart_mesh, apply mesh params.
+ * Chunk 4: v7 auto_config, backups, mesh_gate_state, restart_mesh.
  */
 #include "mesh11sd.h"
 
