@@ -218,29 +218,39 @@ int mesh_generate_ipv4_base(struct mesh_ctx *ctx, const char *seed, char *out, s
 {
 	char hash[72];
 	int i;
+	/* v7 skiplist="168 167 8 1 0" */
 	const int skips[] = { 168, 167, 8, 1, 0, -1 };
 
 	if (!seed || !out || outlen < 16)
 		return -1;
 	out[0] = '\0';
+	/* v7: printf "$seed" | sha256sum — no trailing newline */
 	if (mesh_sha256_hex(seed, hash, sizeof(hash)) != 0)
 		return -1;
-	/* v7: for i in seq 9 1 64; take last i chars of digest, first 2 as hex subnet */
+	/*
+	 * v7:
+	 *   for i in $(seq 9 1 64); do
+	 *     cpipsubnet=$((0x$(printf "$seed" | sha256sum | awk '{printf "%s", $1}' \
+	 *         | tail -c$i | head -c2)))
+	 * tail -c$i on a 64-char digest starts at offset (64 - i), then head -c2
+	 * takes hash[offset] and hash[offset+1].
+	 */
 	for (i = 9; i <= 64; i++) {
 		char pair[3];
 		unsigned subnet;
-		int s, skip = 0;
-		char show[16384];
+		int s, skip = 0, is_used = 0;
+		char show[65536];
 		size_t hlen = strlen(hash);
-		size_t start;
+		size_t offset;
 
 		if ((size_t)i > hlen)
 			continue;
-		start = hlen - (size_t)i;
-		pair[0] = hash[start];
-		pair[1] = hash[start + 1];
+		offset = hlen - (size_t)i; /* == 64 - i for a full sha256 hex digest */
+		pair[0] = hash[offset];
+		pair[1] = hash[offset + 1];
 		pair[2] = '\0';
 		subnet = (unsigned)strtoul(pair, NULL, 16);
+		/* v7: if [ $cpipsubnet -ge 255 ]; then continue; fi */
 		if (subnet >= 255)
 			continue;
 		for (s = 0; skips[s] >= 0; s++) {
@@ -253,18 +263,24 @@ int mesh_generate_ipv4_base(struct mesh_ctx *ctx, const char *seed, char *out, s
 			continue;
 		snprintf(out, outlen, "192.168.%u.1", subnet);
 		/* v7: is_used=$(uci show network | grep -c "$newipaddr")
-		 * Match a quoted assignment so CIDR 192.168.1.1/24 does not
-		 * false-hit every 192.168.1.1x candidate, and vice versa. */
+		 * Raw substring count — do not special-case the current lan
+		 * ipaddr; if it is already present anywhere in network, skip. */
 		{
 			char *uargv[] = { "uci", "show", "network", NULL };
-			char needle[48];
-			snprintf(needle, sizeof(needle), "'%s'", out);
-			if (mesh_run_capture(uargv, show, sizeof(show)) == 0 &&
-			    strstr(show, needle))
-				continue;
+			if (mesh_run_capture(uargv, show, sizeof(show)) == 0) {
+				const char *p = show;
+				size_t nlen = strlen(out);
+				while ((p = strstr(p, out)) != NULL) {
+					is_used++;
+					p += nlen;
+				}
+			}
 		}
-		mesh_log_debug(ctx, "Validated ipv4 address [ %s ] using seed value [ %s ]",
-			       out, seed);
+		if (is_used > 0)
+			continue;
+		mesh_log_debug(ctx,
+			       "Validated ipv4 address [ %s ] using seed value [ %s ] (i=%d pair=%s)",
+			       out, seed, i, pair);
 		return 0;
 	}
 	return -1;

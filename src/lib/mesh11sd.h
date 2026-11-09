@@ -7,7 +7,7 @@
 #include <sys/types.h>
 
 #ifndef MESH11SD_VERSION
-#define MESH11SD_VERSION "8.0.0_alpha10"
+#define MESH11SD_VERSION "8.0.0_alpha11"
 #endif
 
 #define MESH11SD_TMPDIR "/tmp/mesh11sd"
@@ -168,6 +168,8 @@ int mesh_get_mesh_iflist(struct mesh_ctx *ctx);
 int mesh_wait_for_interface(struct mesh_ctx *ctx, const char *ifname, char *status_out, size_t status_len);
 int mesh_iface_is_up(const char *ifname); /* non-blocking; 1=up/unknown, 0=down/absent */
 int mesh_radiophy(const char *radio_or_section, char *phy_out, size_t phy_len);
+int mesh_phy_is_multi_band(const char *phy); /* v7 MLO wiphy radios section */
+int mesh_phy_info_has(const char *phy, const char *needle); /* stream iw phy info */
 int mesh_get_wiphys(struct mesh_ctx *ctx);
 int mesh_get_valid_channels(char *out, size_t outlen);
 int mesh_is_channel_valid(const char *band, const char *channel);

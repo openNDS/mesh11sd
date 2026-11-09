@@ -261,26 +261,12 @@ int mesh_mobility_settings(struct mesh_ctx *ctx, const char *mode)
 			      beacon_int);
 	}
 
-	/* v7 ~4405: multi-band wiphy (MLO) — mt7996e etc. force beacon_int=100 */
-	if (phy[0]) {
-		char info[16384];
-		char *argv[] = { "iw", "phy", phy, "info", NULL };
-		if (mesh_run_capture(argv, info, sizeof(info)) == 0) {
-			char *start = strstr(info, "Supported wiphy radios");
-			char *end = start ? strstr(start, "Globally valid interface combinations") : NULL;
-			if (start && end && end > start) {
-				char *p = start + strlen("Supported wiphy radios");
-				while (p < end && (*p == '\n' || *p == '\r' || *p == ' ' ||
-						   *p == '\t' || *p == ':'))
-					p++;
-				if (p < end) {
-					beacon_int = 100;
-					mesh_log_info(ctx,
-						      "Multi band wiphy detected, beacon interval override to [ %d ms ] (workaround for MLO bug). Mesh mobility may be suboptimal.",
-						      beacon_int);
-				}
-			}
-		}
+	/* v7 ~4405: multi-band wiphy (MLO) — stream iw phy info (can be >32KB) */
+	if (phy[0] && mesh_phy_is_multi_band(phy)) {
+		beacon_int = 100;
+		mesh_log_info(ctx,
+			      "Multi band wiphy detected, beacon interval override to [ %d ms ] (workaround for MLO bug). Mesh mobility may be suboptimal.",
+			      beacon_int);
 	}
 
 	ctx->mesh_beacon_interval = beacon_int;

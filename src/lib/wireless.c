@@ -2,6 +2,8 @@
 #include "mesh11sd.h"
 
 #include <ctype.h>
+#include <fcntl.h>
+#include <sys/wait.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -56,6 +58,124 @@ int mesh_iface_is_up(const char *ifname)
 	if (strstr(out, "state UP") || strstr(out, "state UNKNOWN"))
 		return 1;
 	return 0;
+}
+
+/* Stream `iw phy <phy> info` line-by-line. Full dump on Wi-Fi 7 can exceed 32KB
+ * (mt7996e ~730+ lines); fixed buffers truncate before late sections. */
+int mesh_phy_info_has(const char *phy, const char *needle)
+{
+	char *argv[] = { "iw", "phy", (char *)phy, "info", NULL };
+	int pipefd[2];
+	pid_t pid;
+	FILE *fp;
+	char line[1024];
+	int found = 0;
+	int status;
+
+	if (!phy || !phy[0] || !needle || !needle[0])
+		return 0;
+	if (pipe(pipefd) < 0)
+		return 0;
+	pid = fork();
+	if (pid < 0) {
+		close(pipefd[0]);
+		close(pipefd[1]);
+		return 0;
+	}
+	if (pid == 0) {
+		int dn;
+		close(pipefd[0]);
+		dup2(pipefd[1], 1);
+		close(pipefd[1]);
+		dn = open("/dev/null", O_WRONLY);
+		if (dn >= 0) {
+			dup2(dn, 2);
+			close(dn);
+		}
+		execvp(argv[0], argv);
+		_exit(127);
+	}
+	close(pipefd[1]);
+	fp = fdopen(pipefd[0], "r");
+	if (!fp) {
+		close(pipefd[0]);
+		waitpid(pid, &status, 0);
+		return 0;
+	}
+	while (fgets(line, sizeof(line), fp)) {
+		if (strstr(line, needle)) {
+			found = 1;
+			break;
+		}
+	}
+	fclose(fp);
+	waitpid(pid, &status, 0);
+	return found;
+}
+
+/* v7 mobility_settings multi-band check:
+ *   multi_band=$(iw phy "$phy" info | sed -n '/Supported wiphy radios/,/Globally valid interface combinations/{
+ *     /Supported wiphy radios/d
+ *     /Globally valid interface combinations/q
+ *     p
+ *   }')
+ * Non-empty body between the two markers => MLO multi-band wiphy.
+ */
+int mesh_phy_is_multi_band(const char *phy)
+{
+	char *argv[] = { "iw", "phy", (char *)phy, "info", NULL };
+	int pipefd[2];
+	pid_t pid;
+	FILE *fp;
+	char line[1024];
+	int in_section = 0;
+	int has_body = 0;
+	int status;
+
+	if (!phy || !phy[0])
+		return 0;
+	if (pipe(pipefd) < 0)
+		return 0;
+	pid = fork();
+	if (pid < 0) {
+		close(pipefd[0]);
+		close(pipefd[1]);
+		return 0;
+	}
+	if (pid == 0) {
+		int dn;
+		close(pipefd[0]);
+		dup2(pipefd[1], 1);
+		close(pipefd[1]);
+		dn = open("/dev/null", O_WRONLY);
+		if (dn >= 0) {
+			dup2(dn, 2);
+			close(dn);
+		}
+		execvp(argv[0], argv);
+		_exit(127);
+	}
+	close(pipefd[1]);
+	fp = fdopen(pipefd[0], "r");
+	if (!fp) {
+		close(pipefd[0]);
+		waitpid(pid, &status, 0);
+		return 0;
+	}
+	while (fgets(line, sizeof(line), fp)) {
+		if (!in_section) {
+			if (strstr(line, "Supported wiphy radios"))
+				in_section = 1;
+			continue;
+		}
+		if (strstr(line, "Globally valid interface combinations"))
+			break;
+		/* v7 sed `p`: any line in the range counts (blank or not) */
+		has_body = 1;
+	}
+	fclose(fp);
+	waitpid(pid, &status, 0);
+	return has_body;
 }
 
 int mesh_wait_for_interface(struct mesh_ctx *ctx, const char *ifname,
@@ -206,22 +326,20 @@ int mesh_get_wiphys(struct mesh_ctx *ctx)
 	}
 
 	for (i = 0; i < ctx->wiphy_count; i++) {
-		char info[8192];
+		char info[131072];
 		char *iargv[] = { "iw", "phy", ctx->wiphys[i], "info", NULL };
 		char path[192];
 		int mesh_capable = 1;
 		int total_ifaces = 1;
 
+		if (mesh_phy_info_has(ctx->wiphys[i], "mesh point"))
+			mesh_capable = 0; /* v7: 0 means capable (grep -w -q exit) */
+		else
+			mesh_capable = 1;
 		if (mesh_run_capture(iargv, info, sizeof(info)) == 0) {
-			if (strstr(info, "mesh point"))
-				mesh_capable = 0; /* v7: 0 means capable (grep -w -q exit) */
-			else
-				mesh_capable = 1;
-			{
-				char *ti = strstr(info, "total <=");
-				if (ti)
-					sscanf(ti, "total <= %d", &total_ifaces);
-			}
+			char *ti = strstr(info, "total <=");
+			if (ti)
+				sscanf(ti, "total <= %d", &total_ifaces);
 		}
 		snprintf(path, sizeof(path), "%s/wiphys/%s", MESH11SD_TMPDIR, ctx->wiphys[i]);
 		{

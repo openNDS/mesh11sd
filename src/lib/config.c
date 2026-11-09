@@ -468,31 +468,47 @@ int mesh_ctx_load_setup(struct mesh_ctx *ctx)
 		ctx->reactive_path_stabilisation_threshold = parse_int_default(buf, 0);
 	else
 		ctx->reactive_path_stabilisation_threshold = 0;
-	if (mesh_uci_get("mesh11sd.setup.vtun_ip", buf, sizeof(buf)) == 0 && buf[0])
-		snprintf(ctx->vtun_ip, sizeof(ctx->vtun_ip), "%s", buf);
+	/* v7 get_current_setup vtun_ip: if unset, generate_ipv4_base(auto_mesh_key) */
+	{
+		char vtun_net[64] = "";
+		char generated[32];
+		int have_setup = (mesh_uci_get("mesh11sd.setup.vtun_ip", buf, sizeof(buf)) == 0 &&
+				  buf[0]);
+		mesh_uci_get("network.vtunlan.ipaddr", vtun_net, sizeof(vtun_net));
+		if (have_setup)
+			snprintf(ctx->vtun_ip, sizeof(ctx->vtun_ip), "%s", buf);
+		else if (vtun_net[0])
+			snprintf(ctx->vtun_ip, sizeof(ctx->vtun_ip), "%s", vtun_net);
+		else if (ctx->auto_mesh_key[0] &&
+			 mesh_generate_ipv4_base(ctx, ctx->auto_mesh_key, generated,
+						 sizeof(generated)) == 0)
+			snprintf(ctx->vtun_ip, sizeof(ctx->vtun_ip), "%s", generated);
+		else
+			snprintf(ctx->vtun_ip, sizeof(ctx->vtun_ip), "auto");
+	}
 	if (mesh_uci_get("mesh11sd.setup.vtun_mask", buf, sizeof(buf)) == 0 && buf[0])
 		snprintf(ctx->vtun_mask, sizeof(ctx->vtun_mask), "%s", buf);
+	else
+		snprintf(ctx->vtun_mask, sizeof(ctx->vtun_mask), "255.255.255.0");
 	if (mesh_uci_get("mesh11sd.setup.vtun_path_cost", buf, sizeof(buf)) == 0)
 		ctx->vtun_path_cost = parse_int_default(buf, 65525);
+	else
+		ctx->vtun_path_cost = 65525;
 	if (mesh_uci_get("mesh11sd.setup.vtun_isolate", buf, sizeof(buf)) == 0)
 		ctx->vtun_isolate = parse_int_default(buf, 0);
+	else
+		ctx->vtun_isolate = 0;
 	if (mesh_uci_get("mesh11sd.setup.move_ethernet_to_vxlan_bridge", buf, sizeof(buf)) == 0)
 		ctx->move_ethernet_to_vxlan_bridge = parse_int_default(buf, 0);
+	else
+		ctx->move_ethernet_to_vxlan_bridge = 0;
 	if (mesh_uci_get("mesh11sd.setup.cpe_mode", buf, sizeof(buf)) == 0 && buf[0])
 		snprintf(ctx->cpe_mode, sizeof(ctx->cpe_mode), "%s", buf);
-	snprintf(ctx->mesh_backhaul_led, sizeof(ctx->mesh_backhaul_led), "auto");
+	else
+		snprintf(ctx->cpe_mode, sizeof(ctx->cpe_mode), "auto");
+	if (!ctx->mesh_backhaul_led[0])
+		snprintf(ctx->mesh_backhaul_led, sizeof(ctx->mesh_backhaul_led), "auto");
 	ctx->mesh_driver[0] = '\0';
-	ctx->mesh_mac_forced_forwarding = 1;
-	ctx->gateway_proxy_arp = 1;
-	ctx->watchdog_nonvolatile_log = 0;
-	ctx->mesh_path_stabilisation = 1;
-	ctx->reactive_path_stabilisation_threshold = 0;
-	snprintf(ctx->vtun_ip, sizeof(ctx->vtun_ip), "auto");
-	snprintf(ctx->vtun_mask, sizeof(ctx->vtun_mask), "255.255.255.0");
-	ctx->vtun_path_cost = 65525;
-	ctx->vtun_isolate = 0;
-	ctx->move_ethernet_to_vxlan_bridge = 0;
-	snprintf(ctx->cpe_mode, sizeof(ctx->cpe_mode), "auto");
 
 	(void)saved_mute;
 	return 0;

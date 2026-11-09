@@ -210,12 +210,8 @@ int mesh_restart_mesh(struct mesh_ctx *ctx)
 
 static int mesh_capable_phy(const char *phy)
 {
-	char info[8192];
-	char *argv[] = { "iw", "phy", (char *)phy, "info", NULL };
-
-	if (mesh_run_capture(argv, info, sizeof(info)) != 0)
-		return 0;
-	return strstr(info, "mesh point") != NULL;
+	/* Stream: "mesh point" can sit past a 8–16KB truncation on Wi-Fi 7 phys */
+	return mesh_phy_info_has(phy, "mesh point");
 }
 
 int mesh_auto_config(struct mesh_ctx *ctx)
