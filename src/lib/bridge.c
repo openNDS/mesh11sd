@@ -1249,7 +1249,8 @@ int mesh_pin_active_portal_arp(struct mesh_ctx *ctx)
 
 	{
 		char canon[32];
-		if (mesh_is_ipv4addr_valid(gw_ip, canon, sizeof(canon)) != 0) {
+		/* mesh_is_ipv4addr_valid: 1 = valid, 0 = invalid (same as CLI) */
+		if (!mesh_is_ipv4addr_valid(gw_ip, canon, sizeof(canon))) {
 			mesh_log_notice(ctx,
 					"ARP pin: no gateway IPv4 for active portal [ %s ]",
 					portal_mac);
