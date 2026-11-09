@@ -123,6 +123,7 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 	mesh_sys_setup(ctx);
 	mesh_get_portal_ula(ctx, "discover");
 	mesh_log_notice(ctx, "Starting daemon service...");
+	mesh_set_led(ctx, "init");
 
 	for (;;) {
 		int loop_interval = ctx->checkinterval;
@@ -181,6 +182,7 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 		if (ctx->portal_detect != 4)
 			mesh_check_channel(ctx);
 		mesh_maybe_silent_commit_all(ctx);
+		mesh_check_mesh_active_led(ctx);
 
 		if (ctx->firstloop || ctx->changed) {
 			ctx->firstloop = 0;

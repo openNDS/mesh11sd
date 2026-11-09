@@ -39,6 +39,8 @@ set(MESH11SD_SOURCES
 	src/lib/remote_ops.c
 	src/lib/json_fmt.c
 	src/lib/commit_ops.c
+	src/lib/led.c
+	src/lib/status.c
 )
 
 add_executable(mesh11sd ${MESH11SD_SOURCES})

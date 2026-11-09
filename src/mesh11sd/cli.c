@@ -74,40 +74,7 @@ static void print_help(void)
 );
 }
 
-static int cmd_status(struct mesh_ctx *ctx)
-{
-	char procd[64] = "unknown";
-	FILE *f;
 
-	mesh_get_factory_mac(ctx, ctx->factory_mac, sizeof(ctx->factory_mac));
-	f = popen("/etc/init.d/mesh11sd status 2>/dev/null", "r");
-	if (f) {
-		if (!fgets(procd, sizeof(procd), f))
-			snprintf(procd, sizeof(procd), "unknown");
-		pclose(f);
-		{
-			size_t n = strlen(procd);
-			while (n > 0 && (procd[n - 1] == '\n' || procd[n - 1] == '\r'))
-				procd[--n] = '\0';
-		}
-	}
-	/* Spod apmond-style JSON helpers (json_fmt.c) */
-	puts("{");
-	puts("  \"setup\":{");
-	mesh_json_field("    ", "version", MESH11SD_VERSION, 0);
-	mesh_json_field_int("    ", "enabled", ctx->enabled, 0);
-	mesh_json_field_int("    ", "auto_config", ctx->auto_config, 0);
-	mesh_json_field_int("    ", "commit_all", ctx->commit_all, 0);
-	mesh_json_field_int("    ", "portal_detect", ctx->portal_detect, 0);
-	mesh_json_field_int("    ", "debuglevel", ctx->debuglevel, 0);
-	mesh_json_field("    ", "detected_state",
-			ctx->detected_state[0] ? ctx->detected_state : "unknown", 0);
-	mesh_json_field("    ", "factory_mac", ctx->factory_mac, 0);
-	mesh_json_field("    ", "procd_status", procd, 1);
-	puts("  }");
-	puts("}");
-	return 0;
-}
 
 int mesh_cli_dispatch(struct mesh_ctx *ctx, int argc, char **argv)
 {
@@ -170,7 +137,7 @@ int mesh_cli_dispatch(struct mesh_ctx *ctx, int argc, char **argv)
 	}
 
 	if (!strcmp(cmd, "status"))
-		return cmd_status(ctx);
+		return mesh_cli_status(ctx);
 
 	if (!strcmp(cmd, "get_factory_mac")) {
 		char mac[32];
@@ -352,27 +319,103 @@ int mesh_cli_dispatch(struct mesh_ctx *ctx, int argc, char **argv)
 	}
 
 	if (!strcmp(cmd, "auto_config")) {
-		puts("auto_config CLI control is available via UCI; daemon applies it when enabled.");
-		puts("Usage: mesh11sd auto_config test | enable | disable  (partial in alpha2)");
-		if (argc >= 3 && !strcmp(argv[2], "enable")) {
-			mesh_uci_revert("mesh11sd");
-			mesh_uci_set("mesh11sd.setup.auto_config", "1");
-			mesh_uci_commit("mesh11sd");
-			puts("auto_config enabled (committed)");
+		const char *arg = argc >= 3 ? argv[2] : NULL;
+		char reply[64] = "";
+		char changes[8192] = "";
+		char *p, *line;
+		const char *testflag = MESH11SD_TMPDIR "/auto_config_test";
+
+		if (!arg || !arg[0]) {
+			puts("");
+			puts("Usage:");
+			puts("mesh11sd auto_config test - turn on auto config test mode ");
+			puts("mesh11sd auto_config enable - configure auto config mode ");
+			puts("mesh11sd auto_config disable - disable auto config mode ");
+			puts("");
+			return 1;
+		}
+		if (ctx->auto_config != 0 && !strcmp(arg, "test")) {
+			puts("auto_config is already enabled, no need to test");
+			unlink(testflag);
 			return 0;
 		}
-		if (argc >= 3 && !strcmp(argv[2], "disable")) {
-			mesh_uci_revert("mesh11sd");
-			mesh_uci_set("mesh11sd.setup.auto_config", "0");
-			mesh_uci_commit("mesh11sd");
-			puts("auto_config disabled (committed)");
+		if (ctx->auto_config != 0 && !strcmp(arg, "enable")) {
+			unlink(testflag);
+			puts("auto_config is already enabled");
 			return 0;
 		}
-		if (argc >= 3 && !strcmp(argv[2], "test")) {
-			mesh_file_write(MESH11SD_TMPDIR "/auto_config_test", "");
-			puts("auto_config test mode armed (reboot clears)");
+		if (ctx->auto_config == 0 && !strcmp(arg, "disable")) {
+			unlink(testflag);
+			puts("auto_config is already disabled");
 			return 0;
 		}
+		if (access(testflag, F_OK) == 0 && ctx->auto_config == 0 &&
+		    strcmp(arg, "enable") != 0) {
+			puts("Auto config is already running in test mode!");
+			return 1;
+		}
+		if (!strcmp(arg, "test")) {
+			if (access(testflag, F_OK) == 0) {
+				puts("Auto config test mode is already running!");
+				return 1;
+			}
+			puts("");
+			puts("This will test autoconfiguration.");
+			puts("Rebooting will revert the test autoconfiguration.");
+			puts("");
+			puts("    Do you want to continue? [yes/no] ");
+			puts("");
+			if (!fgets(reply, sizeof(reply), stdin))
+				reply[0] = '\0';
+			{
+				size_t n = strlen(reply);
+				while (n && (reply[n - 1] == '\n' || reply[n - 1] == '\r'))
+					reply[--n] = '\0';
+			}
+			if (!strcmp(reply, "yes"))
+				mesh_file_write(testflag, "");
+			return 0;
+		}
+		if (!strcmp(arg, "enable") || !strcmp(arg, "disable")) {
+			int enable = !strcmp(arg, "enable");
+			puts("");
+			if (enable) {
+				puts("This will enable and start autoconfiguration.");
+				puts("Autoconfiguration will start immediately and again on every restart.");
+			} else {
+				puts("This will disable and stop autoconfiguration.");
+				puts("You must restart the device for this to take effect.");
+			}
+			puts("");
+			puts("    Do you want to continue? [yes/no] ");
+			puts("");
+			if (!fgets(reply, sizeof(reply), stdin))
+				reply[0] = '\0';
+			{
+				size_t n = strlen(reply);
+				while (n && (reply[n - 1] == '\n' || reply[n - 1] == '\r'))
+					reply[--n] = '\0';
+			}
+			if (!strcmp(reply, "yes")) {
+				unlink(testflag);
+				mesh_uci_changes("mesh11sd", changes, sizeof(changes));
+				mesh_uci_revert("mesh11sd");
+				mesh_uci_set("mesh11sd.setup.auto_config", enable ? "1" : "0");
+				mesh_uci_commit("mesh11sd");
+				/* re-apply previous uncommitted changes (v7) */
+				p = changes;
+				while ((line = strsep(&p, "\n")) != NULL) {
+					char setl[512];
+					if (!line[0])
+						continue;
+					snprintf(setl, sizeof(setl), "set %s", line);
+					mesh_uci_batch_line(setl);
+				}
+				ctx->auto_config = enable ? 1 : 0;
+			}
+			return 0;
+		}
+		puts("Invalid option....");
 		return 1;
 	}
 

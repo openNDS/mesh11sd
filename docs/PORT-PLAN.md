@@ -42,6 +42,6 @@ Out of Stage 1 (do not port): apmond, write_node_data, send_ap_data, get_ap_data
 7. **Mobility + channel track** (done): mobility_settings, check_channel, check_gate, HWMP rootmode, path cost, path changes; portal_ula metric/hysteresis + MBP ethernet upstream detect.
 8. **CLI remote/ops** (done): connect, copy, mesh_leechmode, mesh_node_mobility_level, force_ipv4_download, download_revert_to_default, dhcp4_renew, is_installed, set_ula_prefix, get_portal_ula.
 9. **commit_changes / commit_all / revert_all** (done): selective commit of runtime mesh11sd changes; full commit of mesh11sd/wireless/dhcp/network/firewall/system; restore from `_mesh11sd_default` + reboot; `auto_config=2` silent commit_all. Both UCI modes complete here.
-10. **Status JSON + LEDs**: full status JSON output (reuse Spod apmond json_str/json_field style from /workspace/apmond — see src/lib/json_fmt.c), LED helpers. No apmond / ap_data / cgi.
+10. **Status JSON + LEDs** (done): full v7 status JSON via json_fmt.c; set_led / check_mesh_active_led. No apmond / ap_data / cgi. auto_config CLI matches v7 (test/enable/disable prompts + change save/revert/commit/reapply).
 
 Shelved (reference only): branches `8.0.0alpha`, `8.0.0alpha-uci-handoff`; `/workspace/mesh11sd-testbed/*`. May copy proven pieces (factory MAC chain, wpad check, PHY) into later chunks. Explicitly not porting apmond.

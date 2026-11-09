@@ -97,6 +97,20 @@ struct mesh_ctx {
 	int stop_on_error;
 	int swconfig_mac_skip;
 
+	char mesh_backhaul_led[64];
+	char mesh_driver[32];
+	int mesh_mac_forced_forwarding;
+	int gateway_proxy_arp;
+	int watchdog_nonvolatile_log;
+	int mesh_path_stabilisation;
+	int reactive_path_stabilisation_threshold;
+	char vtun_ip[32];
+	char vtun_mask[16];
+	int vtun_path_cost;
+	int vtun_isolate;
+	int move_ethernet_to_vxlan_bridge;
+	char cpe_mode[16];
+
 	char iflist[MESH11SD_MAX_IFACES][32];
 	int iflist_count;
 	char radios[MESH11SD_MAX_RADIOS][32];
@@ -224,6 +238,12 @@ int mesh_maybe_silent_commit_all(struct mesh_ctx *ctx);
 void mesh_json_str(const char *in, char *out, size_t outlen);
 void mesh_json_field(const char *indent, const char *key, const char *value, int last);
 void mesh_json_field_int(const char *indent, const char *key, long value, int last);
+
+int mesh_cli_status(struct mesh_ctx *ctx);
+int mesh_set_led(struct mesh_ctx *ctx, const char *action);
+int mesh_check_mesh_active_led(struct mesh_ctx *ctx);
+int mesh_get_node_type_code(struct mesh_ctx *ctx, char *out, size_t outlen);
+int mesh_get_mesh_params_dump(const char *iface, char *out, size_t outlen);
 
 int mesh_cli_dispatch(struct mesh_ctx *ctx, int argc, char **argv);
 int mesh_daemon_run(struct mesh_ctx *ctx);
