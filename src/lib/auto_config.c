@@ -650,6 +650,12 @@ int mesh_auto_config(struct mesh_ctx *ctx)
 	}
 
 	mesh_mesh_gate_state(ctx);
+	/* v7 ~10925 lives in autostartup; also apply here so auto_config test
+	 * (flag created after daemon start) still gets portal IPv4 before wifi. */
+	if (ctx->portal_detect != 5)
+		mesh_apply_portal_ipv4(ctx);
+	/* mobility config (incl. MLO/driver beacon override) before wifi */
+	mesh_mobility_settings(ctx, "config");
 	mesh_restart_mesh(ctx);
 	mesh_log_debug(ctx, "auto config complete....");
 	mesh_log_info(ctx, "auto_config: mesh bring-up done (wifi applied)");

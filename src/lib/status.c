@@ -510,6 +510,76 @@ int mesh_cli_status(struct mesh_ctx *ctx)
 	mesh_json_field_int("    ", "auto_config", ctx->auto_config, 0);
 	mesh_json_field("    ", "auto_mesh_network", ctx->auto_mesh_network, 0);
 	mesh_json_field("    ", "auto_mesh_band", ctx->auto_mesh_band, 0);
+	if (!ctx->mesh_driver[0] && ctx->wiphy_count > 0) {
+		char path[160], dline[128];
+		FILE *df;
+		snprintf(path, sizeof(path), "/sys/class/ieee80211/%s/device/uevent",
+			 ctx->wiphys[0]);
+		df = fopen(path, "r");
+		if (df) {
+			while (fgets(dline, sizeof(dline), df)) {
+				if (!strncmp(dline, "DRIVER=", 7)) {
+					char *nl = strchr(dline + 7, '\n');
+					if (nl)
+						*nl = '\0';
+					snprintf(ctx->mesh_driver, sizeof(ctx->mesh_driver),
+						 "%s", dline + 7);
+					break;
+				}
+			}
+			fclose(df);
+		}
+	}
+	if (!ctx->mesh_driver[0] && ctx->active_mesh_ifname[0]) {
+		char show[2048], radio[32] = "", phy[32] = "";
+		if (mesh_uci_show_filter("wireless", ctx->active_mesh_ifname,
+					 show, sizeof(show)) == 0) {
+			char *pp = show, *line;
+			while ((line = strsep(&pp, "\n")) != NULL) {
+				char *dot, *dot2, key[128];
+				size_t n;
+				if (!strstr(line, ".ifname="))
+					continue;
+				dot = strchr(line, '.');
+				dot2 = dot ? strchr(dot + 1, '.') : NULL;
+				if (!dot2)
+					continue;
+				n = (size_t)(dot2 - line);
+				{
+					char sect[96];
+					if (n >= sizeof(sect))
+						n = sizeof(sect) - 1;
+					memcpy(sect, line, n);
+					sect[n] = '\0';
+					snprintf(key, sizeof(key), "%s.device", sect);
+					if (mesh_uci_get(key, radio, sizeof(radio)) == 0)
+						mesh_radiophy(radio, phy, sizeof(phy));
+				}
+				break;
+			}
+		}
+		if (phy[0]) {
+			char path[160], dline[128];
+			FILE *df;
+			snprintf(path, sizeof(path),
+				 "/sys/class/ieee80211/%s/device/uevent", phy);
+			df = fopen(path, "r");
+			if (df) {
+				while (fgets(dline, sizeof(dline), df)) {
+					if (!strncmp(dline, "DRIVER=", 7)) {
+						char *nl = strchr(dline + 7, '\n');
+						if (nl)
+							*nl = '\0';
+						snprintf(ctx->mesh_driver,
+							 sizeof(ctx->mesh_driver),
+							 "%s", dline + 7);
+						break;
+					}
+				}
+				fclose(df);
+			}
+		}
+	}
 	mesh_json_field("    ", "mesh_driver", ctx->mesh_driver, 0);
 	if (ctx->mesh_phy_index[0])
 		mesh_json_field("    ", "mesh_phy_index", ctx->mesh_phy_index, 0);

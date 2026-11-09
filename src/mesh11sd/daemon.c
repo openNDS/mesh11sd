@@ -200,6 +200,10 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 				mesh_log_debug(ctx, "Starting auto configure process");
 				if (mesh_auto_config(ctx) == 0) {
 					ctx->changed = 1;
+					/* Re-assert portal IPv4 after auto_config (covers test-mode
+					 * path where startup skipped the autostartup block). */
+					if (ctx->portal_detect != 5)
+						mesh_apply_portal_ipv4(ctx);
 					/* ensure netifd/dnsmasq/firewall see new wireless (v7 apply sites) */
 					{
 						char *nr[] = { "/sbin/service", "network", "reload", NULL };

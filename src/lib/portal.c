@@ -468,6 +468,10 @@ static void portal_handoff(struct mesh_ctx *ctx)
 	mesh_uci_batch_line(setl);
 	mesh_uci_batch_line("set dhcp.@dnsmasq[0].rebind_protection='1'");
 
+	/* Ensure calculated portal address is in UCI before restore_ipv4 puts
+	 * it on the bridge (covers handoff after peer→portal). */
+	if (ctx->portal_detect != 5)
+		mesh_apply_portal_ipv4(ctx);
 	if (ctx->portal_detect != 4)
 		mesh_restore_ipv4(ctx);
 

@@ -252,11 +252,15 @@ int mesh_generate_ipv4_base(struct mesh_ctx *ctx, const char *seed, char *out, s
 		if (skip)
 			continue;
 		snprintf(out, outlen, "192.168.%u.1", subnet);
-		/* v7: is_used=$(uci show network | grep -c "$newipaddr") */
+		/* v7: is_used=$(uci show network | grep -c "$newipaddr")
+		 * Match a quoted assignment so CIDR 192.168.1.1/24 does not
+		 * false-hit every 192.168.1.1x candidate, and vice versa. */
 		{
 			char *uargv[] = { "uci", "show", "network", NULL };
+			char needle[48];
+			snprintf(needle, sizeof(needle), "'%s'", out);
 			if (mesh_run_capture(uargv, show, sizeof(show)) == 0 &&
-			    strstr(show, out))
+			    strstr(show, needle))
 				continue;
 		}
 		mesh_log_debug(ctx, "Validated ipv4 address [ %s ] using seed value [ %s ]",
@@ -270,13 +274,21 @@ int mesh_apply_portal_ipv4(struct mesh_ctx *ctx)
 {
 	char seed[128];
 	char newip[32];
-	char setl[160];
+	char setl[192];
 	char cur[64] = "";
+	char net[32];
+	char batch[512];
+	int applied = 0;
 
 	/* v7 autostartup ~10925: when portal_use_default_ipv4=0, all nodes
 	 * calculate the same address; portals keep proto=static and use it. */
-	if (ctx->portal_use_default_ipv4 != 0)
+	if (ctx->portal_use_default_ipv4 != 0) {
+		mesh_log_debug(ctx, "portal ipv4: skipped (portal_use_default_ipv4=%d)",
+			       ctx->portal_use_default_ipv4);
 		return 0;
+	}
+	snprintf(net, sizeof(net), "%s",
+		 ctx->auto_mesh_network[0] ? ctx->auto_mesh_network : "lan");
 	if (ctx->portal_detect == 3) {
 		if (!ctx->factory_mac[0])
 			mesh_get_factory_mac(ctx, ctx->factory_mac, sizeof(ctx->factory_mac));
@@ -292,19 +304,76 @@ int mesh_apply_portal_ipv4(struct mesh_ctx *ctx)
 		mesh_log_err(ctx, "portal ipv4: generate_ipv4_base failed");
 		return -1;
 	}
-	/* Drop prior CIDR or plain ipaddr so the set sticks (OpenWrt may have
-	 * network.lan.ipaddr='192.168.1.1/24'). */
-	mesh_uci_batch_line("delete network.lan.ipaddr");
-	snprintf(setl, sizeof(setl), "set network.lan.ipaddr='%s'", newip);
-	if (mesh_uci_batch_line(setl) != 0)
-		mesh_log_err(ctx, "portal ipv4: failed to set network.lan.ipaddr");
-	mesh_uci_batch_line("set network.lan.netmask='255.255.255.0'");
-	mesh_uci_batch_line("set network.lan.ip6assign='64'");
-	mesh_uci_batch_line("set network.wan6.reqprefix='auto'");
-	mesh_uci_batch_line("set network.wan6.reqaddress='try'");
-	if (mesh_uci_get("network.lan.ipaddr", cur, sizeof(cur)) == 0)
-		mesh_log_notice(ctx, "lan ip address set to [ %s ]", cur);
+
+	/* Atomic del+set in one uci batch so a CIDR ipaddr (e.g. 192.168.1.1/24)
+	 * cannot linger between separate batch invocations. Matches v7 which
+	 * sets network.lan.ipaddr (hardcoded lan) + netmask. */
+	snprintf(batch, sizeof(batch),
+		 "del network.%s.ipaddr\n"
+		 "set network.%s.ipaddr='%s'\n"
+		 "set network.%s.netmask='255.255.255.0'\n"
+		 "set network.%s.ip6assign='64'\n"
+		 "set network.wan6.reqprefix='auto'\n"
+		 "set network.wan6.reqaddress='try'\n",
+		 net, net, newip, net, net);
+	{
+		char *argv[] = { "uci", "batch", NULL };
+		int pipefd[2];
+		pid_t pid;
+		int status;
+		if (pipe(pipefd) == 0) {
+			pid = fork();
+			if (pid == 0) {
+				int dn;
+				close(pipefd[1]);
+				dup2(pipefd[0], 0);
+				close(pipefd[0]);
+				dn = open("/dev/null", O_WRONLY);
+				if (dn >= 0) {
+					dup2(dn, 1);
+					dup2(dn, 2);
+					close(dn);
+				}
+				execvp("uci", argv);
+				_exit(127);
+			}
+			if (pid > 0) {
+				close(pipefd[0]);
+				dprintf(pipefd[1], "%s", batch);
+				close(pipefd[1]);
+				if (waitpid(pid, &status, 0) >= 0 &&
+				    WIFEXITED(status) && WEXITSTATUS(status) == 0)
+					applied = 1;
+			} else {
+				close(pipefd[0]);
+				close(pipefd[1]);
+			}
+		}
+	}
+	if (!applied) {
+		/* fallback: individual ops */
+		snprintf(setl, sizeof(setl), "del network.%s.ipaddr", net);
+		mesh_uci_batch_line(setl);
+		snprintf(setl, sizeof(setl), "network.%s.ipaddr", net);
+		if (mesh_uci_set(setl, newip) == 0)
+			applied = 1;
+		snprintf(setl, sizeof(setl), "network.%s.netmask", net);
+		mesh_uci_set(setl, "255.255.255.0");
+		snprintf(setl, sizeof(setl), "network.%s.ip6assign", net);
+		mesh_uci_set(setl, "64");
+		mesh_uci_set("network.wan6.reqprefix", "auto");
+		mesh_uci_set("network.wan6.reqaddress", "try");
+	}
+
+	snprintf(setl, sizeof(setl), "network.%s.ipaddr", net);
+	if (mesh_uci_get(setl, cur, sizeof(cur)) == 0)
+		applied = (cur[0] && strncmp(cur, newip, strlen(newip)) == 0) ? 1 : 0;
 	else
-		mesh_log_notice(ctx, "portal ipv4 [ %s ] (seeded from mesh config)", newip);
-	return 0;
+		applied = 0;
+
+	mesh_log_notice(ctx,
+			"portal ipv4: computed [ %s ] on network.%s applied=%s (uci now [ %s ])",
+			newip, net, applied ? "yes" : "no",
+			cur[0] ? cur : "-");
+	return applied ? 0 : -1;
 }
