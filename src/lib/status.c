@@ -458,11 +458,21 @@ int mesh_cli_status(struct mesh_ctx *ctx)
 	read_procd_status(procd, sizeof(procd));
 	mesh_get_node_type_code(ctx, node_type, sizeof(node_type));
 	read_txpower(ctx, txpower, sizeof(txpower));
-#ifdef MESH11SD_BUILD_COMMIT
-	snprintf(checksum, sizeof(checksum), "%s", MESH11SD_BUILD_COMMIT);
-#else
-	snprintf(checksum, sizeof(checksum), "unknown");
-#endif
+	/* v7: checksum=$(sha256sum /usr/sbin/mesh11sd | awk '{printf "%s", $1}') */
+	{
+		char sumout[128] = "";
+		char *sargv[] = { "sha256sum", "/usr/sbin/mesh11sd", NULL };
+		checksum[0] = '\0';
+		if (mesh_run_capture(sargv, sumout, sizeof(sumout)) == 0)
+			sscanf(sumout, "%79s", checksum);
+		if (!checksum[0]) {
+			char *self[] = { "sha256sum", "/proc/self/exe", NULL };
+			if (mesh_run_capture(self, sumout, sizeof(sumout)) == 0)
+				sscanf(sumout, "%79s", checksum);
+		}
+		if (!checksum[0])
+			snprintf(checksum, sizeof(checksum), "unknown");
+	}
 	if (!strcmp(procd, "running") &&
 	    access(MESH11SD_TMPDIR "/loop_interval", R_OK) == 0) {
 		FILE *f = fopen(MESH11SD_TMPDIR "/loop_interval", "r");

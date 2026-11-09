@@ -3,6 +3,7 @@
  */
 #include "mesh11sd.h"
 
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -90,37 +91,202 @@ int mesh_get_indexed_mac(struct mesh_ctx *ctx, const char *devname,
 	return 0;
 }
 
-static void apply_bridge_mac(struct mesh_ctx *ctx, const char *br,
-			     const char *mac, const char *uci_tuple)
+static int read_sysfs_mac(const char *ifname, char *mac, size_t maclen)
 {
-	char out[256];
-	char *show[] = { "ip", "link", "show", (char *)br, NULL };
-	char cur[32] = "";
+	char path[160];
+	FILE *f;
+	size_t n;
 
-	if (mesh_run_capture(show, out, sizeof(out)) == 0) {
-		char *p = strstr(out, "link/ether ");
-		if (p)
-			sscanf(p + 11, "%31s", cur);
+	if (!ifname || !ifname[0] || !mac || maclen < 18)
+		return -1;
+	snprintf(path, sizeof(path), "/sys/class/net/%s/address", ifname);
+	f = fopen(path, "r");
+	if (!f)
+		return -1;
+	if (!fgets(mac, (int)maclen, f)) {
+		fclose(f);
+		return -1;
 	}
-	if (cur[0] && !strcmp(cur, mac))
+	fclose(f);
+	n = strlen(mac);
+	while (n > 0 && (mac[n - 1] == '\n' || mac[n - 1] == '\r'))
+		mac[--n] = '\0';
+	for (n = 0; mac[n]; n++)
+		mac[n] = (char)tolower((unsigned char)mac[n]);
+	return mac[0] ? 0 : -1;
+}
+
+static int mac_equal(const char *a, const char *b)
+{
+	unsigned oa[6], ob[6];
+
+	if (!a || !b || !*a || !*b)
+		return 0;
+	if (sscanf(a, "%x:%x:%x:%x:%x:%x",
+		   &oa[0], &oa[1], &oa[2], &oa[3], &oa[4], &oa[5]) != 6)
+		return 0;
+	if (sscanf(b, "%x:%x:%x:%x:%x:%x",
+		   &ob[0], &ob[1], &ob[2], &ob[3], &ob[4], &ob[5]) != 6)
+		return 0;
+	return oa[0] == ob[0] && oa[1] == ob[1] && oa[2] == ob[2] &&
+	       oa[3] == ob[3] && oa[4] == ob[4] && oa[5] == ob[5];
+}
+
+static void normalize_mac(const char *in, char *out, size_t outlen)
+{
+	unsigned o[6];
+
+	out[0] = '\0';
+	if (!in || sscanf(in, "%x:%x:%x:%x:%x:%x",
+			  &o[0], &o[1], &o[2], &o[3], &o[4], &o[5]) != 6)
 		return;
-	mesh_log_debug(ctx, "Setting %s MAC to %s", br, mac);
+	snprintf(out, outlen, "%02x:%02x:%02x:%02x:%02x:%02x",
+		 o[0], o[1], o[2], o[3], o[4], o[5]);
+}
+
+static int swconfig_bridge(void)
+{
+	char out[64];
+
+	return mesh_uci_get("network.@switch[0].name", out, sizeof(out)) == 0 &&
+	       out[0] != '\0';
+}
+
+static int mesh_port_in_bridge(const char *br)
+{
+	char out[4096];
+	char *argv[] = { "brctl", "show", (char *)br, NULL };
+	char *p, *line;
+	int hdr = 1;
+
+	if (mesh_run_capture(argv, out, sizeof(out)) != 0)
+		return 0;
+	p = out;
+	while ((line = strsep(&p, "\n")) != NULL) {
+		char iface[64];
+		char *tok;
+		char iwout[512];
+		char *iwargv[] = { "iw", "dev", iface, "info", NULL };
+
+		if (hdr) {
+			hdr = 0;
+			continue;
+		}
+		tok = strrchr(line, '\t');
+		if (!tok)
+			tok = strrchr(line, ' ');
+		if (!tok)
+			continue;
+		while (*tok == ' ' || *tok == '\t')
+			tok++;
+		if (sscanf(tok, "%63s", iface) != 1 || !iface[0])
+			continue;
+		if (!strcmp(iface, "no") || !strcmp(iface, "yes"))
+			continue;
+		iwargv[2] = iface;
+		if (mesh_run_capture(iwargv, iwout, sizeof(iwout)) == 0 &&
+		    strstr(iwout, "type mesh"))
+			return 1;
+	}
+	return 0;
+}
+
+/* v7 apply_bridge_mac: set bridge MAC without bouncing wireless ports.
+ * Try while UP first; down/up only if needed. Skip change when current matches.
+ */
+static int apply_bridge_mac(struct mesh_ctx *ctx, const char *br,
+			    const char *mac, const char *uci_tuple)
+{
+	char cur[32] = "";
+	char want[32];
+	char path[160];
+	char config_mac[32] = "";
+
+	if (!br || !br[0] || !mac || !mac[0])
+		return 1;
+	snprintf(path, sizeof(path), "/sys/class/net/%s", br);
+	if (access(path, F_OK) != 0)
+		return 1;
+
+	normalize_mac(mac, want, sizeof(want));
+	if (!want[0])
+		return 1;
+
+	{
+		char *up[] = { "ip", "link", "set", (char *)br, "up", NULL };
+		mesh_run_capture(up, NULL, 0);
+	}
+
+	if (read_sysfs_mac(br, cur, sizeof(cur)) == 0 && mac_equal(cur, want))
+		goto uci_only;
+
+	if (swconfig_bridge() && mesh_port_in_bridge(br)) {
+		mesh_log_debug(ctx, "swconfig: %s has a mesh port, leaving it up", br);
+		goto uci_only;
+	}
+
+	mesh_log_debug(ctx, "Setting %s MAC to %s", br, want);
+	{
+		char *a[] = { "ip", "link", "set", (char *)br, "address", want, NULL };
+		mesh_run_capture(a, NULL, 0);
+	}
+	if (read_sysfs_mac(br, cur, sizeof(cur)) != 0 || !mac_equal(cur, want)) {
+		char *dn[] = { "ip", "link", "set", (char *)br, "down", NULL };
+		char *ad[] = { "ip", "link", "set", (char *)br, "address", want, NULL };
+		char *up[] = { "ip", "link", "set", (char *)br, "up", NULL };
+		mesh_run_capture(dn, NULL, 0);
+		mesh_run_capture(ad, NULL, 0);
+		mesh_run_capture(up, NULL, 0);
+		if (read_sysfs_mac(br, cur, sizeof(cur)) != 0 || !mac_equal(cur, want)) {
+			mesh_log_debug(ctx, "Failed to set mac [ %s ] on [ %s ]", want, br);
+			return 1;
+		}
+	}
+
+uci_only:
 	if (uci_tuple && uci_tuple[0]) {
-		char setl[160];
-		snprintf(setl, sizeof(setl), "set %s.macaddr='%s'", uci_tuple, mac);
-		mesh_uci_batch_line(setl);
+		char key[160];
+		snprintf(key, sizeof(key), "%s.macaddr", uci_tuple);
+		if (mesh_uci_get(key, config_mac, sizeof(config_mac)) != 0)
+			config_mac[0] = '\0';
+		if (!mac_equal(config_mac, want)) {
+			char setl[192];
+			snprintf(setl, sizeof(setl), "set %s.macaddr='%s'", uci_tuple, want);
+			mesh_uci_batch_line(setl);
+		}
 	}
+	return 0;
+}
+
+/* v7 member-port MAC walk: try set while UP; down/up only if still wrong.
+ * Never log or change when /sys address already matches want.
+ */
+static void apply_member_mac(struct mesh_ctx *ctx, const char *iface,
+			     const char *mac)
+{
+	char cur[32] = "";
+	char want[32];
+
+	if (!iface || !iface[0] || !mac || !mac[0])
+		return;
+	normalize_mac(mac, want, sizeof(want));
+	if (!want[0])
+		return;
+	if (read_sysfs_mac(iface, cur, sizeof(cur)) == 0 && mac_equal(cur, want))
+		return;
+
+	mesh_log_debug(ctx, "Setting %s MAC to %s", iface, want);
 	{
-		char *a[] = { "ip", "link", "set", (char *)br, "down", NULL };
+		char *a[] = { "ip", "link", "set", (char *)iface, "address", want, NULL };
 		mesh_run_capture(a, NULL, 0);
 	}
-	{
-		char *a[] = { "ip", "link", "set", (char *)br, "address", (char *)mac, NULL };
-		mesh_run_capture(a, NULL, 0);
-	}
-	{
-		char *a[] = { "ip", "link", "set", (char *)br, "up", NULL };
-		mesh_run_capture(a, NULL, 0);
+	if (read_sysfs_mac(iface, cur, sizeof(cur)) != 0 || !mac_equal(cur, want)) {
+		char *dn[] = { "ip", "link", "set", (char *)iface, "down", NULL };
+		char *ad[] = { "ip", "link", "set", (char *)iface, "address", want, NULL };
+		char *up[] = { "ip", "link", "set", (char *)iface, "up", NULL };
+		mesh_run_capture(dn, NULL, 0);
+		mesh_run_capture(ad, NULL, 0);
+		mesh_run_capture(up, NULL, 0);
 	}
 }
 
@@ -130,14 +296,21 @@ int mesh_set_bridge_mac_addresses(struct mesh_ctx *ctx)
 	char brmesh_mac[32];
 	char status[16];
 	char out[4096];
+	char cur[32];
 	char *brctl[] = { "brctl", "show", NULL };
+	char cpe_bridge[] = "br-lan";
+	char brcpe_mac[32] = "";
+	char vxlan_bridge[32];
+	char vxlan_mac[32] = "";
+	int have_vxlan = 0;
 
 	if (ctx->auto_config == 0 &&
 	    access(MESH11SD_TMPDIR "/auto_config_test", F_OK) != 0) {
 		mesh_log_debug(ctx, "daemon is idling");
 		return 0;
 	}
-	if (ctx->swconfig_mac_skip) {
+	/* v7: only skip when swconfig switch present AND swconfig_mac_skip != 0 */
+	if (swconfig_bridge() && ctx->swconfig_mac_skip) {
 		mesh_log_debug(ctx, "swconfig: leaving MAC addresses unchanged");
 		return 0;
 	}
@@ -152,15 +325,115 @@ int mesh_set_bridge_mac_addresses(struct mesh_ctx *ctx)
 		if (!strcmp(status, "down"))
 			return 1;
 	}
-	{
+
+	/* Mesh bridge: only change when /sys address differs (v7 guard). */
+	if (read_sysfs_mac(mesh_bridge, cur, sizeof(cur)) != 0 ||
+	    !mac_equal(cur, brmesh_mac)) {
 		char key[96];
-		snprintf(key, sizeof(key), "network.%s", ctx->auto_mesh_network);
-		apply_bridge_mac(ctx, mesh_bridge, brmesh_mac, key);
-		{
-			char content[64];
-			snprintf(content, sizeof(content), "brmesh_mac=\"%s\"\n", brmesh_mac);
-			mesh_file_write(MESH11SD_TMPDIR "/brmesh_mac", content);
+		char config_mac[32] = "";
+
+		snprintf(key, sizeof(key), "network.%s.macaddr", ctx->auto_mesh_network);
+		if (mesh_uci_get(key, config_mac, sizeof(config_mac)) != 0)
+			config_mac[0] = '\0';
+		if (!mac_equal(config_mac, brmesh_mac)) {
+			char setl[192];
+			snprintf(setl, sizeof(setl), "set network.%s.macaddr='%s'",
+				 ctx->auto_mesh_network, brmesh_mac);
+			mesh_uci_batch_line(setl);
 		}
+		if (swconfig_bridge() && mesh_port_in_bridge(mesh_bridge)) {
+			mesh_log_debug(ctx, "swconfig: %s has a mesh port, leaving it up",
+				       mesh_bridge);
+		} else {
+			char *dn[] = { "ip", "link", "set", mesh_bridge, "down", NULL };
+			char *ad[] = { "ip", "link", "set", mesh_bridge, "address",
+				       brmesh_mac, NULL };
+			char *up[] = { "ip", "link", "set", mesh_bridge, "up", NULL };
+			char achieved[32] = "";
+
+			mesh_log_debug(ctx, "Setting %s MAC to %s", mesh_bridge, brmesh_mac);
+			mesh_run_capture(dn, NULL, 0);
+			mesh_run_capture(ad, NULL, 0);
+			mesh_run_capture(up, NULL, 0);
+			if (read_sysfs_mac(mesh_bridge, achieved, sizeof(achieved)) == 0 &&
+			    mac_equal(achieved, brmesh_mac)) {
+				char content[64];
+				snprintf(content, sizeof(content),
+					 "brmesh_mac=\"%s\"\n", brmesh_mac);
+				mesh_file_write(MESH11SD_TMPDIR "/brmesh_mac", content);
+			} else {
+				mesh_log_debug(ctx, "Failed to set mac [ %s ] on [ %s ]",
+					       brmesh_mac, mesh_bridge);
+			}
+		}
+	}
+
+	/* CPE LAN bridge when portal_detect=3 */
+	if (ctx->portal_detect == 3) {
+		if (mesh_get_indexed_mac(ctx, cpe_bridge, brcpe_mac,
+					 sizeof(brcpe_mac)) != -1 &&
+		    brcpe_mac[0]) {
+			char *up[] = { "ip", "link", "set", cpe_bridge, "up", NULL };
+			mesh_run_capture(up, NULL, 0);
+			apply_bridge_mac(ctx, cpe_bridge, brcpe_mac, "network.lan");
+		}
+	}
+
+	/* VXLAN bridge when active */
+	have_vxlan = ctx->vtun_enable && ctx->tun_id[0] && strcmp(ctx->tun_id, "0") != 0;
+	if (have_vxlan) {
+		snprintf(vxlan_bridge, sizeof(vxlan_bridge), "br-tun%s", ctx->tun_id);
+		if (mesh_get_indexed_mac(ctx, vxlan_bridge, vxlan_mac,
+					 sizeof(vxlan_mac)) >= 0) {
+			if (access(MESH11SD_TMPDIR "/vxlan_mac", F_OK) != 0) {
+				char content[64];
+				snprintf(content, sizeof(content),
+					 "vxlan_mac=\"%s\"\n", vxlan_mac);
+				mesh_file_write(MESH11SD_TMPDIR "/vxlan_mac", content);
+			}
+			if (read_sysfs_mac(vxlan_bridge, cur, sizeof(cur)) != 0 ||
+			    !mac_equal(cur, vxlan_mac)) {
+				char *ad[] = { "ip", "link", "set", vxlan_bridge,
+					       "address", vxlan_mac, NULL };
+				mesh_log_debug(ctx, "Setting %s MAC to %s",
+					       vxlan_bridge, vxlan_mac);
+				mesh_run_capture(ad, NULL, 0);
+			}
+		}
+	} else {
+		/* v7 returns early before member walk when VXLAN inactive.
+		 * Stage 1 still walks members — needed for mesh/eth MACs. */
+	}
+
+	/* Load active_mesh_ifname from tmpdir if not in ctx (v7 sources file) */
+	if (!ctx->active_mesh_ifname[0] &&
+	    access(MESH11SD_TMPDIR "/active_mesh_ifname", R_OK) == 0) {
+		FILE *f = fopen(MESH11SD_TMPDIR "/active_mesh_ifname", "r");
+		char line[128];
+		if (f && fgets(line, sizeof(line), f)) {
+			char *p = strstr(line, "active_mesh_ifname=\"");
+			if (p)
+				sscanf(p + 20, "%63[^\"]", ctx->active_mesh_ifname);
+		}
+		if (f)
+			fclose(f);
+	}
+	if (!ctx->factory_mac[0] &&
+	    access(MESH11SD_TMPDIR "/factory_mac", R_OK) == 0) {
+		FILE *f = fopen(MESH11SD_TMPDIR "/factory_mac", "r");
+		char line[128];
+		if (f && fgets(line, sizeof(line), f)) {
+			char *p = strstr(line, "factory_mac=\"");
+			if (p)
+				sscanf(p + 13, "%31[^\"]", ctx->factory_mac);
+			else {
+				p = strstr(line, "factory_mac=");
+				if (p)
+					sscanf(p + 12, "%31s", ctx->factory_mac);
+			}
+		}
+		if (f)
+			fclose(f);
 	}
 
 	/* member ports: indexed LA except mesh vif uses factory MAC */
@@ -170,8 +443,10 @@ int mesh_set_bridge_mac_addresses(struct mesh_ctx *ctx)
 		while ((line = strsep(&p, "\n")) != NULL) {
 			char iface[64];
 			char *tok;
-			if (hdr) { hdr = 0; continue; }
-			/* last field is often an interface name */
+			if (hdr) {
+				hdr = 0;
+				continue;
+			}
 			tok = strrchr(line, '\t');
 			if (!tok)
 				tok = strrchr(line, ' ');
@@ -188,24 +463,46 @@ int mesh_set_bridge_mac_addresses(struct mesh_ctx *ctx)
 				if (ctx->active_mesh_ifname[0] &&
 				    !strcmp(iface, ctx->active_mesh_ifname))
 					is_mesh = 1;
-				if (!strncmp(iface, "m-11s-", 6) || !strncmp(iface, "m-", 2))
+				if (!strncmp(iface, "m-11s-", 6))
 					is_mesh = 1;
 				if (is_mesh) {
 					if (!ctx->factory_mac[0])
 						continue;
-					snprintf(want, sizeof(want), "%s", ctx->factory_mac);
+					normalize_mac(ctx->factory_mac, want, sizeof(want));
+					if (!want[0])
+						continue;
 				} else {
-					if (mesh_get_indexed_mac(ctx, iface, want, sizeof(want)) < 0)
+					if (mesh_get_indexed_mac(ctx, iface, want,
+								 sizeof(want)) < 0)
 						continue;
 				}
-				apply_bridge_mac(ctx, iface, want, NULL);
+				apply_member_mac(ctx, iface, want);
 			}
 		}
 	}
+
+	/* Bring bridges back up after any member bounce; re-apply bridge MACs. */
 	{
 		char *a[] = { "ip", "link", "set", mesh_bridge, "up", NULL };
 		mesh_run_capture(a, NULL, 0);
 	}
+	{
+		char *a[] = { "ip", "link", "set", cpe_bridge, "up", NULL };
+		mesh_run_capture(a, NULL, 0);
+	}
+	if (have_vxlan && vxlan_mac[0]) {
+		char *a[] = { "ip", "link", "set", vxlan_bridge, "up", NULL };
+		mesh_run_capture(a, NULL, 0);
+	}
+	if (brmesh_mac[0]) {
+		char key[96];
+		snprintf(key, sizeof(key), "network.%s", ctx->auto_mesh_network);
+		apply_bridge_mac(ctx, mesh_bridge, brmesh_mac, key);
+	}
+	if (ctx->portal_detect == 3 && brcpe_mac[0])
+		apply_bridge_mac(ctx, cpe_bridge, brcpe_mac, "network.lan");
+	if (have_vxlan && vxlan_mac[0])
+		apply_bridge_mac(ctx, vxlan_bridge, vxlan_mac, NULL);
 	return 0;
 }
 
