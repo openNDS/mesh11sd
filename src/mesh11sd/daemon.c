@@ -172,6 +172,8 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 	mesh_get_portal_ula(ctx, "discover");
 	mesh_log_notice(ctx, "Starting daemon service...");
 	mesh_set_led(ctx, "init");
+	/* v7: set_led on before peers; heartbeat once peers appear */
+	mesh_set_led(ctx, "on");
 
 	for (;;) {
 		int loop_interval = ctx->checkinterval;
@@ -275,6 +277,7 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 		mesh_mobility_settings(ctx, "runtime");
 		mesh_check_gate(ctx);
 		mesh_check_path_changes(ctx);
+		mesh_check_odhcpd(ctx);
 		if (ctx->portal_detect != 4)
 			mesh_check_channel(ctx);
 		mesh_maybe_silent_commit_all(ctx);

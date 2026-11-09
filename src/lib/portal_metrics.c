@@ -296,29 +296,32 @@ int mesh_calc_airtime_metric(struct mesh_ctx *ctx, const char *peer_mac,
 		return 1;
 	tx_time = 256 + 10 * 2097152 / rate;
 	retx = 65536 / denom;
-	/* v7: calc_metric * hops^1.6 — integer approx without libm */
+	/* v7: nexthop_metric = tx_time*retx/65536; calc_metric = that * hops^1.6 (awk) */
 	{
 		long base = tx_time * retx / 65536;
 		long scaled = base;
-		/* hops^1.6 ≈ hops * sqrt(hops) ≈ hops * isqrt(hops) */
-		if (hops > 1) {
-			int h = hops;
-			int s = 1;
-			while ((s + 1) * (s + 1) <= h)
-				s++;
-			scaled = base * hops * s;
-			/* refine: hops^1.6 = hops * hops^0.6 ≈ hops * hops^(3/5); use hops*s as hops^1.5 then *hops^0.1≈ */
-			/* closer: hops^1.6 ≈ (hops^8)^(1/5) hard; use (base * hops * s * 11) / 10 for ~hops^1.6 */
-			scaled = (base * hops * s * 11) / 10;
-		}
+		char cbuf[32], hbuf[16], awkout[32];
+		char *aargv[] = {
+			"awk", "-v", "c", cbuf, "-v", "h", hbuf,
+			"BEGIN { printf \"%.0f\\n\", c * (h ^ 1.6) }",
+			NULL
+		};
+		snprintf(cbuf, sizeof(cbuf), "%ld", base);
+		snprintf(hbuf, sizeof(hbuf), "%d", hops > 0 ? hops : 1);
+		if (mesh_run_capture(aargv, awkout, sizeof(awkout)) == 0 && awkout[0])
+			scaled = strtol(awkout, NULL, 10);
+		else if (hops > 1)
+			scaled = base * hops; /* fallback */
 		if (scaled <= 0)
 			return 1;
 		if (metric_out)
 			*metric_out = (int)scaled;
+		mesh_log_debug(ctx,
+			       "Mesh airtime metric for peer [ %s ] is [ %ld ], mpath [ %d ], hops [ %d ]",
+			       peer_mac, scaled, metric, hops);
 	}
 	if (hops_out)
 		*hops_out = hops;
-	(void)metric;
 	return 0;
 }
 

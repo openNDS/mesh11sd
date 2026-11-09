@@ -302,19 +302,63 @@ int mesh_get_portal_state(struct mesh_ctx *ctx)
 
 int mesh_restore_ipv4(struct mesh_ctx *ctx)
 {
-	char key[96], config_ip[64], config_mask[64], out[512];
-	char *argv[] = { "ip", "addr", "show", "dev", ctx->device, NULL };
+	char key[96], config_ip[64], config_mask[64], out[2048];
+	char *slash;
+	char *argv[] = { "ip", "-4", "addr", "show", "dev", ctx->device, NULL };
 
 	snprintf(key, sizeof(key), "network.%s.ipaddr", ctx->auto_mesh_network);
 	if (mesh_uci_get(key, config_ip, sizeof(config_ip)) != 0 || !config_ip[0])
 		return 0;
+	/* stock list form may be 192.168.1.1/24 */
+	slash = strchr(config_ip, '/');
+	if (slash)
+		*slash = '\0';
 	snprintf(key, sizeof(key), "network.%s.netmask", ctx->auto_mesh_network);
 	if (mesh_uci_get(key, config_mask, sizeof(config_mask)) != 0)
 		snprintf(config_mask, sizeof(config_mask), "255.255.255.0");
+
+	/* Drop any other global IPv4 on the bridge (e.g. stale .102 from a
+	 * prior non-idempotent generate) so we replace rather than stack. */
+	if (mesh_run_capture(argv, out, sizeof(out)) == 0) {
+		char *p = out, *line;
+		while ((line = strsep(&p, "\n")) != NULL) {
+			char ip[64], pfx[16];
+			const char *inet;
+			char *sp;
+			if (!(inet = strstr(line, "inet ")))
+				continue;
+			inet += 5;
+			while (*inet == ' ')
+				inet++;
+			snprintf(ip, sizeof(ip), "%s", inet);
+			sp = strchr(ip, ' ');
+			if (sp)
+				*sp = '\0';
+			sp = strchr(ip, '/');
+			if (sp) {
+				snprintf(pfx, sizeof(pfx), "%s", sp + 1);
+				*sp = '\0';
+			} else {
+				pfx[0] = '\0';
+			}
+			if (!strcmp(ip, config_ip))
+				continue;
+			{
+				char cidr[80];
+				char *del[] = { "ip", "addr", "del", cidr, "dev",
+						ctx->device, NULL };
+				if (pfx[0])
+					snprintf(cidr, sizeof(cidr), "%s/%s", ip, pfx);
+				else
+					snprintf(cidr, sizeof(cidr), "%s", ip);
+				mesh_run_capture(del, NULL, 0);
+			}
+		}
+	}
+	/* Re-read: if config_ip is present we are done (v7 no-op path) */
 	if (mesh_run_capture(argv, out, sizeof(out)) == 0 && strstr(out, config_ip))
 		return 0;
 	{
-		/* add address with /24 default when mask is classic */
 		char cidr[80];
 		int prefix = 24;
 		if (!strcmp(config_mask, "255.255.255.0"))
@@ -442,6 +486,10 @@ static void portal_handoff(struct mesh_ctx *ctx)
 	snprintf(setl, sizeof(setl), "set network.%s.proto='static'", ctx->auto_mesh_network);
 	mesh_uci_batch_line(setl);
 	mesh_set_ula_prefix(ctx, "set");
+	/* Portal IPv4 into UCI before netifd reload (v7 sets in autostartup;
+	 * handoff must not leave a stale address for restore_ipv4 to stack). */
+	if (ctx->portal_detect != 5)
+		mesh_apply_portal_ipv4(ctx);
 	service_cmd("network", "reload");
 
 	if (!ctx->portal_ula[0])
@@ -468,10 +516,7 @@ static void portal_handoff(struct mesh_ctx *ctx)
 	mesh_uci_batch_line(setl);
 	mesh_uci_batch_line("set dhcp.@dnsmasq[0].rebind_protection='1'");
 
-	/* Ensure calculated portal address is in UCI before restore_ipv4 puts
-	 * it on the bridge (covers handoff after peer→portal). */
-	if (ctx->portal_detect != 5)
-		mesh_apply_portal_ipv4(ctx);
+	/* v7 restore_ipv4: only if netifd did not put the address on yet */
 	if (ctx->portal_detect != 4)
 		mesh_restore_ipv4(ctx);
 
@@ -701,5 +746,38 @@ int mesh_ccpy_setup(struct mesh_ctx *ctx)
 	}
 	if (cf)
 		fclose(cf);
+	return 0;
+}
+
+int mesh_check_odhcpd(struct mesh_ctx *ctx)
+{
+	/* v7 check_odhcpd: delay one checkinterval after portal so ULA is on
+	 * lan before odhcpd restart (immediate restart races set_ula/netifd). */
+	static int odhcpd_check;
+	char lan_ra[32] = "";
+	char vtun_ignore[32] = "";
+	char key[96];
+	int need_ra = 0;
+
+	if (strcmp(ctx->detected_state, "portal") != 0) {
+		odhcpd_check = 0;
+		return 0;
+	}
+	snprintf(key, sizeof(key), "dhcp.%s.ra", ctx->auto_mesh_network);
+	mesh_uci_get(key, lan_ra, sizeof(lan_ra));
+	mesh_uci_get("dhcp.vtunlan.ignore", vtun_ignore, sizeof(vtun_ignore));
+	if (!strcmp(lan_ra, "server"))
+		need_ra = 1;
+	if (!strcmp(vtun_ignore, "0"))
+		need_ra = 1;
+	if (!need_ra)
+		return 0;
+	if (odhcpd_check == 0) {
+		odhcpd_check = 1;
+	} else if (odhcpd_check == 1) {
+		mesh_log_debug(ctx, "odhcpd restarting");
+		service_cmd("odhcpd", "restart");
+		odhcpd_check = 2;
+	}
 	return 0;
 }

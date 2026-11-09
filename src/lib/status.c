@@ -410,6 +410,19 @@ int mesh_cli_status(struct mesh_ctx *ctx)
 
 	mesh_ctx_load_setup(ctx);
 	mesh_get_mesh_iflist(ctx);
+	/* airtime_metric needs active_mesh_ifname (daemon writes tmpdir) */
+	if (!ctx->active_mesh_ifname[0] &&
+	    access(MESH11SD_TMPDIR "/active_mesh_ifname", R_OK) == 0) {
+		FILE *f = fopen(MESH11SD_TMPDIR "/active_mesh_ifname", "r");
+		char line[128];
+		if (f && fgets(line, sizeof(line), f)) {
+			char *q = strstr(line, "active_mesh_ifname=\"");
+			if (q)
+				sscanf(q + 20, "%63[^\"]", ctx->active_mesh_ifname);
+		}
+		if (f)
+			fclose(f);
+	}
 	if (access(MESH11SD_TMPDIR "/devicemac", R_OK) == 0) {
 		FILE *f = fopen(MESH11SD_TMPDIR "/devicemac", "r");
 		char line[256];

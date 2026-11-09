@@ -481,7 +481,7 @@ int mesh_ctx_load_setup(struct mesh_ctx *ctx)
 			snprintf(ctx->vtun_ip, sizeof(ctx->vtun_ip), "%s", vtun_net);
 		else if (ctx->auto_mesh_key[0] &&
 			 mesh_generate_ipv4_base(ctx, ctx->auto_mesh_key, generated,
-						 sizeof(generated)) == 0)
+						 sizeof(generated), NULL) == 0)
 			snprintf(ctx->vtun_ip, sizeof(ctx->vtun_ip), "%s", generated);
 		else
 			snprintf(ctx->vtun_ip, sizeof(ctx->vtun_ip), "auto");

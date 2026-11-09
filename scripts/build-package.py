@@ -18,7 +18,7 @@ args = parser.parse_args()
 os.umask(0o077)
 
 PKG_NAME = "mesh11sd"
-PKG_VERSION = "8.0.0_alpha11"
+PKG_VERSION = "8.0.0_alpha12"
 PKG_RELEASE = "1"
 source_top = f"{PKG_NAME}-{PKG_VERSION}"
 source_name = f"{source_top}.tar.gz"

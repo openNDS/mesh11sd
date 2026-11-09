@@ -214,7 +214,8 @@ int mesh_mkdir_p(const char *path)
 	return mkdir(tmp, 0755) == 0 || errno == EEXIST ? 0 : -1;
 }
 
-int mesh_generate_ipv4_base(struct mesh_ctx *ctx, const char *seed, char *out, size_t outlen)
+int mesh_generate_ipv4_base(struct mesh_ctx *ctx, const char *seed, char *out,
+			    size_t outlen, const char *ignore_ip)
 {
 	char hash[72];
 	int i;
@@ -262,9 +263,18 @@ int mesh_generate_ipv4_base(struct mesh_ctx *ctx, const char *seed, char *out, s
 		if (skip)
 			continue;
 		snprintf(out, outlen, "192.168.%u.1", subnet);
-		/* v7: is_used=$(uci show network | grep -c "$newipaddr")
-		 * Raw substring count — do not special-case the current lan
-		 * ipaddr; if it is already present anywhere in network, skip. */
+		/* Self is not "used elsewhere": ignore_ip is the address on the
+		 * option we are about to set (lan or vtunlan). Without this,
+		 * a second apply sees 192.168.111.1 as used and picks .102 —
+		 * netifd then applies .102 (with brd) while restore_ipv4 adds
+		 * .111 via ip addr add (no brd). */
+		if (ignore_ip && ignore_ip[0] && strcmp(out, ignore_ip) == 0) {
+			mesh_log_debug(ctx,
+				       "Validated ipv4 address [ %s ] using seed value [ %s ] (i=%d pair=%s, already ours)",
+				       out, seed, i, pair);
+			return 0;
+		}
+		/* v7: is_used=$(uci show network | grep -c "$newipaddr") */
 		{
 			char *uargv[] = { "uci", "show", "network", NULL };
 			if (mesh_run_capture(uargv, show, sizeof(show)) == 0) {
@@ -316,14 +326,34 @@ int mesh_apply_portal_ipv4(struct mesh_ctx *ctx)
 		mesh_log_err(ctx, "portal ipv4: empty seed (auto_mesh_id/factory_mac)");
 		return -1;
 	}
-	if (mesh_generate_ipv4_base(ctx, seed, newip, sizeof(newip)) != 0) {
+	/* Current lan ipaddr (strip CIDR from stock list form) — ignore in is_used */
+	{
+		char key[96];
+		char *slash;
+		snprintf(key, sizeof(key), "network.%s.ipaddr", net);
+		if (mesh_uci_get(key, cur, sizeof(cur)) == 0 && cur[0]) {
+			slash = strchr(cur, '/');
+			if (slash)
+				*slash = '\0';
+		} else {
+			cur[0] = '\0';
+		}
+	}
+	if (mesh_generate_ipv4_base(ctx, seed, newip, sizeof(newip),
+				    cur[0] ? cur : NULL) != 0) {
 		mesh_log_err(ctx, "portal ipv4: generate_ipv4_base failed");
 		return -1;
 	}
+	/* Idempotent: already the stable portal address — do not rewrite UCI */
+	if (cur[0] && strcmp(cur, newip) == 0) {
+		mesh_log_debug(ctx, "portal ipv4: already [ %s ] on network.%s",
+			       newip, net);
+		return 0;
+	}
 
-	/* Atomic del+set in one uci batch so a CIDR ipaddr (e.g. 192.168.1.1/24)
-	 * cannot linger between separate batch invocations. Matches v7 which
-	 * sets network.lan.ipaddr (hardcoded lan) + netmask. */
+	/* Atomic del+set: stock OpenWrt uses list ipaddr '192.168.1.1/24';
+	 * v7 does set network.lan.ipaddr=... (no delete). del+set converts
+	 * list→option cleanly so netifd sees a single non-CIDR address. */
 	snprintf(batch, sizeof(batch),
 		 "del network.%s.ipaddr\n"
 		 "set network.%s.ipaddr='%s'\n"

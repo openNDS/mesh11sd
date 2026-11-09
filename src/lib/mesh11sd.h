@@ -7,7 +7,7 @@
 #include <sys/types.h>
 
 #ifndef MESH11SD_VERSION
-#define MESH11SD_VERSION "8.0.0_alpha11"
+#define MESH11SD_VERSION "8.0.0_alpha12"
 #endif
 
 #define MESH11SD_TMPDIR "/tmp/mesh11sd"
@@ -128,7 +128,11 @@ int mesh_is_installed(const char *package);
 int mesh_check_package_any(const char *const *names, int *installed_flags);
 int mesh_file_write(const char *path, const char *content);
 int mesh_mkdir_p(const char *path);
-int mesh_generate_ipv4_base(struct mesh_ctx *ctx, const char *seed, char *out, size_t outlen);
+/* ignore_ip: current network.*.ipaddr (no CIDR) so re-entry is idempotent —
+ * v7 only generates once at autostartup; the port calls apply from several
+ * sites and must not treat the address we are replacing as "used elsewhere". */
+int mesh_generate_ipv4_base(struct mesh_ctx *ctx, const char *seed, char *out,
+			    size_t outlen, const char *ignore_ip);
 int mesh_apply_portal_ipv4(struct mesh_ctx *ctx); /* v7 autostartup portal_use_default_ipv4=0 */
 int mesh_fixup_wireless_macaddrs(struct mesh_ctx *ctx); /* v7 ~11225 macaddr UCI before wifi */
 
@@ -196,6 +200,7 @@ int mesh_set_ula_prefix(struct mesh_ctx *ctx, const char *mode);
 int mesh_get_portal_ula(struct mesh_ctx *ctx, const char *mode);
 int mesh_get_portal_type(struct mesh_ctx *ctx);
 int mesh_restore_ipv4(struct mesh_ctx *ctx);
+int mesh_check_odhcpd(struct mesh_ctx *ctx);
 int mesh_ccpy_setup(struct mesh_ctx *ctx);
 int mesh_get_peers(struct mesh_ctx *ctx);
 int mesh_detect_mbp_upstream(struct mesh_ctx *ctx);

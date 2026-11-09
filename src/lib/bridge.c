@@ -563,12 +563,46 @@ int mesh_create_vxlan_if(struct mesh_ctx *ctx)
 		vni = (unsigned)strtoul(ctx->ula_subnet, NULL, 16);
 	snprintf(vxname, sizeof(vxname), "vxlan%s", ctx->tun_id[0] ? ctx->tun_id : "69");
 
-	/* network UCI for vtunlan */
-	mesh_uci_batch_line("set network.vtunlan=interface");
-	mesh_uci_batch_line("set network.vtunlan.proto='static'");
-	mesh_uci_batch_line("set network.vtunlan.device='br-tun69'");
-	snprintf(setl, sizeof(setl), "set network.vtunlan.ip6hint='%s'", ctx->ula_vxsubnet);
-	mesh_uci_batch_line(setl);
+	/* network UCI for vtunlan — v7 ~5450: device, ipaddr, netmask, ip6assign */
+	{
+		char brdev[32];
+		const char *proto = "static";
+		snprintf(brdev, sizeof(brdev), "br-tun%s",
+			 ctx->tun_id[0] ? ctx->tun_id : "69");
+		mesh_uci_batch_line("set network.vtunnel=device");
+		snprintf(setl, sizeof(setl), "set network.vtunnel.name='%s'", brdev);
+		mesh_uci_batch_line(setl);
+		mesh_uci_batch_line("set network.vtunnel.type='bridge'");
+		mesh_uci_batch_line("set network.vtunnel.bridge_empty='1'");
+		snprintf(setl, sizeof(setl), "del_list network.vtunnel.ports='%s'", vxname);
+		mesh_uci_batch_line(setl);
+		snprintf(setl, sizeof(setl), "add_list network.vtunnel.ports='%s'", vxname);
+		mesh_uci_batch_line(setl);
+		mesh_uci_batch_line("set network.vtunlan=interface");
+		snprintf(setl, sizeof(setl), "set network.vtunlan.device='%s'", brdev);
+		mesh_uci_batch_line(setl);
+		if (ctx->vtun_ip[0] && strcmp(ctx->vtun_ip, "auto") != 0) {
+			snprintf(setl, sizeof(setl), "set network.vtunlan.ipaddr='%s'",
+				 ctx->vtun_ip);
+			mesh_uci_batch_line(setl);
+		}
+		snprintf(setl, sizeof(setl), "set network.vtunlan.netmask='%s'",
+			 ctx->vtun_mask[0] ? ctx->vtun_mask : "255.255.255.0");
+		mesh_uci_batch_line(setl);
+		if (!strcmp(ctx->detected_state, "portal") ||
+		    ctx->portal_detect == 0 || ctx->portal_detect == 3 ||
+		    ctx->portal_detect == 4)
+			proto = "static";
+		else
+			proto = "dhcp";
+		snprintf(setl, sizeof(setl), "set network.vtunlan.proto='%s'", proto);
+		mesh_uci_batch_line(setl);
+		mesh_uci_batch_line("set network.vtunlan.ip6assign='64'");
+		snprintf(setl, sizeof(setl), "set network.vtunlan.ip6hint='%s'",
+			 ctx->ula_vxsubnet);
+		mesh_uci_batch_line(setl);
+		mesh_uci_batch_line("set network.vtunlan.ip6privacy='0'");
+	}
 
 	{
 		char vni_s[16], group[64];

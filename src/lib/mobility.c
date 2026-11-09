@@ -378,34 +378,70 @@ int mesh_check_path_changes(struct mesh_ctx *ctx)
 			continue;
 		if (mesh_run_capture(argv, out, sizeof(out)) != 0)
 			continue;
-		/* v7 tracks path_change_count per peer in tmpdir; lean: log multi-hop churn */
+		/* v7: peermac_id state in tmpdir; log multi-hop path changes */
 		{
 			char *p = out, *line;
 			int hdr = 1;
 			while ((line = strsep(&p, "\n")) != NULL) {
 				char dest[32], nh[32];
-				int metric = 0, hops = 0, pchg = 0;
+				int metric = 0, hops = 0, pchg = 0, seq = 0;
+				int prev_pchg = 1, prev_seq = 0;
 				char *toks[16];
 				int nt = 0;
-				char buf[512], *bp, *t;
+				char buf[512], *bp, *tok;
+				char peermac_id[72];
+				char statepath[192];
+				char state[256];
+				FILE *sf;
 				if (hdr) { hdr = 0; continue; }
 				snprintf(buf, sizeof(buf), "%s", line);
 				bp = buf;
-				while (nt < 16 && (t = strsep(&bp, " \t")) != NULL)
-					if (*t)
-						toks[nt++] = t;
+				while (nt < 16 && (tok = strsep(&bp, " \t")) != NULL)
+					if (*tok)
+						toks[nt++] = tok;
 				if (nt < 11)
 					continue;
 				snprintf(dest, sizeof(dest), "%s", toks[0]);
 				snprintf(nh, sizeof(nh), "%s", toks[1]);
 				metric = atoi(toks[4]);
+				seq = atoi(toks[3]);
 				hops = atoi(toks[10]);
 				if (nt > 11)
 					pchg = atoi(toks[11]);
-				if (hops > 1 && pchg > 1)
+				if (mesh_sha256_hex(dest, peermac_id, sizeof(peermac_id)) != 0)
+					continue;
+				snprintf(statepath, sizeof(statepath), "%s/%s",
+					 MESH11SD_TMPDIR, peermac_id);
+				if ((sf = fopen(statepath, "r"))) {
+					if (fgets(state, sizeof(state), sf)) {
+						char *q = strstr(state, "previous_path_change_count=");
+						if (q)
+							prev_pchg = atoi(q + 27);
+						q = strstr(state, "previous_sequence_number=");
+						if (q)
+							prev_seq = atoi(q + 25);
+					}
+					fclose(sf);
+				}
+				if (pchg != prev_pchg && hops > 1 && pchg > 1) {
 					mesh_log_debug(ctx,
-						"path change peer [ %s ] hops [ %d ] metric [ %d ] changes [ %d ] via [ %s ]",
-						dest, hops, metric, pchg, nh);
+						"Station [ %s ] is [ %d ] hops away, path_change_count [ %d ]",
+						dest, hops, pchg);
+					mesh_log_info(ctx,
+						"Path to [ %s ], changed, [ %d ] hop(s) via [ %s ]",
+						dest, hops, nh);
+					(void)metric;
+					(void)seq;
+					(void)prev_seq;
+				}
+				{
+					char content[192];
+					snprintf(content, sizeof(content),
+						 "previous_path_change_count=%d\n"
+						 "previous_sequence_number=%d\n",
+						 pchg, seq);
+					mesh_file_write(statepath, content);
+				}
 			}
 		}
 	}
