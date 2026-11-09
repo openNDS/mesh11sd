@@ -268,6 +268,10 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 		mesh_get_portal_type(ctx);
 		mesh_ccpy_setup(ctx);
 
+		/* v7: manage_fallback_ula_route when portal_detect 4|5 every loop */
+		if (ctx->portal_detect == 4 || ctx->portal_detect == 5)
+			mesh_manage_fallback_ula_route(ctx);
+
 		if (ctx->auto_config != 0 ||
 		    access(MESH11SD_TMPDIR "/auto_config_test", F_OK) == 0 ||
 		    has_mesh_uci()) {
@@ -276,6 +280,11 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 
 		mesh_move_ethernet_to_vxlan_bridge(ctx);
 		mesh_set_root_bridge_priority(ctx);
+
+		/* v7: portal nodes also run manage_fallback_ula_route every loop */
+		if (!strcmp(ctx->detected_state, "portal"))
+			mesh_manage_fallback_ula_route(ctx);
+
 		mesh_block_bridge_loops(ctx);
 		mesh_pin_active_portal_arp(ctx);
 

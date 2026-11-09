@@ -5,7 +5,7 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 add_compile_options(-Wall -Wextra -D_GNU_SOURCE)
 
-set(MESH11SD_PACKAGE_VERSION "8.0.0_alpha17" CACHE STRING "Package version string")
+set(MESH11SD_PACKAGE_VERSION "8.0.0_alpha18" CACHE STRING "Package version string")
 if(NOT DEFINED MESH11SD_BUILD_COMMIT)
 	set(MESH11SD_BUILD_COMMIT "")
 endif()

@@ -3,6 +3,7 @@
  * Peer handoff sets network.<zone>.proto='dhcp' (not none), as v7.
  */
 #include "mesh11sd.h"
+#include <ctype.h>
 
 #include <signal.h>
 #include <stdio.h>
@@ -850,5 +851,346 @@ int mesh_check_odhcpd(struct mesh_ctx *ctx)
 		service_cmd("odhcpd", "restart");
 		odhcpd_check = 2;
 	}
+	return 0;
+}
+
+/* v7 manage_fallback_ula_route: ensure mesh11sd-owned ULAs on bridges.
+ * Each bridge gets:
+ *   1) prefix:ip6hint::1  (portal gateway ULA; portal add / peer delete)
+ *   2) prefix:ip6hint:EUI64 from bridge MAC (deterministic; portal_detect!=4)
+ * Do NOT touch kernel_ra / RA-derived addresses — only mesh11sd-owned ::1
+ * and EUI-64 IIDs (and stale ones with wrong subnet).
+ */
+static int ipv6_addr_present(const char *dev, const char *addr_with_pfx)
+{
+	char out[4096];
+	char *argv[] = { "ip", "-6", "addr", "show", "dev", (char *)dev, NULL };
+
+	if (mesh_run_capture(argv, out, sizeof(out)) != 0)
+		return 0;
+	return strstr(out, addr_with_pfx) != NULL;
+}
+
+static int ipv6_addr_add(const char *dev, const char *addr_with_pfx)
+{
+	char *argv[] = {
+		"ip", "-6", "addr", "add", (char *)addr_with_pfx, "dev",
+		(char *)dev, NULL
+	};
+	return mesh_run_capture(argv, NULL, 0);
+}
+
+static int ipv6_addr_del(const char *dev, const char *addr_with_pfx)
+{
+	char *argv[] = {
+		"ip", "-6", "addr", "del", (char *)addr_with_pfx, "dev",
+		(char *)dev, NULL
+	};
+	return mesh_run_capture(argv, NULL, 0);
+}
+
+/* v7: no U/L bit flip — insert fffe into bare MAC */
+static int eui64_from_mac(const char *mac, char *out, size_t outlen)
+{
+	char bare[32];
+	char eui[20];
+	size_t i, j = 0;
+
+	if (!mac || !mac[0])
+		return -1;
+	for (i = 0; mac[i] && j < sizeof(bare) - 1; i++) {
+		if (mac[i] == ':' || mac[i] == '-')
+			continue;
+		bare[j++] = (char)tolower((unsigned char)mac[i]);
+	}
+	bare[j] = '\0';
+	if (j != 12)
+		return -1;
+	/* v7: no U/L flip — insert fffe into bare MAC */
+	snprintf(eui, sizeof(eui), "%.6sfffe%.6s", bare, bare + 6);
+	snprintf(out, outlen, "%.4s:%.4s:%.4s:%.4s",
+		 eui, eui + 4, eui + 8, eui + 12);
+	return 0;
+}
+
+static int bridge_mac(const char *dev, char *out, size_t outlen)
+{
+	char path[128];
+	FILE *f;
+	char line[64];
+	size_t n;
+
+	snprintf(path, sizeof(path), "/sys/class/net/%s/address", dev);
+	f = fopen(path, "r");
+	if (!f)
+		return -1;
+	if (!fgets(line, sizeof(line), f)) {
+		fclose(f);
+		return -1;
+	}
+	fclose(f);
+	n = strcspn(line, "\r\n");
+	line[n] = '\0';
+	if (n < 11)
+		return -1;
+	snprintf(out, outlen, "%s", line);
+	return 0;
+}
+
+/* Ensure ::1 (Part 1) and EUI-64 (Part 2) ULAs for one bridge.
+ * portal_ula_1 = "prefix:hint::1" WITHOUT /64 (v7 $portal_ula); may be NULL
+ * to skip Part 1. subnet = this bridge's ip6hint for the EUI-64 /64. */
+static void ensure_bridge_ulas(struct mesh_ctx *ctx, const char *dev,
+			       const char *portal_ula_1, const char *subnet,
+			       int is_portal)
+{
+	char portal_addr[96];
+	char eui[40];
+	char mac[32];
+	char ula_addr[128];
+
+	if (!dev || !dev[0] || !ctx->ula_base[0])
+		return;
+
+	/* Part 1: portal ::1 — add on portal, delete on peer if leftover */
+	if (portal_ula_1 && portal_ula_1[0]) {
+		snprintf(portal_addr, sizeof(portal_addr), "%s/64", portal_ula_1);
+		if (is_portal) {
+			mesh_log_debug(ctx,
+				       "manage_fallback_ula_route - Node is a portal");
+			mesh_log_debug(ctx,
+				       "portal_ula_addr is [ %s ], checking...",
+				       portal_addr);
+			if (!ipv6_addr_present(dev, portal_addr)) {
+				mesh_log_info(ctx,
+					      "Portal mode → adding portal ULA %s to bridge %s",
+					      portal_addr, dev);
+				if (ipv6_addr_add(dev, portal_addr) == 0)
+					mesh_log_notice(ctx,
+							"Portal ULA %s added to %s",
+							portal_addr, dev);
+				else
+					mesh_log_err(ctx,
+						     "Failed to add portal ULA %s to %s",
+						     portal_addr, dev);
+			} else {
+				mesh_log_debug(ctx,
+					       "portal_ula_addr [ %s ] is present",
+					       portal_addr);
+			}
+		} else {
+			mesh_log_debug(ctx,
+				       "manage_fallback_ula_route - Node is a peer");
+			mesh_log_debug(ctx,
+				       "portal_ula_addr is [ %s ], checking...",
+				       portal_addr);
+			if (ipv6_addr_present(dev, portal_addr)) {
+				mesh_log_info(ctx,
+					      "Peer mode → deleting portal ULA %s from bridge %s",
+					      portal_addr, dev);
+				if (ipv6_addr_del(dev, portal_addr) == 0)
+					mesh_log_notice(ctx,
+							"Portal ULA %s deleted from %s",
+							portal_addr, dev);
+				else
+					mesh_log_err(ctx,
+						     "Failed to remove portal ULA %s from %s",
+						     portal_addr, dev);
+			}
+		}
+	}
+
+	/* Part 2: deterministic EUI-64 ULA (all nodes when portal_detect != 4) */
+	if (ctx->portal_detect == 4 || !subnet || !subnet[0])
+		return;
+	if (bridge_mac(dev, mac, sizeof(mac)) != 0)
+		return;
+	if (eui64_from_mac(mac, eui, sizeof(eui)) != 0)
+		return;
+	snprintf(ula_addr, sizeof(ula_addr), "%s:%s:%s/64",
+		 ctx->ula_base, subnet, eui);
+	if (!ipv6_addr_present(dev, ula_addr)) {
+		mesh_log_info(ctx,
+			      "Adding deterministic ULA address %s to bridge %s",
+			      ula_addr, dev);
+		if (ipv6_addr_add(dev, ula_addr) == 0)
+			mesh_log_notice(ctx, "ULA address %s added to %s",
+					ula_addr, dev);
+		else
+			mesh_log_err(ctx, "Failed to add ULA address %s to %s",
+				     ula_addr, dev);
+	}
+}
+
+/* Remove stale mesh11sd-owned ULAs on this bridge (wrong subnet ::1 / EUI64).
+ * Leaves kernel_ra and other non-mesh11sd addresses alone. */
+static void cleanup_stale_bridge_ulas(struct mesh_ctx *ctx, const char *dev,
+				     const char *want_subnet)
+{
+	char out[8192];
+	char mac[32];
+	char eui[40];
+	char *argv[] = { "ip", "-6", "addr", "show", "dev", (char *)dev, NULL };
+	char *p, *line;
+	char prefix_match[64];
+
+	if (!dev[0] || !ctx->ula_base[0] || !want_subnet[0])
+		return;
+	if (bridge_mac(dev, mac, sizeof(mac)) != 0)
+		return;
+	if (eui64_from_mac(mac, eui, sizeof(eui)) != 0)
+		return;
+	snprintf(prefix_match, sizeof(prefix_match), "inet6 %s:", ctx->ula_base);
+
+	if (mesh_run_capture(argv, out, sizeof(out)) != 0)
+		return;
+	p = out;
+	while ((line = strsep(&p, "\n")) != NULL) {
+		char addr[128];
+		char addr_only[128];
+		char old_subnet[16] = "";
+		char iid[64] = "";
+		char *slash;
+		char *tok;
+		int col = 0;
+		char tmp[128];
+		char *tp;
+		char portal_wrong[96];
+
+		if (!strstr(line, prefix_match))
+			continue;
+		/* parse "inet6 ADDR/64 ..." */
+		tok = strstr(line, "inet6 ");
+		if (!tok)
+			continue;
+		tok += 6;
+		sscanf(tok, "%127s", addr);
+		snprintf(addr_only, sizeof(addr_only), "%s", addr);
+		slash = strchr(addr_only, '/');
+		if (slash)
+			*slash = '\0';
+
+		/* hextets: 1:2:3:subnet:iid... */
+		snprintf(tmp, sizeof(tmp), "%s", addr_only);
+		tp = tmp;
+		while ((tok = strsep(&tp, ":")) != NULL) {
+			col++;
+			if (col == 4) {
+				snprintf(old_subnet, sizeof(old_subnet), "%s", tok);
+			} else if (col >= 5) {
+				size_t n = strlen(iid);
+				if (n && n + 1 < sizeof(iid)) {
+					iid[n++] = ':';
+					iid[n] = '\0';
+				}
+				snprintf(iid + strlen(iid),
+					 sizeof(iid) - strlen(iid), "%s", tok);
+			}
+		}
+		if (!old_subnet[0] || !strcmp(old_subnet, want_subnet))
+			continue;
+
+		snprintf(portal_wrong, sizeof(portal_wrong), "%s:%s::1",
+			 ctx->ula_base, old_subnet);
+		if (strcmp(iid, eui) != 0 && strcmp(addr_only, portal_wrong) != 0)
+			continue; /* not mesh11sd-owned — leave kernel_ra alone */
+
+		if (ipv6_addr_del(dev, addr) == 0)
+			mesh_log_notice(ctx, "Removed stale portal address %s from %s",
+					addr, dev);
+	}
+}
+
+static void ensure_sticky_onlink_route(struct mesh_ctx *ctx, const char *dev,
+				      const char *subnet)
+{
+	char pfx[96];
+	char out[4096];
+	char *show[] = { "ip", "-6", "route", "show", pfx, NULL };
+	char *add[] = {
+		"ip", "-6", "route", "add", pfx, "dev", (char *)dev,
+		"onlink", "metric", "512", "proto", "static", NULL
+	};
+
+	if (!dev[0] || !ctx->ula_base[0] || !subnet[0])
+		return;
+	snprintf(pfx, sizeof(pfx), "%s:%s::/64", ctx->ula_base, subnet);
+	show[4] = pfx;
+	add[4] = pfx;
+	if (mesh_run_capture(show, out, sizeof(out)) == 0 &&
+	    strstr(out, "proto static") && strstr(out, "metric 512") &&
+	    strstr(out, "onlink"))
+		return;
+	mesh_log_info(ctx,
+		      "Adding sticky fallback on-link route %s dev %s (peer auto-detect mode)",
+		      pfx, dev);
+	if (mesh_run_capture(add, NULL, 0) == 0)
+		mesh_log_notice(ctx, "Sticky fallback on-link route added on %s",
+				dev);
+	else
+		mesh_log_err(ctx, "Failed to add fallback route on %s", dev);
+}
+
+int mesh_manage_fallback_ula_route(struct mesh_ctx *ctx)
+{
+	const char *lan_dev;
+	char tun_dev[32];
+	int is_portal;
+
+	mesh_refresh_bridgemac(ctx);
+	lan_dev = ctx->device[0] ? ctx->device : "";
+	if (!lan_dev[0]) {
+		mesh_log_warn(ctx,
+			      "No %s/devicemac found → cannot determine bridge for ULA/route",
+			      MESH11SD_TMPDIR);
+		return 1;
+	}
+
+	mesh_set_ula_prefix(ctx, "get");
+	if (!ctx->ula_prefix[0] || !ctx->ula_base[0]) {
+		mesh_log_warn(ctx, "Could not determine ULA prefix for address/route");
+		return 1;
+	}
+	mesh_log_debug(ctx, "ula_base [ %s ]", ctx->ula_base);
+
+	if (mesh_get_portal_ula(ctx, "get") != 0)
+		return 1;
+
+	is_portal = (strcmp(ctx->detected_state, "portal") == 0);
+
+	/* br-lan: v7 $device — portal_ula (::1) + EUI64 in ula_subnet */
+	{
+		const char *lan_gw = ctx->portal_ula[0] ? ctx->portal_ula : NULL;
+		/* On portal, portal_ula is ula_base:ula_subnet::1; on peer it is
+		 * the remote portal's ::1 (Part 1 deletes leftover). */
+		ensure_bridge_ulas(ctx, lan_dev, lan_gw, ctx->ula_subnet, is_portal);
+		if (ctx->ula_subnet[0])
+			cleanup_stale_bridge_ulas(ctx, lan_dev, ctx->ula_subnet);
+	}
+
+	/* br-tun: same two ULAs using vtunlan ip6hint (ula_vxsubnet) */
+	if (ctx->vtun_enable && ctx->tun_id[0] && ctx->ula_vxsubnet[0]) {
+		char syspath[64];
+		char vtun_gw[96];
+		snprintf(tun_dev, sizeof(tun_dev), "br-tun%s", ctx->tun_id);
+		snprintf(syspath, sizeof(syspath), "/sys/class/net/%s", tun_dev);
+		snprintf(vtun_gw, sizeof(vtun_gw), "%s:%s::1",
+			 ctx->ula_base, ctx->ula_vxsubnet);
+		if (access(syspath, F_OK) == 0) {
+			ensure_bridge_ulas(ctx, tun_dev, vtun_gw, ctx->ula_vxsubnet,
+					   is_portal);
+			cleanup_stale_bridge_ulas(ctx, tun_dev, ctx->ula_vxsubnet);
+		}
+	}
+
+	/* Part 3: sticky on-link route (lan subnet; portal_detect 3 → br-wan) */
+	{
+		const char *rdev = lan_dev;
+		if (ctx->portal_detect == 3)
+			rdev = "br-wan";
+		if (ctx->ula_subnet[0])
+			ensure_sticky_onlink_route(ctx, rdev, ctx->ula_subnet);
+	}
+
 	return 0;
 }

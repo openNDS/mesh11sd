@@ -7,7 +7,7 @@
 #include <sys/types.h>
 
 #ifndef MESH11SD_VERSION
-#define MESH11SD_VERSION "8.0.0_alpha17"
+#define MESH11SD_VERSION "8.0.0_alpha18"
 #endif
 
 #define MESH11SD_TMPDIR "/tmp/mesh11sd"
@@ -199,6 +199,7 @@ int mesh_check_portal(struct mesh_ctx *ctx);
 int mesh_portal_watchdog(struct mesh_ctx *ctx);
 int mesh_set_ula_prefix(struct mesh_ctx *ctx, const char *mode);
 int mesh_get_portal_ula(struct mesh_ctx *ctx, const char *mode);
+int mesh_manage_fallback_ula_route(struct mesh_ctx *ctx); /* v7 ULA ::1 + EUI64 */
 int mesh_get_portal_type(struct mesh_ctx *ctx);
 int mesh_restore_ipv4(struct mesh_ctx *ctx);
 int mesh_check_odhcpd(struct mesh_ctx *ctx);
