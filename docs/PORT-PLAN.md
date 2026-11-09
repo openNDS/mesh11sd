@@ -32,10 +32,10 @@ Extra (no help, used internally/tests): get_indexed_mac, get_factory_mac, wifi_c
 
 ## Port chunks (order toward installable alpha)
 
-1. **Scaffold + simple CLI** (this chunk): dispatcher, version/help, debuglevel, enable, disable, minimal status, get_factory_mac, write_to_syslog/write_log/read_log, is_hex/str_to_hex/hex_to_str/is_ipv4addr_valid, uci_ops (uncommitted default; commit API stubs), init + default config, CMake/OpenWrt Makefile, stub `daemon` (no mesh apply).
-2. **Config load + daemon skeleton**: full get_current_setup option read, checkinterval loop, enabled gate, sys_setup, logging parity, procd respawn behaviour.
-3. **Wireless/radio helpers**: get_mesh_iflist, radiophy, get_wiphys, wifi_chipset_detect, get_valid_channels, is_channel_valid, country CLI, txpower/stations/mesh_rssi_threshold (live iw).
-4. **auto_config + ccpy_setup**: mesh/AP iface creation, backups `_mesh11sd_default`, encryption/OWE, mesh_params apply; honour `commit_all` when set.
+1. **Scaffold + simple CLI** (done): dispatcher, version/help, debuglevel, enable, disable, minimal status, get_factory_mac, write_to_syslog/write_log/read_log, is_hex/str_to_hex/hex_to_str/is_ipv4addr_valid, uci_ops (uncommitted default; commit API stubs), init + default config, CMake/OpenWrt Makefile, stub `daemon` (no mesh apply).
+2. **Config load + daemon skeleton** (done): full get_current_setup option read, checkinterval loop, enabled gate, sys_setup, logging parity, procd respawn behaviour.
+3. **Wireless/radio helpers** (done): get_mesh_iflist, radiophy, get_wiphys, wifi_chipset_detect, get_valid_channels, is_channel_valid, country CLI, txpower/stations/mesh_rssi_threshold (live iw).
+4. **auto_config + ccpy_setup** (done — core auto_config + backups; ccpy peer scan deferred): mesh/AP iface creation, backups `_mesh11sd_default`, encryption/OWE, mesh_params apply; honour `commit_all` when set.
 5. **Portal detect**: get_portal_state/type, check_portal, portal_watchdog, ULA, dhcp4 paths for peer/portal.
 6. **Bridge/vxlan/STP**: set_bridge_mac_addresses, vtunnel, block_bridge_loops, path cost, root priority.
 7. **Mobility + channel track**: mobility_settings, check_channel, check_gate, HWMP rootmode, path changes.

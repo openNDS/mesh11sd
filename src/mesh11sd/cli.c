@@ -79,6 +79,8 @@ static int cmd_status(struct mesh_ctx *ctx)
 	char procd[64] = "unknown";
 	FILE *f;
 
+	mesh_get_factory_mac(ctx, ctx->factory_mac, sizeof(ctx->factory_mac));
+
 	f = popen("/etc/init.d/mesh11sd status 2>/dev/null", "r");
 	if (f) {
 		if (!fgets(procd, sizeof(procd), f))
@@ -99,7 +101,12 @@ static int cmd_status(struct mesh_ctx *ctx)
 	printf("    \"procd_status\":\"%s\",\n", procd);
 	printf("    \"debuglevel\":\"%d\",\n", ctx->debuglevel);
 	printf("    \"commit_all\":\"%d\",\n", ctx->commit_all);
-	printf("    \"port_note\":\"chunk1-minimal-status\"\n");
+	printf("    \"auto_config\":\"%d\",\n", ctx->auto_config);
+	printf("    \"auto_mesh_band\":\"%s\",\n", ctx->auto_mesh_band);
+	printf("    \"portal_detect\":\"%d\",\n", ctx->portal_detect);
+	if (ctx->factory_mac[0])
+		printf("    \"label_mac\":\"%s\",\n", ctx->factory_mac);
+	printf("    \"checkinterval\":\"%d\"\n", ctx->checkinterval);
 	printf("  }\n");
 	printf("}\n");
 	return 0;
@@ -247,6 +254,79 @@ int mesh_cli_dispatch(struct mesh_ctx *ctx, int argc, char **argv)
 
 	if (!strcmp(cmd, "daemon"))
 		return mesh_daemon_run(ctx);
+
+	if (!strcmp(cmd, "txpower"))
+		return mesh_cli_txpower(ctx, argc >= 3 ? argv[2] : NULL);
+
+	if (!strcmp(cmd, "stations"))
+		return mesh_cli_stations(ctx);
+
+	if (!strcmp(cmd, "country"))
+		return mesh_cli_country(ctx, argc >= 3 ? argv[2] : NULL);
+
+	if (!strcmp(cmd, "mesh_rssi_threshold")) {
+		int force = (argc >= 4 && !strcmp(argv[3], "force"));
+		return mesh_cli_mesh_rssi_threshold(ctx, argc >= 3 ? argv[2] : NULL, force);
+	}
+
+	if (!strcmp(cmd, "get_valid_channels")) {
+		char ch[1024];
+		if (mesh_get_valid_channels(ch, sizeof(ch)) == 0)
+			printf("%s\n", ch);
+		return 0;
+	}
+
+	if (!strcmp(cmd, "is_channel_valid")) {
+		int rc = mesh_is_channel_valid(argc >= 3 ? argv[2] : "",
+					       argc >= 4 ? argv[3] : "");
+		puts(rc == 0 ? "valid" : "invalid");
+		return rc;
+	}
+
+	if (!strcmp(cmd, "get_wiphys")) {
+		mesh_get_wiphys(ctx);
+		printf("wiphys:");
+		for (int i = 0; i < ctx->wiphy_count; i++)
+			printf(" %s", ctx->wiphys[i]);
+		printf("\nradios:");
+		for (int i = 0; i < ctx->radio_count; i++)
+			printf(" %s", ctx->radios[i]);
+		printf("\n");
+		return 0;
+	}
+
+	if (!strcmp(cmd, "radiophy")) {
+		char phy[64];
+		int rc = mesh_radiophy(argc >= 3 ? argv[2] : "", phy, sizeof(phy));
+		if (rc == 0)
+			printf("%s\n", phy);
+		return rc == 0 ? 0 : 1;
+	}
+
+	if (!strcmp(cmd, "auto_config")) {
+		puts("auto_config CLI control is available via UCI; daemon applies it when enabled.");
+		puts("Usage: mesh11sd auto_config test | enable | disable  (partial in alpha2)");
+		if (argc >= 3 && !strcmp(argv[2], "enable")) {
+			mesh_uci_revert("mesh11sd");
+			mesh_uci_set("mesh11sd.setup.auto_config", "1");
+			mesh_uci_commit("mesh11sd");
+			puts("auto_config enabled (committed)");
+			return 0;
+		}
+		if (argc >= 3 && !strcmp(argv[2], "disable")) {
+			mesh_uci_revert("mesh11sd");
+			mesh_uci_set("mesh11sd.setup.auto_config", "0");
+			mesh_uci_commit("mesh11sd");
+			puts("auto_config disabled (committed)");
+			return 0;
+		}
+		if (argc >= 3 && !strcmp(argv[2], "test")) {
+			mesh_file_write(MESH11SD_TMPDIR "/auto_config_test", "");
+			puts("auto_config test mode armed (reboot clears)");
+			return 0;
+		}
+		return 1;
+	}
 
 	fprintf(stderr, "Unrecognised command - For help, try mesh11sd --help \n");
 	return 1;

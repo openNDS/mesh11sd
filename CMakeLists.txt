@@ -20,16 +20,21 @@ if(MESH11SD_BUILD_COMMIT STREQUAL "")
 endif()
 message(STATUS "mesh11sd ${MESH11SD_PACKAGE_VERSION} commit=${MESH11SD_BUILD_COMMIT}")
 
-add_executable(mesh11sd
+set(MESH11SD_SOURCES
 	src/mesh11sd/main.c
 	src/mesh11sd/cli.c
 	src/mesh11sd/daemon.c
-	src/lib/ctx.c
+	src/lib/config.c
 	src/lib/uci_ops.c
+	src/lib/util.c
 	src/lib/log.c
 	src/lib/hex.c
 	src/lib/factory_mac.c
+	src/lib/wireless.c
+	src/lib/auto_config.c
 )
+
+add_executable(mesh11sd ${MESH11SD_SOURCES})
 target_include_directories(mesh11sd PRIVATE src/lib)
 target_compile_definitions(mesh11sd PRIVATE
 	MESH11SD_VERSION="${MESH11SD_PACKAGE_VERSION}"

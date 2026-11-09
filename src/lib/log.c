@@ -228,3 +228,53 @@ int mesh_read_log(struct mesh_ctx *ctx, int follow)
 	snprintf(cmd, sizeof(cmd), "tail -F '%s' 2>/dev/null", logfile);
 	return system(cmd) == 0 ? 0 : 1;
 }
+
+#include <stdarg.h>
+
+static void mesh_log_v(struct mesh_ctx *ctx, const char *dtype, const char *fmt, va_list ap)
+{
+	char msg[512];
+
+	vsnprintf(msg, sizeof(msg), fmt, ap);
+	mesh_write_to_syslog(ctx, dtype, msg);
+}
+
+void mesh_log_info(struct mesh_ctx *ctx, const char *fmt, ...)
+{
+	va_list ap;
+	va_start(ap, fmt);
+	mesh_log_v(ctx, "info", fmt, ap);
+	va_end(ap);
+}
+
+void mesh_log_debug(struct mesh_ctx *ctx, const char *fmt, ...)
+{
+	va_list ap;
+	va_start(ap, fmt);
+	mesh_log_v(ctx, "debug", fmt, ap);
+	va_end(ap);
+}
+
+void mesh_log_notice(struct mesh_ctx *ctx, const char *fmt, ...)
+{
+	va_list ap;
+	va_start(ap, fmt);
+	mesh_log_v(ctx, "notice", fmt, ap);
+	va_end(ap);
+}
+
+void mesh_log_warn(struct mesh_ctx *ctx, const char *fmt, ...)
+{
+	va_list ap;
+	va_start(ap, fmt);
+	mesh_log_v(ctx, "warn", fmt, ap);
+	va_end(ap);
+}
+
+void mesh_log_err(struct mesh_ctx *ctx, const char *fmt, ...)
+{
+	va_list ap;
+	va_start(ap, fmt);
+	mesh_log_v(ctx, "err", fmt, ap);
+	va_end(ap);
+}
