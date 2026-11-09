@@ -91,20 +91,21 @@ static int cmd_status(struct mesh_ctx *ctx)
 				procd[--n] = '\0';
 		}
 	}
-	printf("{\n");
-	printf("  \"setup\":{\n");
-	printf("    \"version\":\"%s\",\n", MESH11SD_VERSION);
-	printf("    \"enabled\":\"%d\",\n", ctx->enabled);
-	printf("    \"auto_config\":\"%d\",\n", ctx->auto_config);
-	printf("    \"commit_all\":\"%d\",\n", ctx->commit_all);
-	printf("    \"portal_detect\":\"%d\",\n", ctx->portal_detect);
-	printf("    \"debuglevel\":\"%d\",\n", ctx->debuglevel);
-	printf("    \"detected_state\":\"%s\",\n",
-	       ctx->detected_state[0] ? ctx->detected_state : "unknown");
-	printf("    \"factory_mac\":\"%s\",\n", ctx->factory_mac);
-	printf("    \"procd_status\":\"%s\"\n", procd);
-	printf("  }\n");
-	printf("}\n");
+	/* Spod apmond-style JSON helpers (json_fmt.c) */
+	puts("{");
+	puts("  \"setup\":{");
+	mesh_json_field("    ", "version", MESH11SD_VERSION, 0);
+	mesh_json_field_int("    ", "enabled", ctx->enabled, 0);
+	mesh_json_field_int("    ", "auto_config", ctx->auto_config, 0);
+	mesh_json_field_int("    ", "commit_all", ctx->commit_all, 0);
+	mesh_json_field_int("    ", "portal_detect", ctx->portal_detect, 0);
+	mesh_json_field_int("    ", "debuglevel", ctx->debuglevel, 0);
+	mesh_json_field("    ", "detected_state",
+			ctx->detected_state[0] ? ctx->detected_state : "unknown", 0);
+	mesh_json_field("    ", "factory_mac", ctx->factory_mac, 0);
+	mesh_json_field("    ", "procd_status", procd, 1);
+	puts("  }");
+	puts("}");
 	return 0;
 }
 
@@ -247,6 +248,23 @@ int mesh_cli_dispatch(struct mesh_ctx *ctx, int argc, char **argv)
 			follow = 1;
 		return mesh_read_log(ctx, follow);
 	}
+
+	if (!strcmp(cmd, "connect"))
+		return mesh_cli_connect(ctx, argc, argv);
+	if (!strcmp(cmd, "copy"))
+		return mesh_cli_copy(ctx, argc, argv);
+	if (!strcmp(cmd, "mesh_leechmode"))
+		return mesh_cli_mesh_leechmode(ctx, argc >= 3 ? argv[2] : NULL);
+	if (!strcmp(cmd, "mesh_node_mobility_level"))
+		return mesh_cli_mesh_node_mobility_level(ctx, argc >= 3 ? argv[2] : NULL);
+	if (!strcmp(cmd, "force_ipv4_download"))
+		return mesh_cli_force_ipv4_download(ctx);
+	if (!strcmp(cmd, "download_revert_to_default"))
+		return mesh_cli_download_revert_to_default(ctx);
+	if (!strcmp(cmd, "dhcp4_renew"))
+		return mesh_cli_dhcp4_renew(ctx, argc >= 3 ? argv[2] : NULL);
+	if (!strcmp(cmd, "is_installed"))
+		return mesh_cli_is_installed(ctx, argc >= 3 ? argv[2] : NULL);
 
 	if (!strcmp(cmd, "daemon"))
 		return mesh_daemon_run(ctx);

@@ -36,6 +36,8 @@ set(MESH11SD_SOURCES
 	src/lib/bridge.c
 	src/lib/portal_metrics.c
 	src/lib/mobility.c
+	src/lib/remote_ops.c
+	src/lib/json_fmt.c
 )
 
 add_executable(mesh11sd ${MESH11SD_SOURCES})
