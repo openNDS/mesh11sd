@@ -207,6 +207,8 @@ int mesh_set_root_bridge_priority(struct mesh_ctx *ctx);
 int mesh_check_vtunnel(struct mesh_ctx *ctx);
 int mesh_create_vxlan_if(struct mesh_ctx *ctx);
 int mesh_block_bridge_loops(struct mesh_ctx *ctx);
+int mesh_move_ethernet_to_vxlan_bridge(struct mesh_ctx *ctx);
+int mesh_probe_interface_mac(struct mesh_ctx *ctx);
 int mesh_set_iface_path_cost(struct mesh_ctx *ctx, int path_cost,
 			     const char *bridge, const char *iface);
 

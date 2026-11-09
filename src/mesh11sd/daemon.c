@@ -67,12 +67,29 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 
 	if (ctx->auto_config > 0 ||
 	    access(MESH11SD_TMPDIR "/auto_config_test", F_OK) == 0) {
+		char setl[192];
+
+		/* v7 autostartup: revert+backup, dhcp defaults, then network apply */
 		mesh_backup_defaults(ctx);
 		if (ctx->portal_detect == 0 || ctx->portal_detect == 4)
 			mesh_set_ula_prefix(ctx, "set");
-		if (ctx->portal_detect != 3 && ctx->portal_detect != 4 &&
-		    ctx->portal_detect != 5) {
-			char setl[160];
+		if (ctx->portal_detect == 5) {
+			snprintf(setl, sizeof(setl),
+				 "set dhcp.%s.dhcpv4='disabled'", ctx->auto_mesh_network);
+			mesh_uci_batch_line(setl);
+			snprintf(setl, sizeof(setl),
+				 "set dhcp.%s.dhcpv6='disabled'", ctx->auto_mesh_network);
+			mesh_uci_batch_line(setl);
+			snprintf(setl, sizeof(setl),
+				 "set dhcp.%s.ra='disabled'", ctx->auto_mesh_network);
+			mesh_uci_batch_line(setl);
+			snprintf(setl, sizeof(setl),
+				 "set dhcp.%s.ignore='1'", ctx->auto_mesh_network);
+			mesh_uci_batch_line(setl);
+			snprintf(setl, sizeof(setl),
+				 "set network.%s.proto='dhcp'", ctx->auto_mesh_network);
+			mesh_uci_batch_line(setl);
+		} else if (ctx->portal_detect != 3 && ctx->portal_detect != 4) {
 			snprintf(setl, sizeof(setl),
 				 "set dhcp.%s.dhcpv4='server'", ctx->auto_mesh_network);
 			mesh_uci_batch_line(setl);
@@ -117,6 +134,21 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 				}
 			}
 		}
+		/* v7 ~11100: network restart, bridge mac, dnsmasq, firewall, probe */
+		{
+			char *nr[] = { "/sbin/service", "network", "restart", NULL };
+			mesh_run_capture(nr, NULL, 0);
+		}
+		mesh_move_ethernet_to_vxlan_bridge(ctx);
+		mesh_set_bridge_mac_addresses(ctx);
+		{
+			char *dns[] = { "/sbin/service", "dnsmasq", "restart", NULL };
+			char *fw[] = { "/sbin/service", "firewall", "restart", NULL };
+			mesh_run_capture(dns, NULL, 0);
+			mesh_run_capture(fw, NULL, 0);
+		}
+		sleep(5);
+		mesh_probe_interface_mac(ctx);
 	}
 
 	mesh_check_config_params(ctx);
@@ -129,6 +161,9 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 		int loop_interval = ctx->checkinterval;
 
 		mesh_ctx_load_setup(ctx);
+		if (access(MESH11SD_TMPDIR "/auto_config_test", F_OK) == 0 &&
+		    ctx->auto_config == 0)
+			mesh_log_warn(ctx, "Auto Config is in TEST mode");
 		if (!ctx->enabled) {
 			sleep((unsigned)ctx->checkinterval);
 			continue;
@@ -139,8 +174,21 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 			if (ctx->auto_config != 0 ||
 			    access(MESH11SD_TMPDIR "/auto_config_test", F_OK) == 0) {
 				mesh_log_debug(ctx, "Starting auto configure process");
-				if (mesh_auto_config(ctx) == 0)
+				if (mesh_auto_config(ctx) == 0) {
 					ctx->changed = 1;
+					/* ensure netifd/dnsmasq/firewall see new wireless (v7 apply sites) */
+					{
+						char *nr[] = { "/sbin/service", "network", "reload", NULL };
+						char *dns[] = { "/sbin/service", "dnsmasq", "restart", NULL };
+						char *fw[] = { "/sbin/service", "firewall", "restart", NULL };
+						mesh_run_capture(nr, NULL, 0);
+						mesh_move_ethernet_to_vxlan_bridge(ctx);
+						mesh_set_bridge_mac_addresses(ctx);
+						mesh_run_capture(dns, NULL, 0);
+						mesh_run_capture(fw, NULL, 0);
+					}
+					mesh_probe_interface_mac(ctx);
+				}
 			} else {
 				mesh_log_err(ctx, "auto_config is disabled. Please configure a mesh interface or enable auto_config....");
 				mesh_log_info(ctx, "Checkinterval [%d]", ctx->checkinterval);
@@ -172,6 +220,7 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 			mesh_set_bridge_mac_addresses(ctx);
 		}
 
+		mesh_move_ethernet_to_vxlan_bridge(ctx);
 		mesh_set_root_bridge_priority(ctx);
 		mesh_block_bridge_loops(ctx);
 

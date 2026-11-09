@@ -345,3 +345,104 @@ int mesh_block_bridge_loops(struct mesh_ctx *ctx)
 	}
 	return 0;
 }
+
+
+int mesh_move_ethernet_to_vxlan_bridge(struct mesh_ctx *ctx)
+{
+	char vxlan_bridge[32], mesh_bridge[64];
+	char out[4096];
+	char *show[] = { "brctl", "show", mesh_bridge, NULL };
+	char *p, *line;
+	int moved = 0;
+
+	if (!ctx->move_ethernet_to_vxlan_bridge)
+		return 0;
+	if (ctx->portal_detect == 3)
+		return 0;
+	if (!ctx->vtun_enable || !ctx->tun_id[0] || !strcmp(ctx->tun_id, "0"))
+		return 0;
+	snprintf(vxlan_bridge, sizeof(vxlan_bridge), "br-tun%s", ctx->tun_id);
+	snprintf(mesh_bridge, sizeof(mesh_bridge), "br-%s", ctx->auto_mesh_network);
+	show[2] = mesh_bridge;
+	{
+		char *chk[] = { "brctl", "show", vxlan_bridge, NULL };
+		if (mesh_run_capture(chk, out, sizeof(out)) != 0)
+			return 0;
+	}
+	if (mesh_run_capture(show, out, sizeof(out)) != 0)
+		return 0;
+	p = out;
+	while ((line = strsep(&p, "\n")) != NULL) {
+		char port[64];
+		char *tok = strrchr(line, '\t');
+		if (!tok)
+			tok = strrchr(line, ' ');
+		if (!tok)
+			continue;
+		while (*tok == ' ' || *tok == '\t')
+			tok++;
+		if (sscanf(tok, "%63s", port) != 1 || !port[0])
+			continue;
+		if (!strncmp(port, "m-11s-", 6) || !strncmp(port, "phy", 3) ||
+		    !strncmp(port, "vxradio", 7) || !strncmp(port, "vxlan", 5) ||
+		    !strncmp(port, "br-", 3))
+			continue;
+		if (strncmp(port, "lan", 3) && strncmp(port, "eth", 3) &&
+		    strncmp(port, "usb", 3) && strncmp(port, "enx", 3))
+			continue;
+		{
+			char *del[] = { "brctl", "delif", mesh_bridge, port, NULL };
+			char *add[] = { "brctl", "addif", vxlan_bridge, port, NULL };
+			char *up[] = { "ip", "link", "set", port, "up", NULL };
+			mesh_log_debug(ctx, "Moving %s from %s → %s", port, mesh_bridge, vxlan_bridge);
+			mesh_run_capture(del, NULL, 0);
+			mesh_run_capture(add, NULL, 0);
+			mesh_run_capture(up, NULL, 0);
+			moved++;
+		}
+	}
+	if (moved > 0)
+		mesh_log_notice(ctx, "Moved %d Ethernet port(s) to VXLAN bridge (%s)",
+				moved, vxlan_bridge);
+	{
+		char *up[] = { "ip", "link", "set", vxlan_bridge, "up", NULL };
+		mesh_run_capture(up, NULL, 0);
+	}
+	return 0;
+}
+
+int mesh_probe_interface_mac(struct mesh_ctx *ctx)
+{
+	int i;
+	char list[512] = "";
+
+	mesh_get_wiphys(ctx);
+	for (i = 0; i < ctx->wiphy_count; i++) {
+		char *add[] = {
+			"iw", "phy", ctx->wiphys[i], "interface", "add", "probe",
+			"type", "mesh", "mesh_id", "probe", NULL
+		};
+		char out[2048];
+		char mac[32] = "";
+		char *del[] = { "iw", "dev", "probe", "del", NULL };
+		mesh_run_capture(add, NULL, 0);
+		{
+			char *dev[] = { "iw", "dev", NULL };
+			if (mesh_run_capture(dev, out, sizeof(out)) == 0) {
+				char *p = strstr(out, "Interface probe");
+				if (p) {
+					char *a = strstr(p, "addr ");
+					if (a)
+						sscanf(a + 5, "%31s", mac);
+				}
+			}
+		}
+		if (mac[0]) {
+			size_t n = strlen(list);
+			snprintf(list + n, sizeof(list) - n, "%s%s", n ? " " : "", mac);
+		}
+		mesh_run_capture(del, NULL, 0);
+	}
+	mesh_log_debug(ctx, "dsa_mesh_maclist [ %s ]", list);
+	return 0;
+}

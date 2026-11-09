@@ -158,18 +158,28 @@ int mesh_restart_mesh(struct mesh_ctx *ctx)
 	mesh_log_debug(ctx, "restarting mesh");
 	mesh_set_txpower_uci(ctx);
 	mesh_mesh_gate_state(ctx);
+	mesh_mobility_settings(ctx, "config");
 	{
 		char *argv[] = { "wifi", NULL };
 		mesh_run_capture(argv, NULL, 0);
 	}
-	sleep(2);
-	mesh_get_mesh_iflist(ctx);
+	/* wait_for_mesh: give mesh ifaces time to appear */
+	{
+		int tries;
+		for (tries = 0; tries < 10; tries++) {
+			mesh_get_mesh_iflist(ctx);
+			if (ctx->iflist_count > 0)
+				break;
+			sleep(1);
+		}
+	}
 	if (ctx->device[0]) {
 		char *argv1[] = { "ip", "link", "set", ctx->device, "arp", "on", NULL };
 		char *argv2[] = { "ip", "link", "set", ctx->device, "multicast", "on", NULL };
 		mesh_run_capture(argv1, NULL, 0);
 		mesh_run_capture(argv2, NULL, 0);
 	}
+	mesh_mobility_settings(ctx, "runtime");
 	mesh_apply_mesh_params(ctx);
 	return 0;
 }
@@ -335,9 +345,15 @@ int mesh_auto_config(struct mesh_ctx *ctx)
 			snprintf(setl, sizeof(setl), "set wireless.%s.log_level='3'", ctx->radios[ri]);
 			mesh_uci_batch_line(setl);
 
-			snprintf(setl, sizeof(setl), "%s.country", ctx->radios[ri]);
+			snprintf(setl, sizeof(setl), "wireless.%s.country", ctx->radios[ri]);
 			if (mesh_uci_get(setl, ucicountry, sizeof(ucicountry)) != 0)
 				ucicountry[0] = '\0';
+			/* trim to first token like v7 awk '{printf "%s", $1}' */
+			{
+				char *sp = strchr(ucicountry, ' ');
+				if (sp)
+					*sp = '\0';
+			}
 			if (!ctx->country[0] && !ucicountry[0]) {
 				snprintf(setl, sizeof(setl), "set wireless.%s.country='%s'",
 					 ctx->radios[ri], dfs_etsi);
@@ -352,9 +368,14 @@ int mesh_auto_config(struct mesh_ctx *ctx)
 				mesh_uci_batch_line(setl);
 			}
 
-			snprintf(setl, sizeof(setl), "%s.band", ctx->radios[ri]);
+			snprintf(setl, sizeof(setl), "wireless.%s.band", ctx->radios[ri]);
 			if (mesh_uci_get(setl, band, sizeof(band)) != 0)
 				band[0] = '\0';
+			{
+				char *sp = strchr(band, ' ');
+				if (sp)
+					*sp = '\0';
+			}
 			mesh_log_debug(ctx, "wireless.%s.band [ %s ]", ctx->radios[ri], band);
 
 			if (!strcmp(ctx->auto_mesh_band, "2g40"))
@@ -384,7 +405,7 @@ int mesh_auto_config(struct mesh_ctx *ctx)
 
 			if (!strcmp(band, "2g") && !strcmp(ctx->auto_mesh_band, "2g40")) {
 				char htmode[32], ht40[32];
-				snprintf(setl, sizeof(setl), "%s.htmode", ctx->radios[ri]);
+				snprintf(setl, sizeof(setl), "wireless.%s.htmode", ctx->radios[ri]);
 				if (mesh_uci_get(setl, htmode, sizeof(htmode)) == 0) {
 					/* tr "20" "40" style: replace 20 with 40 in mode string */
 					char *h;
@@ -497,7 +518,7 @@ int mesh_auto_config(struct mesh_ctx *ctx)
 				mesh_radiophy(radio, phy, sizeof(phy));
 				snprintf(phyhex, sizeof(phyhex), "%x", phy_index_hex(phy));
 				radio_index_str(radio, radiohex, sizeof(radiohex));
-				snprintf(setl, sizeof(setl), "%s.band", radio);
+				snprintf(setl, sizeof(setl), "wireless.%s.band", radio);
 				if (mesh_uci_get(setl, band, sizeof(band)) != 0)
 					band[0] = '\0';
 				snprintf(setl, sizeof(setl), "%s.ssid", sect);
@@ -545,5 +566,6 @@ int mesh_auto_config(struct mesh_ctx *ctx)
 	mesh_mesh_gate_state(ctx);
 	mesh_restart_mesh(ctx);
 	mesh_log_debug(ctx, "auto config complete....");
+	mesh_log_info(ctx, "auto_config: mesh bring-up done (wifi applied)");
 	return 0;
 }
