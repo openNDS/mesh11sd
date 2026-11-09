@@ -247,6 +247,8 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 		if (has_mesh_uci()) {
 			mesh_get_mesh_iflist(ctx);
 			mesh_apply_mesh_params(ctx);
+			/* v7: check_mesh_phantom after check_mesh_params per mesh iface */
+			mesh_check_mesh_phantom(ctx);
 		}
 
 		/* portal_detect=0 forced MRP also uses check_portal */

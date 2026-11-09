@@ -717,3 +717,54 @@ int mesh_cli_mesh_rssi_threshold(struct mesh_ctx *ctx, const char *dir, int forc
 	printf("===========================================================================\n\n");
 	return 0;
 }
+
+
+/* v7 check_mesh_phantom: mpath next-hop 00:00:00:00:00:00 poisons HWMP — delete */
+int mesh_check_mesh_phantom(struct mesh_ctx *ctx)
+{
+	int i;
+
+	mesh_get_mesh_iflist(ctx);
+	for (i = 0; i < ctx->iflist_count; i++) {
+		char out[8192];
+		char *argv[] = {
+			"iw", "dev", ctx->iflist[i], "mpath", "dump", NULL
+		};
+		char *p, *line;
+		char prev[96] = "";
+
+		if (mesh_run_capture(argv, out, sizeof(out)) != 0)
+			continue;
+		p = out;
+		while ((line = strsep(&p, "\n")) != NULL) {
+			char dest[32], nexthop[32];
+			char key[96];
+
+			if (!line[0])
+				continue;
+			/* skip header */
+			if (!strncmp(line, "DEST", 4) || strstr(line, "NEXT HOP"))
+				continue;
+			if (sscanf(line, "%31s %31s", dest, nexthop) != 2)
+				continue;
+			if (strlen(dest) != 17 || strlen(nexthop) != 17)
+				continue;
+			snprintf(key, sizeof(key), "%s,%s", dest, nexthop);
+			if (prev[0] && !strcmp(prev, key))
+				continue;
+			snprintf(prev, sizeof(prev), "%s", key);
+			if (strcmp(nexthop, "00:00:00:00:00:00") != 0)
+				continue;
+			mesh_log_info(ctx, "Phantom meshnode detected [%s] - deleting",
+				      dest);
+			{
+				char *del[] = {
+					"iw", "dev", ctx->iflist[i], "mpath", "del",
+					dest, NULL
+				};
+				mesh_run_capture(del, NULL, 0);
+			}
+		}
+	}
+	return 0;
+}

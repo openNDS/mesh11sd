@@ -1021,12 +1021,17 @@ int mesh_update_vxlan_for_active_portal(struct mesh_ctx *ctx)
 
 int mesh_block_bridge_loops(struct mesh_ctx *ctx)
 {
-	/* v7: nft table bridge mesh11s + chain mesh_PRE (prerouting -350) */
-	char out[256];
+	/* v7 block_bridge_loops: table+chain, PLC discovery drop, per-port
+	 * own-MAC drop + accept. Re-run every loop — fw4 `service firewall
+	 * stop` flushes the entire nft ruleset (known fw4 bug). */
+	char out[16384];
+	char tableset[16384];
+	int rule_status = 0;
+	const char *powerline_discovery_mac = "00:b0:52:00:00:01";
 	char *list[] = { "nft", "-a", "list", "table", "bridge", "mesh11s", NULL };
 
 	mesh_refresh_bridgemac(ctx);
-	if (mesh_run_capture(list, out, sizeof(out)) != 0) {
+	if (mesh_run_capture(list, tableset, sizeof(tableset)) != 0) {
 		char *add[] = { "nft", "add", "table", "bridge", "mesh11s", NULL };
 		mesh_run_capture(add, NULL, 0);
 		{
@@ -1038,7 +1043,175 @@ int mesh_block_bridge_loops(struct mesh_ctx *ctx)
 			};
 			mesh_run_capture(c, NULL, 0);
 		}
+		tableset[0] = '\0';
+		mesh_run_capture(list, tableset, sizeof(tableset));
 	}
+
+	/* Single global rule for Qualcomm AR7400 PLC / HomePlug discovery MAC.
+	 * Those frames otherwise become phantom mpath entries. */
+	if (!strstr(tableset, powerline_discovery_mac)) {
+		char *rule[] = {
+			"nft", "add", "rule", "bridge", "mesh11s", "mesh_PRE",
+			"ether", "saddr", (char *)powerline_discovery_mac,
+			"counter", "drop",
+			NULL
+		};
+		if (mesh_run_capture(rule, out, sizeof(out)) != 0)
+			rule_status = 1;
+		/* refresh listing for subsequent rulecount checks */
+		mesh_run_capture(list, tableset, sizeof(tableset));
+	}
+
+	/* Bridges: brctl show lines with NF==4 start a bridge block */
+	{
+		char *brshow[] = { "brctl", "show", NULL };
+		char bridges[1024];
+		char *bp, *bline;
+		char bridge_names[16][64];
+		int nbridges = 0, bi;
+
+		bridges[0] = '\0';
+		if (mesh_run_capture(brshow, bridges, sizeof(bridges)) == 0) {
+			bp = bridges;
+			while ((bline = strsep(&bp, "\n")) != NULL) {
+				char a[64], b[64], c[64], d[64], e[64];
+				int nf = sscanf(bline, "%63s %63s %63s %63s %63s",
+						a, b, c, d, e);
+				/* header "bridge name ..." skipped; NF==4 => name id stp iface */
+				if (nf == 4 && strcmp(a, "bridge") != 0) {
+					if (nbridges < 16) {
+						snprintf(bridge_names[nbridges],
+							 sizeof(bridge_names[0]), "%s", a);
+						nbridges++;
+					}
+				}
+			}
+		}
+
+		for (bi = 0; bi < nbridges; bi++) {
+			const char *device = bridge_names[bi];
+			char br_mac[32] = "";
+			char stpout[8192];
+			char *sp, *sline;
+			char *iplink[] = { "ip", "link", "show", "dev", (char *)device, NULL };
+			char *stp[] = { "brctl", "showstp", (char *)device, NULL };
+
+			if (mesh_run_capture(iplink, out, sizeof(out)) == 0) {
+				char *m = strstr(out, "link/ether ");
+				if (m)
+					sscanf(m + 11, "%31s", br_mac);
+			}
+			if (!br_mac[0])
+				continue;
+
+			/* v7: get_mesh_iflist (unused in rule body; keep for parity) */
+			mesh_get_mesh_iflist(ctx);
+
+			if (mesh_run_capture(stp, stpout, sizeof(stpout)) != 0)
+				continue;
+
+			/* Ports: line before "port id" containing "(" */
+			{
+				char ports[32][64];
+				int nports = 0;
+				char *lines[256];
+				int nlines = 0, li;
+
+				sp = stpout;
+				while ((sline = strsep(&sp, "\n")) != NULL && nlines < 256)
+					lines[nlines++] = sline;
+				for (li = 0; li < nlines; li++) {
+					if (!strstr(lines[li], "port id"))
+						continue;
+					if (li == 0)
+						continue;
+					/* previous non-empty line with ( */
+					{
+						int k;
+						for (k = li - 1; k >= 0; k--) {
+							if (!lines[k][0])
+								continue;
+							if (strchr(lines[k], '(')) {
+								char pname[64];
+								if (sscanf(lines[k], "%63s", pname) == 1 &&
+								    nports < 32) {
+									snprintf(ports[nports],
+										 sizeof(ports[0]),
+										 "%s", pname);
+									nports++;
+								}
+							}
+							break;
+						}
+					}
+				}
+
+				for (li = 0; li < nports; li++) {
+					const char *br_iface = ports[li];
+					int rulecount = 0;
+					const char *q;
+					/* recount from live table each time */
+					tableset[0] = '\0';
+					mesh_run_capture(list, tableset, sizeof(tableset));
+					q = tableset;
+					while ((q = strstr(q, br_iface)) != NULL) {
+						/* word-ish match: preceded by non-alnum/_ or start */
+						if (q == tableset ||
+						    !(isalnum((unsigned char)q[-1]) || q[-1] == '_' ||
+						      q[-1] == '-' || q[-1] == '.')) {
+							char after = q[strlen(br_iface)];
+							if (!isalnum((unsigned char)after) &&
+							    after != '_' && after != '-' &&
+							    after != '.')
+								rulecount++;
+						}
+						q += strlen(br_iface);
+					}
+					if (rulecount >= 2)
+						continue;
+
+					/* Drop frames that appear to come from our own bridge MAC */
+					{
+						char *drop[] = {
+							"nft", "add", "rule", "bridge", "mesh11s",
+							"mesh_PRE",
+							"meta", "iifname", (char *)br_iface,
+							"ether", "saddr", br_mac,
+							"counter", "drop",
+							NULL
+						};
+						if (mesh_run_capture(drop, out, sizeof(out)) != 0)
+							rule_status = 1;
+					}
+					/* Accept everything else on this interface */
+					{
+						char *acc[] = {
+							"nft", "add", "rule", "bridge", "mesh11s",
+							"mesh_PRE",
+							"meta", "iifname", (char *)br_iface,
+							"counter", "accept",
+							NULL
+						};
+						if (mesh_run_capture(acc, out, sizeof(out)) != 0)
+							rule_status = 1;
+					}
+				}
+			}
+		}
+	}
+
+	if (rule_status > 0) {
+		mesh_log_info(ctx,
+			      "-------------------------------------------------------------------------------------------------------------------------");
+		mesh_log_info(ctx,
+			      "******* WARNING ******* Unable to add nftables rule(s) - error code [ %d ]. Is the kmod-nft-bridge package installed?",
+			      rule_status);
+		mesh_log_info(ctx,
+			      "******* WARNING ******* A severe mesh bridge-loop storm is likely to occur if any non-mesh backhaul segments are used!");
+		mesh_log_info(ctx,
+			      "-------------------------------------------------------------------------------------------------------------------------");
+	}
+	mesh_refresh_bridgemac(ctx);
 	return 0;
 }
 

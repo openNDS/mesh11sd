@@ -1,6 +1,6 @@
 CC ?= gcc
 CFLAGS ?= -Wall -Wextra -O2 -D_GNU_SOURCE
-CPPFLAGS += -Isrc/lib -DMESH11SD_VERSION=\"8.0.0_alpha15\"
+CPPFLAGS += -Isrc/lib -DMESH11SD_VERSION=\"8.0.0_alpha16\"
 SRCS = src/mesh11sd/main.c src/mesh11sd/cli.c src/mesh11sd/daemon.c \
 	src/lib/config.c src/lib/uci_ops.c src/lib/util.c src/lib/log.c \
 	src/lib/hex.c src/lib/factory_mac.c src/lib/wireless.c src/lib/auto_config.c \
