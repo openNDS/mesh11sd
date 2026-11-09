@@ -452,6 +452,8 @@ static void peer_handoff(struct mesh_ctx *ctx)
 	mesh_uci_batch_line("set dhcp.@dnsmasq[0].authoritative='0'");
 	snprintf(setl, sizeof(setl), "set dhcp.%s.ignore='1'", ctx->auto_mesh_network);
 	mesh_uci_batch_line(setl);
+	snprintf(setl, sizeof(setl), "set dhcp.%s.force='0'", ctx->auto_mesh_network);
+	mesh_uci_batch_line(setl);
 	snprintf(setl, sizeof(setl), "set dhcp.%s.ra_default='2'", ctx->auto_mesh_network);
 	mesh_uci_batch_line(setl);
 	snprintf(setl, sizeof(setl), "set dhcp.%s.dhcpv6='disabled'", ctx->auto_mesh_network);
@@ -547,6 +549,13 @@ static void portal_handoff(struct mesh_ctx *ctx)
 	}
 	snprintf(setl, sizeof(setl), "set dhcp.%s.ignore='0'", ctx->auto_mesh_network);
 	mesh_uci_batch_line(setl);
+	/* OpenWrt dnsmasq init runs udhcpc dhcp_check on the bridge; another
+	 * portal's DHCP offer makes it refuse the lan range unless force=1.
+	 * v7 sets authoritative=1 (multi-server NAK) but not force; without force
+	 * a dnsmasq restart while a second portal is visible drops lan DHCP.
+	 * ARP pin (mesh_ARP) only drops foreign gateway ARP — not UDP 67/68. */
+	snprintf(setl, sizeof(setl), "set dhcp.%s.force='1'", ctx->auto_mesh_network);
+	mesh_uci_batch_line(setl);
 	snprintf(setl, sizeof(setl), "set dhcp.%s.ra_default='2'", ctx->auto_mesh_network);
 	mesh_uci_batch_line(setl);
 	snprintf(setl, sizeof(setl), "set dhcp.%s.dhcpv6='server'", ctx->auto_mesh_network);
@@ -577,6 +586,7 @@ static void portal_handoff(struct mesh_ctx *ctx)
 		mesh_uci_batch_line("set dhcp.vtunlan.dhcpv6='server'");
 		mesh_uci_batch_line("set dhcp.vtunlan.ra='server'");
 		mesh_uci_batch_line("set dhcp.vtunlan.ignore='0'");
+		mesh_uci_batch_line("set dhcp.vtunlan.force='1'");
 		mesh_uci_batch_line("del_list dhcp.vtunlan.ra_flags='none'");
 		mesh_uci_batch_line("del_list dhcp.vtunlan.ra_flags='managed-config'");
 		mesh_uci_batch_line("del_list dhcp.vtunlan.ra_flags='other-config'");
@@ -604,6 +614,50 @@ static void portal_handoff(struct mesh_ctx *ctx)
 		ctx->daemon_startup = 0;
 }
 
+
+
+/* Ensure portal dhcp sections have force=1 so OpenWrt dnsmasq init does not
+ * drop ranges when another portal answers the udhcpc dhcp_check probe.
+ * Idempotent; restarts dnsmasq once if UCI changed (heals pre-alpha20 portals). */
+int mesh_ensure_portal_dhcp_force(struct mesh_ctx *ctx)
+{
+	char cur[16];
+	char key[96];
+	int changed = 0;
+
+	if (strcmp(ctx->detected_state, "portal") != 0)
+		return 0;
+
+	snprintf(key, sizeof(key), "dhcp.%s.force", ctx->auto_mesh_network);
+	if (mesh_uci_get(key, cur, sizeof(cur)) != 0 || atoi(cur) != 1) {
+		mesh_uci_set(key, "1");
+		changed = 1;
+	}
+	if (ctx->vtun_enable) {
+		char vxname[32];
+		char out[64];
+		char *show[] = { "ip", "link", "show", vxname, NULL };
+		int vxlan_up;
+
+		snprintf(vxname, sizeof(vxname), "vxlan%s",
+			 ctx->tun_id[0] ? ctx->tun_id : "69");
+		show[3] = vxname;
+		vxlan_up = (mesh_run_capture(show, out, sizeof(out)) == 0);
+		if (vxlan_up) {
+			if (mesh_uci_get("dhcp.vtunlan.force", cur, sizeof(cur)) != 0 ||
+			    atoi(cur) != 1) {
+				mesh_uci_set("dhcp.vtunlan.force", "1");
+				changed = 1;
+			}
+		}
+	}
+	if (changed) {
+		mesh_log_notice(ctx,
+				"dhcp force=1 on portal (defeat dnsmasq dhcp_check vs other portals)");
+		service_cmd_bg("dnsmasq", "restart");
+	}
+	return changed;
+}
 
 int mesh_check_portal(struct mesh_ctx *ctx)
 {

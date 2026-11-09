@@ -7,7 +7,7 @@
 #include <sys/types.h>
 
 #ifndef MESH11SD_VERSION
-#define MESH11SD_VERSION "8.0.0_alpha19"
+#define MESH11SD_VERSION "8.0.0_alpha20"
 #endif
 
 #define MESH11SD_TMPDIR "/tmp/mesh11sd"
@@ -196,6 +196,7 @@ int mesh_apply_mesh_params(struct mesh_ctx *ctx);
 /* portal / peer */
 int mesh_get_portal_state(struct mesh_ctx *ctx);
 int mesh_check_portal(struct mesh_ctx *ctx);
+int mesh_ensure_portal_dhcp_force(struct mesh_ctx *ctx);
 int mesh_portal_watchdog(struct mesh_ctx *ctx);
 int mesh_set_ula_prefix(struct mesh_ctx *ctx, const char *mode);
 int mesh_get_portal_ula(struct mesh_ctx *ctx, const char *mode);

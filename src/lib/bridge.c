@@ -714,6 +714,7 @@ int mesh_create_vxlan_if(struct mesh_ctx *ctx)
 		mesh_uci_batch_line("set dhcp.vtunlan.dhcpv6='server'");
 		mesh_uci_batch_line("set dhcp.vtunlan.ra='server'");
 		mesh_uci_batch_line("set dhcp.vtunlan.ignore='0'");
+		mesh_uci_batch_line("set dhcp.vtunlan.force='1'");
 		mesh_uci_batch_line("del_list dhcp.vtunlan.ra_flags='none'");
 		mesh_uci_batch_line("del_list dhcp.vtunlan.ra_flags='managed-config'");
 		mesh_uci_batch_line("del_list dhcp.vtunlan.ra_flags='other-config'");
