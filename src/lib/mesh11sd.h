@@ -7,7 +7,7 @@
 #include <sys/types.h>
 
 #ifndef MESH11SD_VERSION
-#define MESH11SD_VERSION "8.0.0_alpha4"
+#define MESH11SD_VERSION "8.0.0_alpha5"
 #endif
 
 #define MESH11SD_TMPDIR "/tmp/mesh11sd"
