@@ -15,6 +15,7 @@ void mesh_ctx_init(struct mesh_ctx *ctx, int is_daemon)
 	ctx->debuglevel = 3;
 	ctx->enabled = 1;
 	ctx->checkinterval = 10;
+	ctx->channel_tracking_checkinterval = 26; /* v7: checkinterval*8/3 */
 	ctx->loop_interval_delta = 20;
 	ctx->max_log_entries = 500;
 	ctx->interface_timeout = 10;
@@ -188,6 +189,16 @@ int mesh_ctx_load_setup(struct mesh_ctx *ctx)
 		ctx->portal_use_default_ipv4 = parse_int_default(buf, 0);
 	else
 		ctx->portal_use_default_ipv4 = 0;
+
+	/* v7: default checkinterval*8/3 (10 → 26) */
+	if (mesh_uci_get("mesh11sd.setup.channel_tracking_checkinterval",
+			 buf, sizeof(buf)) == 0 && buf[0])
+		ctx->channel_tracking_checkinterval = parse_int_default(
+			buf, ctx->checkinterval * 8 / 3);
+	else
+		ctx->channel_tracking_checkinterval = ctx->checkinterval * 8 / 3;
+	mesh_log_info(ctx, "option channel_tracking_checkinterval [ %d ]",
+		      ctx->channel_tracking_checkinterval);
 
 	if (mesh_uci_get("mesh11sd.setup.portal_detect_threshold", buf, sizeof(buf)) == 0)
 		ctx->portal_detect_threshold = parse_int_default(buf, 5);

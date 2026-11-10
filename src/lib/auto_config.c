@@ -221,10 +221,35 @@ int mesh_apply_mesh_params(struct mesh_ctx *ctx)
 				continue;
 			if (!strcmp(live, conf))
 				continue;
-			/* v7: mesh_rssi_threshold only once per boot unless forced */
-			if (!strcmp(name, "mesh_rssi_threshold") &&
-			    access(MESH11SD_TMPDIR "/mesh_rssi_threshold", F_OK) == 0)
+			/* v7 check_mesh_params: rssi is applied only if the
+			 * $tmpdir/mesh_rssi_threshold lock is absent; then write
+			 * meshinterface and call all_nodes_rssi_update (may wifi).
+			 * The lock is created by the CLI (no force), not here. */
+			if (!strcmp(name, "mesh_rssi_threshold")) {
+				char content[96];
+				char *argv[] = {
+					"iw", "dev", (char *)iface, "set", "mesh_param",
+					name, conf, NULL
+				};
+				char iwstatus[256] = "";
+
+				if (access(MESH11SD_TMPDIR "/mesh_rssi_threshold",
+					   F_OK) == 0)
+					continue;
+				mesh_log_info(ctx,
+					      "Old value:%s=%s, Setting new value:%s=%s",
+					      name, live, name, conf);
+				mesh_run_capture(argv, iwstatus, sizeof(iwstatus));
+				if (iwstatus[0])
+					mesh_log_err(ctx, "%s: %s", name, iwstatus);
+				ctx->mesh_rssi_threshold = atoi(conf);
+				snprintf(content, sizeof(content),
+					 "meshinterface=\"%s\"\n", iface);
+				mesh_file_write(MESH11SD_TMPDIR "/meshinterface",
+						content);
+				mesh_all_nodes_rssi_update(ctx);
 				continue;
+			}
 			mesh_log_info(ctx,
 				      "Old value:%s=%s, Setting new value:%s=%s",
 				      name, live, name, conf);
@@ -238,16 +263,48 @@ int mesh_apply_mesh_params(struct mesh_ctx *ctx)
 				if (iwstatus[0])
 					mesh_log_err(ctx, "%s: %s", name, iwstatus);
 			}
-			if (!strcmp(name, "mesh_rssi_threshold"))
-				mesh_file_write(MESH11SD_TMPDIR "/mesh_rssi_threshold",
-						conf);
 		}
 	}
 	return 0;
 }
 
+int mesh_all_nodes_rssi_update(struct mesh_ctx *ctx)
+{
+	int ri;
+
+	/* v7 all_nodes_rssi_update: restart_mesh only if auto_config > 0,
+	 * $tmpdir/meshinterface exists, and $tmpdir/mesh_rssi_threshold does not. */
+	if (ctx->auto_config <= 0)
+		return 0;
+	if (access(MESH11SD_TMPDIR "/meshinterface", F_OK) != 0)
+		return 0;
+	if (access(MESH11SD_TMPDIR "/mesh_rssi_threshold", F_OK) == 0)
+		return 0;
+
+	mesh_log_debug(ctx, "Disconnecting nodes");
+	unlink(MESH11SD_TMPDIR "/meshinterface");
+	mesh_get_wiphys(ctx);
+	for (ri = 0; ri < ctx->radio_count; ri++) {
+		char radiohex[8], setl[160];
+
+		radio_index_str(ctx->radios[ri], radiohex, sizeof(radiohex));
+		snprintf(setl, sizeof(setl),
+			 "set wireless.m11s%s.mesh_rssi_threshold='%d'",
+			 radiohex, ctx->mesh_rssi_threshold);
+		mesh_uci_batch_line(setl);
+	}
+	return mesh_restart_mesh(ctx);
+}
+
 int mesh_restart_mesh(struct mesh_ctx *ctx)
 {
+	static int in_restart;
+
+	/* apply_mesh_params may call all_nodes_rssi_update; v7's restart_mesh
+	 * does not call check_mesh_params, so do not recurse into wifi. */
+	if (in_restart)
+		return 0;
+	in_restart = 1;
 	mesh_log_debug(ctx, "restarting mesh");
 	mesh_set_txpower_uci(ctx);
 	mesh_mesh_gate_state(ctx);
@@ -274,6 +331,7 @@ int mesh_restart_mesh(struct mesh_ctx *ctx)
 	}
 	mesh_mobility_settings(ctx, "runtime");
 	mesh_apply_mesh_params(ctx);
+	in_restart = 0;
 	return 0;
 }
 
@@ -816,8 +874,9 @@ int mesh_fixup_wireless_macaddrs(struct mesh_ctx *ctx)
 				mesh_uci_batch_line(setl);
 				mesh_log_notice(ctx, "Setting mac address of %s to [ %s ]",
 						ifn, want);
-				/* v7 leaves changed alone for AP, but firstloop always wifi'd.
-				 * Mark changed so a non-firstloop macfixup still triggers wifi. */
+				/* v7 leaves changed alone for AP (firstloop covers it).
+				 * Mark changed so a later all_nodes_rssi_update can wifi
+				 * if the rssi lock is absent. */
 				ctx->changed = 1;
 				did = 1;
 			}

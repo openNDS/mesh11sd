@@ -185,6 +185,9 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 		mesh_probe_interface_mac(ctx);
 	}
 
+	/* v7 ~11124: drop the previous-run rssi lock before the main loop */
+	unlink(MESH11SD_TMPDIR "/mesh_rssi_threshold");
+
 	mesh_check_config_params(ctx);
 	mesh_sys_setup(ctx);
 	mesh_get_portal_ula(ctx, "discover");
@@ -254,17 +257,48 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 			mesh_fixup_wireless_macaddrs(ctx);
 		}
 
-		/* v7: firstloop/changed → all_nodes_rssi_update → restart_mesh (wifi).
-		 * Previously only wifi'd when changed; firstloop alone skipped wifi so
-		 * 5g APs could stay half-up (beacon/TX ok, rx_packets=0, no DHCP) after
-		 * service restart until a manual `wifi`. */
+		/* v7 ~11271: firstloop/changed only touches meshinterface and calls
+		 * all_nodes_rssi_update. That runs restart_mesh (wifi) only if
+		 * meshinterface exists and mesh_rssi_threshold does not — not on
+		 * every firstloop. Alpha19 wifid unconditionally, which breaks
+		 * 5g on mt7996e when the mesh is already up. */
 		if (ctx->firstloop || ctx->changed) {
 			ctx->firstloop = 0;
 			ctx->changed = 0;
-			mesh_set_txpower_uci(ctx);
+			mesh_set_led(ctx, "on");
+			/* Startup removes the rssi lock (v7 ~11124), so a live,
+			 * already-correct mesh would still wifi here. If a mesh
+			 * iface is up with the configured threshold, restore the
+			 * lock so a normal start does not run wifi. */
+			if (access(MESH11SD_TMPDIR "/mesh_rssi_threshold", F_OK) != 0) {
+				char conf[64];
+				int i;
+
+				if (mesh_uci_get("mesh11sd.mesh_params.mesh_rssi_threshold",
+						 conf, sizeof(conf)) != 0 || !conf[0])
+					snprintf(conf, sizeof(conf), "%d",
+						 ctx->mesh_rssi_threshold);
+				mesh_get_mesh_iflist(ctx);
+				for (i = 0; i < ctx->iflist_count; i++) {
+					char live[64] = "";
+					char *argv[] = {
+						"iw", "dev", ctx->iflist[i], "get",
+						"mesh_param", "mesh_rssi_threshold",
+						NULL
+					};
+					if (mesh_run_capture(argv, live, sizeof(live)) != 0)
+						continue;
+					if (atoi(live) == atoi(conf)) {
+						mesh_file_write(MESH11SD_TMPDIR
+								"/mesh_rssi_threshold",
+								conf);
+						break;
+					}
+				}
+			}
+			/* v7: touch "$tmpdir/meshinterface" */
 			mesh_file_write(MESH11SD_TMPDIR "/meshinterface", "");
-			unlink(MESH11SD_TMPDIR "/meshinterface");
-			mesh_restart_mesh(ctx);
+			mesh_all_nodes_rssi_update(ctx);
 		}
 
 		if (has_mesh_uci()) {

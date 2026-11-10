@@ -449,7 +449,28 @@ int mesh_refresh_bridgemac(struct mesh_ctx *ctx)
 		char *p = out, *line;
 		int take = 0;
 		while ((line = strsep(&p, "\n")) != NULL) {
-			if (strstr(line, device) && strstr(line, ":"))
+			/* v7: grep -A 1 "$device:" — match the ifname field
+			 * ("2: br-lan:"), not a later "master br-lan" token
+			 * on eth1/lan ports. */
+			const char *q = line;
+			int is_dev = 0;
+
+			if (*q >= '0' && *q <= '9') {
+				while (*q >= '0' && *q <= '9')
+					q++;
+				if (*q == ':') {
+					q++;
+					while (*q == ' ')
+						q++;
+					{
+						size_t n = strlen(device);
+						if (strncmp(q, device, n) == 0 &&
+						    q[n] == ':')
+							is_dev = 1;
+					}
+				}
+			}
+			if (is_dev)
 				take = 1;
 			else if (take && strstr(line, "link/ether")) {
 				char *m = strstr(line, "link/ether ");

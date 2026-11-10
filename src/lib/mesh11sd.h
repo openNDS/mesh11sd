@@ -7,7 +7,7 @@
 #include <sys/types.h>
 
 #ifndef MESH11SD_VERSION
-#define MESH11SD_VERSION "8.0.0_alpha22"
+#define MESH11SD_VERSION "8.0.0_alpha23"
 #endif
 
 #define MESH11SD_TMPDIR "/tmp/mesh11sd"
@@ -191,6 +191,7 @@ int mesh_backup_defaults(struct mesh_ctx *ctx);
 int mesh_auto_config(struct mesh_ctx *ctx);
 int mesh_mesh_gate_state(struct mesh_ctx *ctx);
 int mesh_restart_mesh(struct mesh_ctx *ctx);
+int mesh_all_nodes_rssi_update(struct mesh_ctx *ctx);
 int mesh_apply_mesh_params(struct mesh_ctx *ctx);
 
 /* portal / peer */
