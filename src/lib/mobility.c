@@ -237,7 +237,12 @@ static void phy_read_runtime_values(const char *phy, int *rts, int *limit, int *
 	waitpid(pid, &status, 0);
 	/* iw phy info does not print FQ limit/quantum on mt76; those live in aqm */
 	phy_read_aqm(phy, limit, quantum);
-	/* Some drivers (ath11k) omit the RTS line; debugfs may exist but stay -1 */
+	/*
+	 * iw omits the wiphy-level RTS line when rts is off (-1), and
+	 * multi-radio phys only show per-radio "RTS Threshold: -1" lines.
+	 * So a missing line means off. Drivers that ignore rts (ath11k)
+	 * look the same; they are caught by the read-back after a write.
+	 */
 	if (*rts == PHY_VAL_UNKNOWN) {
 		char rpath[192];
 		int rv;
@@ -246,6 +251,8 @@ static void phy_read_runtime_values(const char *phy, int *rts, int *limit, int *
 			 "/sys/kernel/debug/ieee80211/%s/rts_threshold", phy);
 		if (mesh_sysfs_read_int(rpath, &rv) == 0 && rv >= 0)
 			*rts = rv;
+		else
+			*rts = PHY_VAL_OFF;
 	}
 }
 
@@ -425,13 +432,8 @@ static int phy_wide_differs(struct mesh_ctx *ctx, const char *phy,
 	if (!phy || !phy[0] || !e->valid_targets)
 		return 0;
 	phy_read_runtime_values(phy, &cur_rts, &cur_lim, &cur_q);
-	if (!rts_is_unsupported(phy)) {
-		if (cur_rts == PHY_VAL_UNKNOWN)
-			rts_mark_unsupported(ctx, phy,
-					     "cannot read RTS threshold");
-		else if (cur_rts != e->rts)
-			return 1;
-	}
+	if (!rts_is_unsupported(phy) && cur_rts != e->rts)
+		return 1;
 	if (cur_lim != e->limit || cur_q != e->quantum)
 		return 1;
 	snprintf(aqlpath, sizeof(aqlpath),
@@ -462,8 +464,6 @@ static int phy_apply_wide(struct mesh_ctx *ctx, const char *phy,
 	phy_read_runtime_values(phy, &cur_rts, &cur_lim, &cur_q);
 	if (rts_is_unsupported(phy)) {
 		/* Driver cannot report or honour RTS; never write it. */
-	} else if (cur_rts == PHY_VAL_UNKNOWN) {
-		rts_mark_unsupported(ctx, phy, "cannot read RTS threshold");
 	} else if (cur_rts != e->rts) {
 		char *a1[] = { "iw", "phy", (char *)phy, "set", "rts", rts_s, NULL };
 		int after_rts, after_lim, after_q;
