@@ -229,6 +229,13 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 			continue;
 		}
 
+		/* Block auto_config (and further config this pass) until
+		 * requirements are met: no ath10k-ct, ip-full, mesh wpad. */
+		if (mesh_check_requirements(ctx) != 0) {
+			sleep((unsigned)ctx->checkinterval);
+			continue;
+		}
+
 		if (!has_mesh_uci()) {
 			mesh_log_info(ctx, "No mesh interfaces detected yet.... Attempting auto configure");
 			if (ctx->auto_config != 0 ||

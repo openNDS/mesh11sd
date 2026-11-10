@@ -128,6 +128,7 @@ int mesh_sha256_hex(const char *in, char *out, size_t outlen);
 int mesh_sha256_hex_echo(const char *in, char *out, size_t outlen); /* v7 echo|sha256sum */
 int mesh_is_installed(const char *package);
 int mesh_check_package_any(const char *const *names, int *installed_flags);
+int mesh_check_requirements(struct mesh_ctx *ctx); /* 0=ok, -1=unmet; logs on change */
 int mesh_file_write(const char *path, const char *content);
 int mesh_mkdir_p(const char *path);
 /* ignore_ip: current network.*.ipaddr (no CIDR) so re-entry is idempotent —

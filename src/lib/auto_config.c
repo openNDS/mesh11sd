@@ -406,10 +406,6 @@ static int mesh_capable_phy(const char *phy)
 
 int mesh_auto_config(struct mesh_ctx *ctx)
 {
-	const char *wpad_pkgs[] = {
-		"wpad-mbedtls", "wpad-wolfssl", "wpad-openssl",
-		"wpad-mesh-mbedtls", "wpad-mesh-wolfssl", "wpad-mesh-openssl", NULL
-	};
 	const char *dfs_etsi = "AD";
 	int meshifenabled = 0;
 	int wi, ri;
@@ -418,11 +414,8 @@ int mesh_auto_config(struct mesh_ctx *ctx)
 
 	mesh_log_debug(ctx, "Entering auto config....");
 
-	if (mesh_is_installed("kmod-ath10k-ct") == 0) {
-		mesh_log_err(ctx, "Unable to autoconfigure. Please install ath10k NON ct drivers for mesh support");
-		sleep(5);
+	if (mesh_check_requirements(ctx) != 0)
 		return -1;
-	}
 
 	snprintf(setl, sizeof(setl), "set dhcp.odhcpd.loglevel='%d'", ctx->odhcpd_log_level);
 	mesh_uci_batch_line(setl);
@@ -502,12 +495,6 @@ int mesh_auto_config(struct mesh_ctx *ctx)
 				}
 			}
 		}
-	}
-
-	if (mesh_check_package_any(wpad_pkgs, NULL) != 0) {
-		mesh_log_err(ctx, "Unable to autoconfigure. Please install package wpad-mbedtls, wpad-wolfssl, wpad-openssl or an equivalent mesh only version");
-		sleep(5);
-		return -1;
 	}
 
 	mesh_refresh_bridgemac(ctx);
