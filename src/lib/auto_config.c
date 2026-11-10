@@ -182,36 +182,67 @@ int mesh_mesh_gate_state(struct mesh_ctx *ctx)
 
 int mesh_apply_mesh_params(struct mesh_ctx *ctx)
 {
-	char show[4096];
-	char *p, *line;
-	const char *params[] = {
-		"mesh_fwding", "mesh_retry_timeout", "mesh_confirm_timeout",
-		"mesh_holding_timeout", "mesh_rssi_threshold",
-		"mesh_gate_announcements", "mesh_hwmp_rootmode", NULL
-	};
+	/* v7 check_mesh_params: for every live mesh_param from iw dump, if
+	 * mesh11sd.mesh_params.<name> is set and differs, iw set it. */
+	char dump[8192];
 
 	mesh_get_mesh_iflist(ctx);
-	if (mesh_uci_show_filter("mesh11sd", "mesh_params", show, sizeof(show)) != 0)
-		return 0;
-
 	for (int i = 0; i < ctx->iflist_count; i++) {
-		int pi;
-		for (pi = 0; params[pi]; pi++) {
-			char key[96], val[64];
-			snprintf(key, sizeof(key), "mesh11sd.mesh_params.%s", params[pi]);
-			if (mesh_uci_get(key, val, sizeof(val)) != 0 || !val[0])
+		char *p, *line;
+		const char *iface = ctx->iflist[i];
+
+		if (mesh_get_mesh_params_dump(iface, dump, sizeof(dump)) != 0)
+			continue;
+		p = dump;
+		while ((line = strsep(&p, "\n")) != NULL) {
+			char name[64], live[64], key[96], conf[64];
+			char *eq;
+
+			if (!line[0])
+				continue;
+			eq = strstr(line, " = ");
+			if (!eq)
 				continue;
 			{
-				char *argv[] = {
-					"iw", "dev", ctx->iflist[i], "set", "mesh_param",
-					(char *)params[pi], val, NULL
-				};
-				mesh_run_capture(argv, NULL, 0);
+				size_t n = (size_t)(eq - line);
+				if (n >= sizeof(name))
+					n = sizeof(name) - 1;
+				memcpy(name, line, n);
+				name[n] = '\0';
 			}
+			snprintf(live, sizeof(live), "%s", eq + 3);
+			{
+				char *nl = strchr(live, '\n');
+				if (nl)
+					*nl = '\0';
+			}
+			snprintf(key, sizeof(key), "mesh11sd.mesh_params.%s", name);
+			if (mesh_uci_get(key, conf, sizeof(conf)) != 0 || !conf[0])
+				continue;
+			if (!strcmp(live, conf))
+				continue;
+			/* v7: mesh_rssi_threshold only once per boot unless forced */
+			if (!strcmp(name, "mesh_rssi_threshold") &&
+			    access(MESH11SD_TMPDIR "/mesh_rssi_threshold", F_OK) == 0)
+				continue;
+			mesh_log_info(ctx,
+				      "Old value:%s=%s, Setting new value:%s=%s",
+				      name, live, name, conf);
+			{
+				char *argv[] = {
+					"iw", "dev", (char *)iface, "set", "mesh_param",
+					name, conf, NULL
+				};
+				char iwstatus[256] = "";
+				mesh_run_capture(argv, iwstatus, sizeof(iwstatus));
+				if (iwstatus[0])
+					mesh_log_err(ctx, "%s: %s", name, iwstatus);
+			}
+			if (!strcmp(name, "mesh_rssi_threshold"))
+				mesh_file_write(MESH11SD_TMPDIR "/mesh_rssi_threshold",
+						conf);
 		}
 	}
-	(void)p;
-	(void)line;
 	return 0;
 }
 
@@ -432,9 +463,9 @@ int mesh_auto_config(struct mesh_ctx *ctx)
 			mesh_uci_batch_line(setl);
 			snprintf(setl, sizeof(setl), "set wireless.%s.disabled='0'", ctx->radios[ri]);
 			mesh_uci_batch_line(setl);
-			snprintf(setl, sizeof(setl), "set wireless.%s.beacon_int='%d'",
-				 ctx->radios[ri], ctx->mesh_beacon_interval);
-			mesh_uci_batch_line(setl);
+			/* v7 writes beacon_int='$mesh_beacon_interval' here, but that
+			 * variable is empty at auto_config time (unset → hostapd
+			 * default 100). Mobility later sets the mesh radio only. */
 			snprintf(setl, sizeof(setl), "set wireless.%s.log_level='3'", ctx->radios[ri]);
 			mesh_uci_batch_line(setl);
 

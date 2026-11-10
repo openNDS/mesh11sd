@@ -303,6 +303,9 @@ int mesh_mobility_settings(struct mesh_ctx *ctx, const char *mode)
 	}
 
 	if (do_config) {
+		/* v7 ~4450: write beacon_int only on the mesh radio. MLO may force
+		 * beacon_int=100 above, but sibling radios stay unset (hostapd
+		 * default 100) — baseline-v7-fd4d has radio0.beacon_int=100 only. */
 		if (radio[0]) {
 			/* v7: del then set so a prior sticky value cannot linger. */
 			snprintf(setl, sizeof(setl), "del wireless.%s.beacon_int", radio);
@@ -310,31 +313,6 @@ int mesh_mobility_settings(struct mesh_ctx *ctx, const char *mode)
 			snprintf(setl, sizeof(setl), "set wireless.%s.beacon_int='%d'",
 				 radio, beacon_int);
 			mesh_uci_batch_line(setl);
-		}
-		/* MLO / driver beacon override must hit every radio on the
-		 * multi-band wiphy — "STA/AP BI must match". v7 auto_config
-		 * writes empty $mesh_beacon_interval (unset → default 100) to
-		 * every radio, so all stay matched; the C port seeds 25 from
-		 * mobility level, so only pushing the mesh radio left radio1
-		 * at 25 and took phy0-ap0 / mesh / vxradio down (alpha15/16). */
-		if (beacon_int == 100 && phy[0] && mesh_phy_is_multi_band(phy)) {
-			int ri;
-			mesh_get_wiphys(ctx);
-			for (ri = 0; ri < ctx->radio_count; ri++) {
-				char rphy[32];
-				const char *r = ctx->radios[ri];
-				if (!r[0] || (radio[0] && !strcmp(r, radio)))
-					continue;
-				if (mesh_radiophy(r, rphy, sizeof(rphy)) != 0)
-					continue;
-				if (strcmp(rphy, phy) != 0)
-					continue;
-				snprintf(setl, sizeof(setl), "del wireless.%s.beacon_int", r);
-				mesh_uci_batch_line(setl);
-				snprintf(setl, sizeof(setl), "set wireless.%s.beacon_int='%d'",
-					 r, beacon_int);
-				mesh_uci_batch_line(setl);
-			}
 		}
 		if (stanza[0]) {
 			snprintf(setl, sizeof(setl), "set %s.dtim_period='%d'",

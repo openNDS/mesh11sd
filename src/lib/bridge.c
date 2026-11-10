@@ -550,6 +550,78 @@ int mesh_set_root_bridge_priority(struct mesh_ctx *ctx)
 			}
 		}
 	}
+
+	/* v7 ~8555-8579: per-port STP priorities each loop with bridge prio.
+	 * eth/lan ports preferred (16); m-11s mesh ports less preferred (32). */
+	{
+		char *stp[] = { "brctl", "showstp", bridge, NULL };
+		char stpout[8192];
+		int updated = 0;
+
+		if (mesh_run_capture(stp, stpout, sizeof(stpout)) == 0) {
+			char *sp = stpout, *sl;
+
+			while ((sl = strsep(&sp, "\n")) != NULL) {
+				char ifn[64];
+				char prio_path[192];
+				char curp[16] = "";
+				unsigned desired = 32;
+				FILE *pf;
+				char *paren;
+
+				/* lines like "eth1 (1)" / "m-11s-r0p0 (3)" */
+				paren = strchr(sl, '(');
+				if (!paren || paren == sl)
+					continue;
+				while (paren > sl && paren[-1] == ' ')
+					paren--;
+				{
+					size_t n = (size_t)(paren - sl);
+					while (n > 0 && (sl[n - 1] == ' ' || sl[n - 1] == '\t'))
+						n--;
+					if (n == 0 || n >= sizeof(ifn))
+						continue;
+					memcpy(ifn, sl, n);
+					ifn[n] = '\0';
+				}
+				if (!strcmp(ifn, bridge) || !ifn[0])
+					continue;
+				if (!strncmp(ifn, "eth", 3) || !strncmp(ifn, "lan", 3))
+					desired = 16;
+				else if (!strncmp(ifn, "m-11s-", 6))
+					desired = 32;
+				else
+					desired = 32;
+				snprintf(prio_path, sizeof(prio_path),
+					 "/sys/class/net/%s/brport/priority", ifn);
+				pf = fopen(prio_path, "r");
+				if (!pf)
+					continue;
+				if (!fgets(curp, sizeof(curp), pf))
+					curp[0] = '\0';
+				fclose(pf);
+				{
+					char wantp[16];
+					snprintf(wantp, sizeof(wantp), "%u", desired);
+					if (strncmp(curp, wantp, strlen(wantp)) == 0)
+						continue;
+					pf = fopen(prio_path, "w");
+					if (!pf)
+						continue;
+					fprintf(pf, "%u\n", desired);
+					fclose(pf);
+					mesh_log_debug(ctx,
+						       "Set %s port priority to %u (was %s)",
+						       ifn, desired, curp);
+					updated++;
+				}
+			}
+		}
+		if (updated > 0)
+			mesh_log_info(ctx,
+				      "Updated port priority on %d interface(s) on %s",
+				      updated, bridge);
+	}
 	return 0;
 }
 
