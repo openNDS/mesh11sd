@@ -630,8 +630,6 @@ int mesh_cli_status(struct mesh_ctx *ctx)
 	mesh_json_field_int("    ", "mesh_path_cost", ctx->mesh_path_cost, 0);
 	mesh_json_field_int("    ", "mesh_path_stabilisation",
 			    ctx->mesh_path_stabilisation, 0);
-	mesh_json_field_int("    ", "reactive_path_stabilisation_threshold",
-			    ctx->reactive_path_stabilisation_threshold, 0);
 	mesh_json_field_int("    ", "checkinterval", ctx->checkinterval, 0);
 	mesh_json_field_int("    ", "loop_interval_delta", ctx->loop_interval_delta, 0);
 	mesh_json_field("    ", "loop_interval", loop_interval, 0);

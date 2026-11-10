@@ -475,10 +475,6 @@ int mesh_ctx_load_setup(struct mesh_ctx *ctx)
 		ctx->mesh_path_stabilisation = parse_int_default(buf, 1);
 	else
 		ctx->mesh_path_stabilisation = 1;
-	if (mesh_uci_get("mesh11sd.setup.reactive_path_stabilisation_threshold", buf, sizeof(buf)) == 0)
-		ctx->reactive_path_stabilisation_threshold = parse_int_default(buf, 0);
-	else
-		ctx->reactive_path_stabilisation_threshold = 0;
 	/* v7 get_current_setup vtun_ip: if unset, generate_ipv4_base(auto_mesh_key) */
 	{
 		char vtun_net[64] = "";

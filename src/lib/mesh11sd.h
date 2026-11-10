@@ -104,7 +104,6 @@ struct mesh_ctx {
 	int gateway_proxy_arp;
 	int watchdog_nonvolatile_log;
 	int mesh_path_stabilisation;
-	int reactive_path_stabilisation_threshold;
 	char vtun_ip[32];
 	char vtun_mask[16];
 	int vtun_path_cost;

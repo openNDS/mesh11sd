@@ -525,17 +525,6 @@ config mesh11sd 'setup'
 	#option mesh_path_stabilisation '1'
 
 	###########################################################################################
-	# reactive_path_stabilisation_threshold (optional)
-	#
-	# If an unstable path to an immediate neighbour node is detected, a counter is incremented each checkinterval while the unstable condition continues.
-	# 	Mesh path stabilisation is activated once the counter exceeds the threshold.
-	# Usually not required when mesh_node_mobility_level is set to greater than 0
-	#
-	# Default: 10 checkinterval periods.
-	#
-	#option reactive_path_stabilisation_threshold '5'
-
-	###########################################################################################
 	# mesh_mac_forced_forwarding (optional)
 	#
 	# This enables mac forced forwarding on the mesh interface
