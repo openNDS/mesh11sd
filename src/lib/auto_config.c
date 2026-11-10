@@ -60,26 +60,43 @@ static int wifi_section_from_mode_line(const char *line, char *sect, size_t sect
 }
 
 
-int mesh_backup_defaults(struct mesh_ctx *ctx)
+static const char *backup_configs[] = {
+	"mesh11sd", "wireless", "dhcp", "network", "firewall", "system", NULL
+};
+
+/*
+ * Keep a copy of each config as it was before mesh11sd first ran.
+ * Called on every daemon start; an existing backup is never replaced,
+ * so revert_all always restores the original state.
+ */
+int mesh_backup_configs(struct mesh_ctx *ctx)
 {
-	const char *configs[] = {
-		"mesh11sd", "wireless", "dhcp", "network", "firewall", "system", NULL
-	};
 	int i;
 
-	mesh_log_info(ctx, "Initialising state for auto_config");
-	for (i = 0; configs[i]; i++) {
+	for (i = 0; backup_configs[i]; i++) {
 		char src[64], dst[96];
 
-		mesh_uci_revert(configs[i]);
-		snprintf(src, sizeof(src), "/etc/config/%s", configs[i]);
-		snprintf(dst, sizeof(dst), "/etc/config/%s_mesh11sd_default", configs[i]);
-		if (access(dst, F_OK) != 0) {
+		snprintf(src, sizeof(src), "/etc/config/%s", backup_configs[i]);
+		snprintf(dst, sizeof(dst), "/etc/config/%s_mesh11sd_default",
+			 backup_configs[i]);
+		if (access(dst, F_OK) != 0 && access(src, R_OK) == 0) {
 			char *argv[] = { "cp", src, dst, NULL };
+
 			mesh_run_capture(argv, NULL, 0);
+			mesh_log_info(ctx, "Saved %s as backup for revert_all", dst);
 		}
 	}
 	return 0;
+}
+
+int mesh_backup_defaults(struct mesh_ctx *ctx)
+{
+	int i;
+
+	mesh_log_info(ctx, "Initialising state for auto_config");
+	for (i = 0; backup_configs[i]; i++)
+		mesh_uci_revert(backup_configs[i]);
+	return mesh_backup_configs(ctx);
 }
 
 int mesh_mesh_gate_state(struct mesh_ctx *ctx)

@@ -84,6 +84,9 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 		mesh_run_capture(odhcpd, NULL, 0);
 	}
 
+	/* Backups for revert_all, taken on any start if missing */
+	mesh_backup_configs(ctx);
+
 	if (ctx->auto_config > 0 ||
 	    access(MESH11SD_TMPDIR "/auto_config_test", F_OK) == 0) {
 		char setl[192];

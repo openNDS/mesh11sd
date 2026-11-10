@@ -192,6 +192,7 @@ int mesh_cli_mesh_rssi_threshold(struct mesh_ctx *ctx, const char *dir, int forc
 
 /* auto_config / backups */
 int mesh_backup_defaults(struct mesh_ctx *ctx);
+int mesh_backup_configs(struct mesh_ctx *ctx);
 int mesh_auto_config(struct mesh_ctx *ctx);
 int mesh_mesh_gate_state(struct mesh_ctx *ctx);
 int mesh_restart_mesh(struct mesh_ctx *ctx);
