@@ -199,6 +199,157 @@ int mesh_wait_for_interface(struct mesh_ctx *ctx, const char *ifname,
 	return -1;
 }
 
+
+/* After `wifi`, wait until every enabled AP/mesh wifi-iface is live in
+ * hostapd or wpa_supplicant. On a shared wiphy (mt7996e phy0 = 2g+5g)
+ * a burst of phy/bridge/mesh_param writes during 5g bring-up leaves
+ * the AP ENABLED but unable to associate. v7 only avoids this because
+ * its shell is slow enough that 5g is already up. */
+#define WIFI_ENABLED_WAIT_TRIES	60	/* 30s at 500ms */
+#define WIFI_ENABLED_POLL_US	500000
+#define WIFI_ENABLED_SETTLE_S	2
+
+static int wifi_section_from_mode_line(const char *line, char *sect, size_t sectlen)
+{
+	const char *dot, *dot2, *eq;
+
+	if (!line || !sect || sectlen == 0)
+		return -1;
+	sect[0] = '\0';
+	dot = strchr(line, '.');
+	if (!dot)
+		return -1;
+	dot2 = strchr(dot + 1, '.');
+	eq = strchr(line, '=');
+	if (!dot2 || !eq || dot2 > eq)
+		return -1;
+	{
+		size_t n = (size_t)(dot2 - (dot + 1));
+		if (n >= sectlen)
+			n = sectlen - 1;
+		memcpy(sect, dot + 1, n);
+		sect[n] = '\0';
+	}
+	return sect[0] ? 0 : -1;
+}
+
+static int uci_is_disabled(const char *tuple)
+{
+	char val[32];
+
+	if (mesh_uci_get(tuple, val, sizeof(val)) != 0 || !val[0])
+		return 0;
+	return atoi(val) != 0;
+}
+
+static int count_enabled_ap_mesh_ifaces(void)
+{
+	char raw[16384];
+	char *argv[] = { "uci", "show", "wireless", NULL };
+	char *p, *line;
+	int n = 0;
+
+	if (mesh_run_capture(argv, raw, sizeof(raw)) != 0)
+		return 0;
+	p = raw;
+	while ((line = strsep(&p, "\n")) != NULL) {
+		char sect[96], key[160], device[64];
+		int is_ap = (strstr(line, ".mode='ap'") != NULL ||
+			     strstr(line, ".mode=ap") != NULL);
+		int is_mesh = (strstr(line, ".mode='mesh'") != NULL ||
+			       strstr(line, ".mode=mesh") != NULL);
+
+		if (!is_ap && !is_mesh)
+			continue;
+		if (wifi_section_from_mode_line(line, sect, sizeof(sect)) != 0)
+			continue;
+		snprintf(key, sizeof(key), "wireless.%s.disabled", sect);
+		if (uci_is_disabled(key))
+			continue;
+		snprintf(key, sizeof(key), "wireless.%s.device", sect);
+		if (mesh_uci_get(key, device, sizeof(device)) == 0 && device[0]) {
+			snprintf(key, sizeof(key), "wireless.%s.disabled", device);
+			if (uci_is_disabled(key))
+				continue;
+		}
+		n++;
+	}
+	return n;
+}
+
+static int ubus_wifi_object_ready(const char *obj)
+{
+	char name[128];
+	char out[2048];
+	char *argv[] = { "ubus", "call", name, "get_status", NULL };
+
+	if (!obj || !obj[0] || strlen(obj) >= sizeof(name))
+		return 0;
+	snprintf(name, sizeof(name), "%s", obj);
+	if (mesh_run_capture(argv, out, sizeof(out)) != 0)
+		return 0;
+	/* hostapd iface/BSS: "status": "ENABLED"
+	 * wpa_supplicant (mesh): "state"/"status": "COMPLETED" */
+	if (strstr(out, "ENABLED") || strstr(out, "COMPLETED"))
+		return 1;
+	return 0;
+}
+
+static void count_hostapd_wpas_ready(int *seen, int *ready)
+{
+	char raw[16384];
+	char *argv[] = { "ubus", "list", NULL };
+	char *p, *line;
+
+	*seen = 0;
+	*ready = 0;
+	if (mesh_run_capture(argv, raw, sizeof(raw)) != 0)
+		return;
+	p = raw;
+	while ((line = strsep(&p, "\n")) != NULL) {
+		if (strncmp(line, "hostapd.", 8) != 0 &&
+		    strncmp(line, "wpa_supplicant.", 15) != 0)
+			continue;
+		(*seen)++;
+		if (ubus_wifi_object_ready(line))
+			(*ready)++;
+	}
+}
+
+int mesh_wait_for_wifi_enabled(struct mesh_ctx *ctx)
+{
+	int expected;
+	int tries;
+	int seen = 0, ready = 0;
+	int ok = 0;
+
+	expected = count_enabled_ap_mesh_ifaces();
+	if (expected <= 0) {
+		mesh_log_info(ctx, "wifi: no enabled AP/mesh interfaces to wait for");
+		return 0;
+	}
+
+	for (tries = 0; tries < WIFI_ENABLED_WAIT_TRIES; tries++) {
+		if (tries > 0)
+			usleep(WIFI_ENABLED_POLL_US);
+		count_hostapd_wpas_ready(&seen, &ready);
+		if (seen >= expected && ready >= expected) {
+			ok = 1;
+			break;
+		}
+	}
+
+	if (ok)
+		mesh_log_info(ctx, "wifi: all %d AP/mesh interfaces ENABLED",
+			      expected);
+	else
+		mesh_log_info(ctx,
+			      "wifi: timed out waiting for AP/mesh ENABLED (%d/%d ready)",
+			      ready, expected);
+	sleep(WIFI_ENABLED_SETTLE_S);
+	return ok ? 0 : -1;
+}
+
 int mesh_radiophy(const char *radio_or_section, char *phy_out, size_t phy_len)
 {
 	char section[128];

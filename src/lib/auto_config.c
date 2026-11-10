@@ -313,6 +313,9 @@ int mesh_restart_mesh(struct mesh_ctx *ctx)
 		char *argv[] = { "wifi", NULL };
 		mesh_run_capture(argv, NULL, 0);
 	}
+	/* Shared-wiphy (mt7996e): do not write phy/bridge/mesh_param
+	 * until every AP and mesh iface reports ENABLED. */
+	mesh_wait_for_wifi_enabled(ctx);
 	/* wait_for_mesh: give mesh ifaces time to appear */
 	{
 		int tries;
