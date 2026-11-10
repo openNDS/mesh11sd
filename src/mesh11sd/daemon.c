@@ -192,10 +192,10 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 	mesh_sys_setup(ctx);
 	mesh_get_portal_ula(ctx, "discover");
 	mesh_log_notice(ctx, "Starting daemon service...");
-	/* auto_config=0 never calls mesh_restart_mesh, but the main loop still
-	 * applies the same phy/bridge/mesh_param writes. Wait for every AP/mesh
-	 * to report ENABLED first (works without a preceding `wifi`). */
-	mesh_wait_for_wifi_enabled(ctx);
+	/* If phy-wide settings differ, write them then wifi so the vifs come
+	 * up afterwards. Otherwise just wait for the boot-netifd vifs. */
+	if (!mesh_sync_phywide_via_wifi(ctx))
+		mesh_wait_for_wifi_enabled(ctx);
 	mesh_set_led(ctx, "init");
 	/* v7: set_led on before peers; heartbeat once peers appear */
 	mesh_set_led(ctx, "on");
@@ -385,6 +385,7 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 		mesh_pin_active_portal_arp(ctx);
 
 		mesh_rootmode(ctx);
+		mesh_sync_phywide_via_wifi(ctx);
 		mesh_mobility_settings(ctx, "runtime");
 		mesh_check_gate(ctx);
 		mesh_check_path_changes(ctx);

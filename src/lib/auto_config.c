@@ -353,6 +353,9 @@ int mesh_restart_mesh(struct mesh_ctx *ctx)
 	mesh_set_txpower_uci(ctx);
 	mesh_mesh_gate_state(ctx);
 	mesh_mobility_settings(ctx, "config");
+	/* Phy-wide (rts/txq/aql) must be set before the vifs come up.
+	 * On a multi-radio wiphy, setting rts after 5g is up breaks assoc. */
+	mesh_mobility_settings(ctx, "phy");
 	{
 		char *argv[] = { "wifi", NULL };
 		mesh_run_capture(argv, NULL, 0);

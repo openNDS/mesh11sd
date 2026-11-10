@@ -273,18 +273,40 @@ static int uci_is_disabled(const char *tuple)
 	return atoi(val) != 0;
 }
 
-static int count_enabled_ap_mesh_ifaces(void)
+static int mesh_iface_is_ready(const char *ifname)
+{
+	char info[2048];
+	char *argv[] = { "iw", "dev", (char *)ifname, "info", NULL };
+
+	if (!ifname || !ifname[0])
+		return 0;
+	if (mesh_run_capture(argv, info, sizeof(info)) != 0)
+		return 0;
+	if (!strstr(info, "type mesh point") && !strstr(info, "type Mesh"))
+		return 0;
+	/* A channel means the mesh vif has finished starting */
+	if (strstr(info, "channel "))
+		return 1;
+	return mesh_iface_is_up(ifname);
+}
+
+static int count_enabled_ap_mesh_ifaces(int *ap_out, int *mesh_out,
+				       char mesh_ifs[][32], int max_mesh)
 {
 	char raw[16384];
 	char *argv[] = { "uci", "show", "wireless", NULL };
 	char *p, *line;
-	int n = 0;
+	int nap = 0, nmesh = 0, nifs = 0;
 
+	if (ap_out)
+		*ap_out = 0;
+	if (mesh_out)
+		*mesh_out = 0;
 	if (mesh_run_capture(argv, raw, sizeof(raw)) != 0)
 		return 0;
 	p = raw;
 	while ((line = strsep(&p, "\n")) != NULL) {
-		char sect[96], key[160], device[64];
+		char sect[96], key[160], device[64], ifname[64];
 		int is_ap = (strstr(line, ".mode='ap'") != NULL ||
 			     strstr(line, ".mode=ap") != NULL);
 		int is_mesh = (strstr(line, ".mode='mesh'") != NULL ||
@@ -303,12 +325,27 @@ static int count_enabled_ap_mesh_ifaces(void)
 			if (uci_is_disabled(key))
 				continue;
 		}
-		n++;
+		if (is_ap)
+			nap++;
+		if (is_mesh) {
+			nmesh++;
+			snprintf(key, sizeof(key), "wireless.%s.ifname", sect);
+			ifname[0] = '\0';
+			if (mesh_uci_get(key, ifname, sizeof(ifname)) == 0 &&
+			    ifname[0] && nifs < max_mesh) {
+				snprintf(mesh_ifs[nifs], 32, "%s", ifname);
+				nifs++;
+			}
+		}
 	}
-	return n;
+	if (ap_out)
+		*ap_out = nap;
+	if (mesh_out)
+		*mesh_out = nmesh;
+	return nap + nmesh;
 }
 
-static int ubus_wifi_object_ready(const char *obj)
+static int hostapd_object_enabled(const char *obj)
 {
 	char name[128];
 	char out[2048];
@@ -319,43 +356,42 @@ static int ubus_wifi_object_ready(const char *obj)
 	snprintf(name, sizeof(name), "%s", obj);
 	if (mesh_run_capture(argv, out, sizeof(out)) != 0)
 		return 0;
-	/* hostapd iface/BSS: "status": "ENABLED"
-	 * wpa_supplicant (mesh): "state"/"status": "COMPLETED" */
-	if (strstr(out, "ENABLED") || strstr(out, "COMPLETED"))
+	if (strstr(out, "ENABLED"))
 		return 1;
 	return 0;
 }
 
-static void count_hostapd_wpas_ready(int *seen, int *ready)
+static int count_hostapd_enabled(void)
 {
 	char raw[16384];
 	char *argv[] = { "ubus", "list", NULL };
 	char *p, *line;
+	int ready = 0;
 
-	*seen = 0;
-	*ready = 0;
 	if (mesh_run_capture(argv, raw, sizeof(raw)) != 0)
-		return;
+		return 0;
 	p = raw;
 	while ((line = strsep(&p, "\n")) != NULL) {
-		if (strncmp(line, "hostapd.", 8) != 0 &&
-		    strncmp(line, "wpa_supplicant.", 15) != 0)
+		if (strncmp(line, "hostapd.", 8) != 0)
 			continue;
-		(*seen)++;
-		if (ubus_wifi_object_ready(line))
-			(*ready)++;
+		if (hostapd_object_enabled(line))
+			ready++;
 	}
+	return ready;
 }
 
 int mesh_wait_for_wifi_enabled(struct mesh_ctx *ctx)
 {
-	int expected;
+	int expected_ap = 0, expected_mesh = 0;
+	char mesh_ifs[MESH11SD_MAX_IFACES][32];
 	int tries;
-	int seen = 0, ready = 0;
+	int ready_ap = 0, ready_mesh = 0;
 	int ok = 0;
+	int i;
 
-	expected = count_enabled_ap_mesh_ifaces();
-	if (expected <= 0) {
+	memset(mesh_ifs, 0, sizeof(mesh_ifs));
+	if (count_enabled_ap_mesh_ifaces(&expected_ap, &expected_mesh,
+					 mesh_ifs, MESH11SD_MAX_IFACES) <= 0) {
 		mesh_log_info(ctx, "wifi: no enabled AP/mesh interfaces to wait for");
 		return 0;
 	}
@@ -363,8 +399,21 @@ int mesh_wait_for_wifi_enabled(struct mesh_ctx *ctx)
 	for (tries = 0; tries < WIFI_ENABLED_WAIT_TRIES; tries++) {
 		if (tries > 0)
 			usleep(WIFI_ENABLED_POLL_US);
-		count_hostapd_wpas_ready(&seen, &ready);
-		if (seen >= expected && ready >= expected) {
+		ready_ap = count_hostapd_enabled();
+		ready_mesh = 0;
+		for (i = 0; i < MESH11SD_MAX_IFACES && mesh_ifs[i][0]; i++) {
+			if (mesh_iface_is_ready(mesh_ifs[i]))
+				ready_mesh++;
+		}
+		/* If UCI has no ifname yet, fall back to the live mesh iflist */
+		if (expected_mesh > 0 && !mesh_ifs[0][0]) {
+			mesh_get_mesh_iflist(ctx);
+			for (i = 0; i < ctx->iflist_count; i++) {
+				if (mesh_iface_is_ready(ctx->iflist[i]))
+					ready_mesh++;
+			}
+		}
+		if (ready_ap >= expected_ap && ready_mesh >= expected_mesh) {
 			ok = 1;
 			break;
 		}
@@ -372,11 +421,11 @@ int mesh_wait_for_wifi_enabled(struct mesh_ctx *ctx)
 
 	if (ok)
 		mesh_log_info(ctx, "wifi: all %d AP/mesh interfaces ENABLED",
-			      expected);
+			      expected_ap + expected_mesh);
 	else
 		mesh_log_info(ctx,
-			      "wifi: timed out waiting for AP/mesh ENABLED (%d/%d ready)",
-			      ready, expected);
+			      "wifi: timed out waiting for AP/mesh ENABLED (%d/%d AP, %d/%d mesh ready)",
+			      ready_ap, expected_ap, ready_mesh, expected_mesh);
 	sleep(WIFI_ENABLED_SETTLE_S);
 	return ok ? 0 : -1;
 }

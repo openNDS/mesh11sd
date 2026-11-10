@@ -94,6 +94,49 @@ int mesh_rootmode(struct mesh_ctx *ctx)
 }
 
 
+#define PHY_VAL_UNKNOWN	(-1)
+#define PHY_VAL_OFF	(-2)
+
+struct mobility_eval {
+	int level;
+	int valid_targets;
+	int rts, limit, quantum, aql_threshold;
+	int beacon_int, dtim_period, rootmode;
+	int mesh_fwding, rann, preq_min, path_timeout, max_peers, max_preq;
+	char rssi[8];
+	char stanza[96], radio[32], phy[32];
+};
+
+static void phy_val_str(int v, char *buf, size_t len)
+{
+	if (v == PHY_VAL_OFF)
+		snprintf(buf, len, "off");
+	else if (v == PHY_VAL_UNKNOWN)
+		snprintf(buf, len, "unknown");
+	else
+		snprintf(buf, len, "%d", v);
+}
+
+static void phy_read_aqm(const char *phy, int *limit, int *quantum)
+{
+	char path[192], line[128];
+	FILE *f;
+
+	snprintf(path, sizeof(path), "/sys/kernel/debug/ieee80211/%s/aqm", phy);
+	f = fopen(path, "r");
+	if (!f)
+		return;
+	while (fgets(line, sizeof(line), f)) {
+		int v;
+
+		if (sscanf(line, "%*s fq_limit %d", &v) == 1)
+			*limit = v;
+		else if (sscanf(line, "%*s fq_quantum %d", &v) == 1)
+			*quantum = v;
+	}
+	fclose(f);
+}
+
 static void phy_read_runtime_values(const char *phy, int *rts, int *limit, int *quantum)
 {
 	char *argv[] = { "iw", "phy", (char *)phy, "info", NULL };
@@ -103,7 +146,7 @@ static void phy_read_runtime_values(const char *phy, int *rts, int *limit, int *
 	char line[1024];
 	int status;
 
-	*rts = *limit = *quantum = -1;
+	*rts = *limit = *quantum = PHY_VAL_UNKNOWN;
 	if (!phy || !phy[0])
 		return;
 	if (pipe(pipefd) < 0)
@@ -138,13 +181,15 @@ static void phy_read_runtime_values(const char *phy, int *rts, int *limit, int *
 	while (fgets(line, sizeof(line), fp)) {
 		char *p;
 
-		if ((p = strstr(line, "RTS threshold:"))) {
+		/* Wiphy-level line is "RTS threshold:"; per-band caps use
+		 * "RTS Threshold:" and must not overwrite the real value. */
+		if (*rts == PHY_VAL_UNKNOWN && (p = strstr(line, "RTS threshold:"))) {
 			p += 14;
 			while (*p == ' ' || *p == '\t')
 				p++;
 			if (!strncmp(p, "off", 3))
-				*rts = -1;
-			else
+				*rts = PHY_VAL_OFF;
+			else if (*p == '-' || (*p >= '0' && *p <= '9'))
 				*rts = atoi(p);
 		} else if ((p = strstr(line, "TXQ quantum:"))) {
 			*quantum = atoi(p + 12);
@@ -161,28 +206,21 @@ static void phy_read_runtime_values(const char *phy, int *rts, int *limit, int *
 	}
 	fclose(fp);
 	waitpid(pid, &status, 0);
+	/* iw phy info does not print FQ limit/quantum on mt76; those live in aqm */
+	phy_read_aqm(phy, limit, quantum);
 }
 
-int mesh_mobility_settings(struct mesh_ctx *ctx, const char *mode)
+static int mobility_eval(struct mesh_ctx *ctx, struct mobility_eval *e, int log_info)
 {
-	int level = ctx->mesh_node_mobility_level;
-	int rts, limit, quantum, aql_threshold, beacon_int, dtim_period, rootmode;
-	int mesh_fwding = 1;
-	int rann, preq_min, path_timeout, max_peers, max_preq;
-	const char *rssi;
-	char stanza[96] = "", radio[32] = "", phy[32] = "";
-	char show[4096], setl[192];
-	char content[384];
-	int do_config, do_runtime;
+	char show[4096];
 
-	if (level < 0 || level > 6)
-		level = 2;
+	memset(e, 0, sizeof(*e));
+	e->level = ctx->mesh_node_mobility_level;
+	e->mesh_fwding = 1;
+	e->valid_targets = 0;
+	if (e->level < 0 || e->level > 6)
+		e->level = 2;
 
-	do_config = (!mode || !strcmp(mode, "config") || !strcmp(mode, "all"));
-	do_runtime = (!mode || !strcmp(mode, "runtime") || !strcmp(mode, "parameters") ||
-		      !strcmp(mode, "all"));
-
-	/* resolve active mesh radio/phy early (needed for driver/MLO overrides) */
 	if (!ctx->active_mesh_ifname[0] &&
 	    access(MESH11SD_TMPDIR "/active_mesh_ifname", R_OK) == 0) {
 		FILE *f = fopen(MESH11SD_TMPDIR "/active_mesh_ifname", "r");
@@ -212,32 +250,31 @@ int mesh_mobility_settings(struct mesh_ctx *ctx, const char *mode)
 				if (!dot2)
 					continue;
 				n = (size_t)(dot2 - line);
-				if (n >= sizeof(stanza))
-					n = sizeof(stanza) - 1;
-				memcpy(stanza, line, n);
-				stanza[n] = '\0';
+				if (n >= sizeof(e->stanza))
+					n = sizeof(e->stanza) - 1;
+				memcpy(e->stanza, line, n);
+				e->stanza[n] = '\0';
 			}
 			break;
 		}
 	}
-	if (stanza[0]) {
+	if (e->stanza[0]) {
 		char key[128];
-		snprintf(key, sizeof(key), "%s.device", stanza);
-		mesh_uci_get(key, radio, sizeof(radio));
-		if (radio[0])
-			mesh_radiophy(radio, phy, sizeof(phy));
+		snprintf(key, sizeof(key), "%s.device", e->stanza);
+		mesh_uci_get(key, e->radio, sizeof(e->radio));
+		if (e->radio[0])
+			mesh_radiophy(e->radio, e->phy, sizeof(e->phy));
 	}
-	if (!radio[0] && ctx->radios[0][0]) {
-		snprintf(radio, sizeof(radio), "%s", ctx->radios[0]);
-		mesh_radiophy(radio, phy, sizeof(phy));
+	if (!e->radio[0] && ctx->radios[0][0]) {
+		snprintf(e->radio, sizeof(e->radio), "%s", ctx->radios[0]);
+		mesh_radiophy(e->radio, e->phy, sizeof(e->phy));
 	}
 
-	/* v7: populate mesh_driver from phy uevent (same source as wifidetect) */
-	if (phy[0]) {
+	if (e->phy[0]) {
 		char uevent[160], dline[128];
 		FILE *df;
 		snprintf(uevent, sizeof(uevent),
-			 "/sys/class/ieee80211/%s/device/uevent", phy);
+			 "/sys/class/ieee80211/%s/device/uevent", e->phy);
 		df = fopen(uevent, "r");
 		if (df) {
 			while (fgets(dline, sizeof(dline), df)) {
@@ -254,12 +291,250 @@ int mesh_mobility_settings(struct mesh_ctx *ctx, const char *mode)
 		}
 	}
 
-	switch (level) {
-	case 0:
-		/* Static – kernel/driver defaults: delete mobility UCI overrides */
+	if (e->level == 0)
+		return 0;
+
+	switch (e->level) {
+	case 1:
+		e->rts = 500; e->limit = 1000; e->quantum = 3000; e->aql_threshold = 2500;
+		e->beacon_int = 50; e->dtim_period = 2; e->rootmode = 3;
+		e->rann = 2000; e->preq_min = 500; e->path_timeout = 1500;
+		e->max_peers = 16; snprintf(e->rssi, sizeof(e->rssi), "-68"); e->max_preq = 4;
+		break;
+	case 2:
+		e->rts = 300; e->limit = 800; e->quantum = 4500; e->aql_threshold = 1800;
+		e->beacon_int = 25; e->dtim_period = 2; e->rootmode = 3;
+		e->rann = 1500; e->preq_min = 400; e->path_timeout = 1100;
+		e->max_peers = 32; snprintf(e->rssi, sizeof(e->rssi), "-72"); e->max_preq = 3;
+		break;
+	case 3:
+		e->rts = 200; e->limit = 500; e->quantum = 6000; e->aql_threshold = 1200;
+		e->beacon_int = 20; e->dtim_period = 1; e->rootmode = 2;
+		e->rann = 1000; e->preq_min = 350; e->path_timeout = 700;
+		e->max_peers = 64; snprintf(e->rssi, sizeof(e->rssi), "-75"); e->max_preq = 2;
+		break;
+	case 4:
+		e->rts = 120; e->limit = 300; e->quantum = 8000; e->aql_threshold = 700;
+		e->beacon_int = 15; e->dtim_period = 1; e->rootmode = 2;
+		e->rann = 500; e->preq_min = 300; e->path_timeout = 450;
+		e->max_peers = 96; snprintf(e->rssi, sizeof(e->rssi), "-78"); e->max_preq = 1;
+		break;
+	case 5:
+		e->rts = 80; e->limit = 150; e->quantum = 9000; e->aql_threshold = 400;
+		e->beacon_int = 15; e->dtim_period = 1; e->rootmode = 0;
+		e->rann = 300; e->preq_min = 250; e->path_timeout = 400;
+		e->max_peers = 96; snprintf(e->rssi, sizeof(e->rssi), "-81"); e->max_preq = 1;
+		break;
+	case 6:
+		e->rts = 60; e->limit = 100; e->quantum = 7000; e->aql_threshold = 300;
+		e->beacon_int = 15; e->dtim_period = 1; e->rootmode = 0;
+		e->rann = 250; e->preq_min = 200; e->path_timeout = 350;
+		e->max_peers = 64; snprintf(e->rssi, sizeof(e->rssi), "-79"); e->max_preq = 1;
+		break;
+	default:
+		return -1;
+	}
+
+	if (!strcmp(ctx->detected_state, "portal") || ctx->portal_detect == 0 ||
+	    ctx->portal_detect == 4)
+		e->rootmode = 4;
+
+	if (ctx->use_default_beacon_interval > 0) {
+		e->beacon_int = 100;
+		if (log_info)
+			mesh_log_info(ctx,
+				      "Default beacon interval requested [ %d ] Mesh mobility may be suboptimal.",
+				      e->beacon_int);
+	}
+
+	if (!strcmp(ctx->mesh_driver, "ath11k")) {
+		e->beacon_int = 100;
+		if (log_info)
+			mesh_log_info(ctx,
+				      "Qualcomm ath11k detected, beacon interval override to [ %d ms ] (workaround for ath11k bug). Mesh mobility may be suboptimal.",
+				      e->beacon_int);
+	}
+	if (!strcmp(ctx->mesh_driver, "mt76_wmac")) {
+		e->beacon_int = 100;
+		if (log_info)
+			mesh_log_info(ctx,
+				      "MediaTek mt76_wmac detected, beacon interval override to [ %d ms ] (workaround for mt7603 beacon bug). Mesh mobility may be suboptimal.",
+				      e->beacon_int);
+	}
+
+	if (e->phy[0] && mesh_phy_is_multi_band(e->phy)) {
+		e->beacon_int = 100;
+		if (log_info)
+			mesh_log_info(ctx,
+				      "Multi band wiphy detected, beacon interval override to [ %d ms ] (workaround for MLO bug). Mesh mobility may be suboptimal.",
+				      e->beacon_int);
+	}
+
+	ctx->mesh_beacon_interval = e->beacon_int;
+	ctx->mesh_dtim_period = e->dtim_period;
+	e->valid_targets = 1;
+	return 0;
+}
+
+static int phy_wide_differs(const char *phy, const struct mobility_eval *e)
+{
+	int cur_rts, cur_lim, cur_q;
+	int cur_aql_en = PHY_VAL_UNKNOWN, cur_aql = PHY_VAL_UNKNOWN;
+	char aqlpath[160];
+
+	if (!phy || !phy[0] || !e->valid_targets)
+		return 0;
+	phy_read_runtime_values(phy, &cur_rts, &cur_lim, &cur_q);
+	snprintf(aqlpath, sizeof(aqlpath),
+		 "/sys/kernel/debug/ieee80211/%s/aql_enable", phy);
+	if (mesh_sysfs_read_int(aqlpath, &cur_aql_en) != 0)
+		cur_aql_en = PHY_VAL_UNKNOWN;
+	snprintf(aqlpath, sizeof(aqlpath),
+		 "/sys/kernel/debug/ieee80211/%s/aql_threshold", phy);
+	if (mesh_sysfs_read_int(aqlpath, &cur_aql) != 0)
+		cur_aql = PHY_VAL_UNKNOWN;
+	if (cur_rts != e->rts || cur_lim != e->limit || cur_q != e->quantum)
+		return 1;
+	if (cur_aql_en != 1 || cur_aql != e->aql_threshold)
+		return 1;
+	return 0;
+}
+
+static int phy_apply_wide(struct mesh_ctx *ctx, const char *phy,
+			  const struct mobility_eval *e)
+{
+	int cur_rts, cur_lim, cur_q;
+	int cur_aql_en = PHY_VAL_UNKNOWN, cur_aql = PHY_VAL_UNKNOWN;
+	int wrote = 0;
+	char rts_s[16], lim_s[16], q_s[16];
+	char aqlpath[160];
+	char oldv[16];
+
+	if (!phy || !phy[0] || !e->valid_targets)
+		return 0;
+	phy_read_runtime_values(phy, &cur_rts, &cur_lim, &cur_q);
+	if (cur_rts != e->rts) {
+		char *a1[] = { "iw", "phy", (char *)phy, "set", "rts", rts_s, NULL };
+
+		snprintf(rts_s, sizeof(rts_s), "%d", e->rts);
+		mesh_run_capture(a1, NULL, 0);
+		phy_val_str(cur_rts, oldv, sizeof(oldv));
+		mesh_log_info(ctx, "Old value:rts=%s, Setting new value:rts=%d",
+			      oldv, e->rts);
+		wrote = 1;
+	}
+	if (cur_lim != e->limit) {
+		char *a2[] = { "iw", "phy", (char *)phy, "set", "txq", "limit", lim_s, NULL };
+
+		snprintf(lim_s, sizeof(lim_s), "%d", e->limit);
+		mesh_run_capture(a2, NULL, 0);
+		phy_val_str(cur_lim, oldv, sizeof(oldv));
+		mesh_log_info(ctx, "Old value:txq_limit=%s, Setting new value:txq_limit=%d",
+			      oldv, e->limit);
+		wrote = 1;
+	}
+	if (cur_q != e->quantum) {
+		char *a3[] = { "iw", "phy", (char *)phy, "set", "txq", "quantum", q_s, NULL };
+
+		snprintf(q_s, sizeof(q_s), "%d", e->quantum);
+		mesh_run_capture(a3, NULL, 0);
+		phy_val_str(cur_q, oldv, sizeof(oldv));
+		mesh_log_info(ctx,
+			      "Old value:txq_quantum=%s, Setting new value:txq_quantum=%d",
+			      oldv, e->quantum);
+		wrote = 1;
+	}
+	snprintf(aqlpath, sizeof(aqlpath),
+		 "/sys/kernel/debug/ieee80211/%s/aql_enable", phy);
+	if (mesh_sysfs_read_int(aqlpath, &cur_aql_en) != 0)
+		cur_aql_en = PHY_VAL_UNKNOWN;
+	if (cur_aql_en != 1) {
+		if (mesh_sysfs_write_int_if_changed(aqlpath, 1) == 1) {
+			mesh_log_info(ctx,
+				      "Old value:aql_enable=%d, Setting new value:aql_enable=1",
+				      cur_aql_en);
+			wrote = 1;
+		}
+	}
+	snprintf(aqlpath, sizeof(aqlpath),
+		 "/sys/kernel/debug/ieee80211/%s/aql_threshold", phy);
+	if (mesh_sysfs_read_int(aqlpath, &cur_aql) != 0)
+		cur_aql = PHY_VAL_UNKNOWN;
+	if (cur_aql != e->aql_threshold) {
+		if (mesh_sysfs_write_int_if_changed(aqlpath, e->aql_threshold) == 1) {
+			mesh_log_info(ctx,
+				      "Old value:aql_threshold=%d, Setting new value:aql_threshold=%d",
+				      cur_aql, e->aql_threshold);
+			wrote = 1;
+		}
+	}
+	return wrote;
+}
+
+int mesh_mobility_phywide_differs(struct mesh_ctx *ctx)
+{
+	struct mobility_eval e;
+
+	if (mobility_eval(ctx, &e, 0) != 0 || !e.valid_targets || !e.phy[0])
+		return 0;
+	return phy_wide_differs(e.phy, &e);
+}
+
+int mesh_mobility_apply_phywide(struct mesh_ctx *ctx)
+{
+	struct mobility_eval e;
+
+	if (mobility_eval(ctx, &e, 0) != 0 || !e.valid_targets || !e.phy[0])
+		return 0;
+	return phy_apply_wide(ctx, e.phy, &e);
+}
+
+int mesh_sync_phywide_via_wifi(struct mesh_ctx *ctx)
+{
+	static int no_more_wifi;
+	struct mobility_eval e;
+
+	if (mobility_eval(ctx, &e, 0) != 0 || !e.valid_targets || !e.phy[0])
+		return 0;
+	if (!phy_wide_differs(e.phy, &e))
+		return 0;
+	if (no_more_wifi)
+		return 0;
+	phy_apply_wide(ctx, e.phy, &e);
+	mesh_log_info(ctx,
+		      "phy-wide settings changed; running wifi so vifs come up after them");
+	{
+		char *argv[] = { "wifi", NULL };
+		mesh_run_capture(argv, NULL, 0);
+	}
+	mesh_wait_for_wifi_enabled(ctx);
+	if (phy_wide_differs(e.phy, &e)) {
+		no_more_wifi = 1;
+		mesh_log_info(ctx,
+			      "phy-wide settings still differ after wifi; not restarting wifi again");
+	}
+	return 1;
+}
+
+int mesh_mobility_settings(struct mesh_ctx *ctx, const char *mode)
+{
+	struct mobility_eval e;
+	char setl[192];
+	char content[384];
+	int do_config, do_phy, do_runtime;
+
+	do_config = (!mode || !strcmp(mode, "config") || !strcmp(mode, "all"));
+	do_phy = (!mode || !strcmp(mode, "phy") || !strcmp(mode, "parameters") ||
+		  !strcmp(mode, "all"));
+	do_runtime = (!mode || !strcmp(mode, "runtime") || !strcmp(mode, "all"));
+
+	if (mobility_eval(ctx, &e, do_config) != 0)
+		return 0;
+
+	if (e.level == 0) {
 		if (do_config) {
-			if (radio[0]) {
-				snprintf(setl, sizeof(setl), "del wireless.%s.beacon_int", radio);
+			if (e.radio[0]) {
+				snprintf(setl, sizeof(setl), "del wireless.%s.beacon_int", e.radio);
 				mesh_uci_batch_line(setl);
 			}
 			mesh_uci_batch_line("del mesh11sd.mesh_params.mesh_fwding");
@@ -275,192 +550,56 @@ int mesh_mobility_settings(struct mesh_ctx *ctx, const char *mode)
 		mesh_file_write(MESH11SD_TMPDIR "/mesh_mobility", content);
 		mesh_log_debug(ctx, "mobility_settings level=0 (defaults)");
 		return 0;
-	case 1:
-		rts = 500; limit = 1000; quantum = 3000; aql_threshold = 2500;
-		beacon_int = 50; dtim_period = 2; rootmode = 3;
-		rann = 2000; preq_min = 500; path_timeout = 1500;
-		max_peers = 16; rssi = "-68"; max_preq = 4;
-		break;
-	case 2:
-		rts = 300; limit = 800; quantum = 4500; aql_threshold = 1800;
-		beacon_int = 25; dtim_period = 2; rootmode = 3;
-		rann = 1500; preq_min = 400; path_timeout = 1100;
-		max_peers = 32; rssi = "-72"; max_preq = 3;
-		break;
-	case 3:
-		rts = 200; limit = 500; quantum = 6000; aql_threshold = 1200;
-		beacon_int = 20; dtim_period = 1; rootmode = 2;
-		rann = 1000; preq_min = 350; path_timeout = 700;
-		max_peers = 64; rssi = "-75"; max_preq = 2;
-		break;
-	case 4:
-		rts = 120; limit = 300; quantum = 8000; aql_threshold = 700;
-		beacon_int = 15; dtim_period = 1; rootmode = 2;
-		rann = 500; preq_min = 300; path_timeout = 450;
-		max_peers = 96; rssi = "-78"; max_preq = 1;
-		break;
-	case 5:
-		rts = 80; limit = 150; quantum = 9000; aql_threshold = 400;
-		beacon_int = 15; dtim_period = 1; rootmode = 0;
-		rann = 300; preq_min = 250; path_timeout = 400;
-		max_peers = 96; rssi = "-81"; max_preq = 1;
-		break;
-	case 6:
-		rts = 60; limit = 100; quantum = 7000; aql_threshold = 300;
-		beacon_int = 15; dtim_period = 1; rootmode = 0;
-		rann = 250; preq_min = 200; path_timeout = 350;
-		max_peers = 64; rssi = "-79"; max_preq = 1;
-		break;
-	default:
-		return 0;
 	}
 
-	if (!strcmp(ctx->detected_state, "portal") || ctx->portal_detect == 0 ||
-	    ctx->portal_detect == 4)
-		rootmode = 4;
-
-	/* v7 ~4369: use_default_beacon_interval forces 100 */
-	if (ctx->use_default_beacon_interval > 0) {
-		beacon_int = 100;
-		mesh_log_info(ctx,
-			      "Default beacon interval requested [ %d ] Mesh mobility may be suboptimal.",
-			      beacon_int);
-	}
-
-	/* v7 ~4388/4397: known drivers that reject short beacon intervals */
-	if (!strcmp(ctx->mesh_driver, "ath11k")) {
-		beacon_int = 100;
-		mesh_log_info(ctx,
-			      "Qualcomm ath11k detected, beacon interval override to [ %d ms ] (workaround for ath11k bug). Mesh mobility may be suboptimal.",
-			      beacon_int);
-	}
-	if (!strcmp(ctx->mesh_driver, "mt76_wmac")) {
-		beacon_int = 100;
-		mesh_log_info(ctx,
-			      "MediaTek mt76_wmac detected, beacon interval override to [ %d ms ] (workaround for mt7603 beacon bug). Mesh mobility may be suboptimal.",
-			      beacon_int);
-	}
-
-	/* v7 ~4405: multi-band wiphy (MLO) — stream iw phy info (can be >32KB) */
-	if (phy[0] && mesh_phy_is_multi_band(phy)) {
-		beacon_int = 100;
-		mesh_log_info(ctx,
-			      "Multi band wiphy detected, beacon interval override to [ %d ms ] (workaround for MLO bug). Mesh mobility may be suboptimal.",
-			      beacon_int);
-	}
-
-	ctx->mesh_beacon_interval = beacon_int;
-	ctx->mesh_dtim_period = dtim_period;
-
-	if (phy[0] && do_runtime) {
-		char rts_s[16], lim_s[16], q_s[16];
-		char aqlpath[160];
-		int cur_rts = -1, cur_lim = -1, cur_q = -1;
-		int cur_aql_en = -1, cur_aql = -1;
-		static char applied_phy[32];
-		static int applied_ok;
-		static int applied_rts, applied_limit, applied_quantum;
-		int same_phy = (applied_ok && !strcmp(applied_phy, phy));
-
-		phy_read_runtime_values(phy, &cur_rts, &cur_lim, &cur_q);
-		if (cur_rts != rts && !(same_phy && applied_rts == rts && cur_rts < 0)) {
-			char *a1[] = { "iw", "phy", phy, "set", "rts", rts_s, NULL };
-
-			snprintf(rts_s, sizeof(rts_s), "%d", rts);
-			mesh_run_capture(a1, NULL, 0);
-			mesh_log_info(ctx, "Old value:rts=%d, Setting new value:rts=%d",
-				      cur_rts, rts);
-		}
-		if (cur_lim != limit && !(same_phy && applied_limit == limit && cur_lim < 0)) {
-			char *a2[] = { "iw", "phy", phy, "set", "txq", "limit", lim_s, NULL };
-
-			snprintf(lim_s, sizeof(lim_s), "%d", limit);
-			mesh_run_capture(a2, NULL, 0);
-			mesh_log_info(ctx,
-				      "Old value:txq_limit=%d, Setting new value:txq_limit=%d",
-				      cur_lim, limit);
-		}
-		if (cur_q != quantum && !(same_phy && applied_quantum == quantum && cur_q < 0)) {
-			char *a3[] = { "iw", "phy", phy, "set", "txq", "quantum", q_s, NULL };
-
-			snprintf(q_s, sizeof(q_s), "%d", quantum);
-			mesh_run_capture(a3, NULL, 0);
-			mesh_log_info(ctx,
-				      "Old value:txq_quantum=%d, Setting new value:txq_quantum=%d",
-				      cur_q, quantum);
-		}
-		snprintf(aqlpath, sizeof(aqlpath),
-			 "/sys/kernel/debug/ieee80211/%s/aql_enable", phy);
-		if (mesh_sysfs_read_int(aqlpath, &cur_aql_en) != 0)
-			cur_aql_en = -1;
-		if (cur_aql_en != 1) {
-			if (mesh_sysfs_write_int_if_changed(aqlpath, 1) == 1)
-				mesh_log_info(ctx,
-					      "Old value:aql_enable=%d, Setting new value:aql_enable=1",
-					      cur_aql_en);
-		}
-		snprintf(aqlpath, sizeof(aqlpath),
-			 "/sys/kernel/debug/ieee80211/%s/aql_threshold", phy);
-		if (mesh_sysfs_read_int(aqlpath, &cur_aql) != 0)
-			cur_aql = -1;
-		if (cur_aql != aql_threshold) {
-			if (mesh_sysfs_write_int_if_changed(aqlpath, aql_threshold) == 1)
-				mesh_log_info(ctx,
-					      "Old value:aql_threshold=%d, Setting new value:aql_threshold=%d",
-					      cur_aql, aql_threshold);
-		}
-		snprintf(applied_phy, sizeof(applied_phy), "%s", phy);
-		applied_rts = rts;
-		applied_limit = limit;
-		applied_quantum = quantum;
-		applied_ok = 1;
-	}
+	if (e.phy[0] && do_phy)
+		phy_apply_wide(ctx, e.phy, &e);
 
 	if (do_config) {
 		/* v7 ~4450: write beacon_int only on the mesh radio. MLO may force
 		 * beacon_int=100 above, but sibling radios stay unset (hostapd
 		 * default 100) — baseline-v7-fd4d has radio0.beacon_int=100 only. */
-		if (radio[0]) {
-			/* v7: del then set so a prior sticky value cannot linger. */
-			snprintf(setl, sizeof(setl), "del wireless.%s.beacon_int", radio);
+		if (e.radio[0]) {
+			snprintf(setl, sizeof(setl), "del wireless.%s.beacon_int", e.radio);
 			mesh_uci_batch_line(setl);
 			snprintf(setl, sizeof(setl), "set wireless.%s.beacon_int='%d'",
-				 radio, beacon_int);
+				 e.radio, e.beacon_int);
 			mesh_uci_batch_line(setl);
 		}
-		if (stanza[0]) {
+		if (e.stanza[0]) {
 			snprintf(setl, sizeof(setl), "set %s.dtim_period='%d'",
-				 stanza, dtim_period);
+				 e.stanza, e.dtim_period);
 			mesh_uci_batch_line(setl);
 		}
 		snprintf(setl, sizeof(setl), "set mesh11sd.mesh_params.mesh_fwding='%d'",
-			 mesh_fwding);
+			 e.mesh_fwding);
 		mesh_uci_batch_line(setl);
 		snprintf(setl, sizeof(setl),
-			 "set mesh11sd.mesh_params.mesh_hwmp_rann_interval='%d'", rann);
+			 "set mesh11sd.mesh_params.mesh_hwmp_rann_interval='%d'", e.rann);
 		mesh_uci_batch_line(setl);
 		snprintf(setl, sizeof(setl),
-			 "set mesh11sd.mesh_params.mesh_hwmp_preq_min_interval='%d'", preq_min);
+			 "set mesh11sd.mesh_params.mesh_hwmp_preq_min_interval='%d'", e.preq_min);
 		mesh_uci_batch_line(setl);
 		snprintf(setl, sizeof(setl),
 			 "set mesh11sd.mesh_params.mesh_hwmp_active_path_timeout='%d'",
-			 path_timeout);
+			 e.path_timeout);
 		mesh_uci_batch_line(setl);
 		snprintf(setl, sizeof(setl),
-			 "set mesh11sd.mesh_params.mesh_max_peer_links='%d'", max_peers);
+			 "set mesh11sd.mesh_params.mesh_max_peer_links='%d'", e.max_peers);
 		mesh_uci_batch_line(setl);
 		snprintf(setl, sizeof(setl),
-			 "set mesh11sd.mesh_params.mesh_rssi_threshold='%s'", rssi);
+			 "set mesh11sd.mesh_params.mesh_rssi_threshold='%s'", e.rssi);
 		mesh_uci_batch_line(setl);
 		snprintf(setl, sizeof(setl),
-			 "set mesh11sd.mesh_params.mesh_hwmp_max_preq_retries='%d'", max_preq);
+			 "set mesh11sd.mesh_params.mesh_hwmp_max_preq_retries='%d'", e.max_preq);
 		mesh_uci_batch_line(setl);
 		snprintf(setl, sizeof(setl),
-			 "set mesh11sd.mesh_params.mesh_hwmp_rootmode='%d'", rootmode);
+			 "set mesh11sd.mesh_params.mesh_hwmp_rootmode='%d'", e.rootmode);
 		mesh_uci_batch_line(setl);
 	}
 
-	{
+	/* path_cost is per-vif: only after vifs are up (runtime), not with config/phy */
+	if (do_runtime) {
 		char br[64];
 		snprintf(br, sizeof(br), "br-%s", ctx->auto_mesh_network);
 		mesh_set_iface_path_cost(ctx, ctx->mesh_path_cost, br,
@@ -471,14 +610,15 @@ int mesh_mobility_settings(struct mesh_ctx *ctx, const char *mode)
 		 "mesh_node_mobility_level=\"%d\"; rootmode=\"%d\"; beacon_int=\"%d\"; "
 		 "dtim_period=\"%d\"; rts=\"%d\"; limit=\"%d\"; quantum=\"%d\"; "
 		 "aql_threshold=\"%d\"\n",
-		 level, rootmode, beacon_int, dtim_period, rts, limit, quantum,
-		 aql_threshold);
+		 e.level, e.rootmode, e.beacon_int, e.dtim_period, e.rts, e.limit,
+		 e.quantum, e.aql_threshold);
 	mesh_file_write(MESH11SD_TMPDIR "/mesh_mobility", content);
 	mesh_log_debug(ctx, "mobility_settings level=%d rootmode=%d beacon=%d driver=%s",
-		       level, rootmode, beacon_int,
+		       e.level, e.rootmode, e.beacon_int,
 		       ctx->mesh_driver[0] ? ctx->mesh_driver : "-");
 	return 0;
 }
+
 
 
 int mesh_check_path_changes(struct mesh_ctx *ctx)
