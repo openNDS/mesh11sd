@@ -711,6 +711,16 @@ int mesh_cli_status(struct mesh_ctx *ctx)
 			}
 		}
 		mesh_json_field("      ", "mesh_id", meshid, 0);
+		if (access(MESH11SD_TMPDIR "/mesh_mobility", R_OK) == 0) {
+			char rtsdisp[32] = "unsupported";
+			char phy[32] = "";
+
+			if (device[0])
+				mesh_radiophy(device, phy, sizeof(phy));
+			if (phy[0])
+				mesh_phy_rts_display(phy, rtsdisp, sizeof(rtsdisp));
+			mesh_json_field("      ", "mesh_rts_threshold", rtsdisp, 0);
+		}
 		mesh_json_field("      ", "device", device, 0);
 		mesh_json_field("      ", "channel", channel, 0);
 		read_devstatus_field(ctx->iflist[i], "tx_packets", tx_packets, sizeof(tx_packets));

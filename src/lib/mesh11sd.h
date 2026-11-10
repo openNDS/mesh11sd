@@ -7,7 +7,7 @@
 #include <sys/types.h>
 
 #ifndef MESH11SD_VERSION
-#define MESH11SD_VERSION "8.0.0_alpha26"
+#define MESH11SD_VERSION "8.0.0_alpha27"
 #endif
 
 #define MESH11SD_TMPDIR "/tmp/mesh11sd"
@@ -242,6 +242,7 @@ int mesh_mobility_settings(struct mesh_ctx *ctx, const char *mode);
 int mesh_mobility_phywide_differs(struct mesh_ctx *ctx);
 int mesh_mobility_apply_phywide(struct mesh_ctx *ctx); /* 1 if a value was written */
 int mesh_sync_phywide_via_wifi(struct mesh_ctx *ctx); /* write+wifi+wait if needed */
+int mesh_phy_rts_display(const char *phy, char *out, size_t outlen); /* live or unsupported */
 int mesh_rootmode(struct mesh_ctx *ctx);
 int mesh_check_path_changes(struct mesh_ctx *ctx);
 int mesh_check_channel(struct mesh_ctx *ctx);

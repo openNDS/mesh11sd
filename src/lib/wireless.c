@@ -290,53 +290,232 @@ static int mesh_iface_is_ready(const char *ifname)
 	return mesh_iface_is_up(ifname);
 }
 
+static int tally_uci_show_mode_line(const char *line, int *nap, int *nmesh,
+				    char mesh_ifs[][32], int max_mesh, int *nifs)
+{
+	char sect[96], key[160], device[64], ifname[64];
+	int is_ap = (strstr(line, ".mode='ap'") != NULL ||
+		     strstr(line, ".mode=ap") != NULL);
+	int is_mesh = (strstr(line, ".mode='mesh'") != NULL ||
+		       strstr(line, ".mode=mesh") != NULL);
+
+	if (!is_ap && !is_mesh)
+		return 0;
+	if (wifi_section_from_mode_line(line, sect, sizeof(sect)) != 0)
+		return 0;
+	snprintf(key, sizeof(key), "wireless.%s.disabled", sect);
+	if (uci_is_disabled(key))
+		return 0;
+	snprintf(key, sizeof(key), "wireless.%s.device", sect);
+	if (mesh_uci_get(key, device, sizeof(device)) == 0 && device[0]) {
+		snprintf(key, sizeof(key), "wireless.%s.disabled", device);
+		if (uci_is_disabled(key))
+			return 0;
+	}
+	if (is_ap)
+		(*nap)++;
+	if (is_mesh) {
+		(*nmesh)++;
+		snprintf(key, sizeof(key), "wireless.%s.ifname", sect);
+		ifname[0] = '\0';
+		if (mesh_uci_get(key, ifname, sizeof(ifname)) == 0 &&
+		    ifname[0] && *nifs < max_mesh) {
+			snprintf(mesh_ifs[*nifs], 32, "%s", ifname);
+			(*nifs)++;
+		}
+	}
+	return 1;
+}
+
+static int count_from_uci_show_stream(int *nap, int *nmesh,
+				      char mesh_ifs[][32], int max_mesh, int *nifs)
+{
+	char *argv[] = { "uci", "show", "wireless", NULL };
+	int pipefd[2];
+	pid_t pid;
+	FILE *fp;
+	char line[512];
+	int status;
+
+	if (pipe(pipefd) < 0)
+		return -1;
+	pid = fork();
+	if (pid < 0) {
+		close(pipefd[0]);
+		close(pipefd[1]);
+		return -1;
+	}
+	if (pid == 0) {
+		dup2(pipefd[1], STDOUT_FILENO);
+		close(pipefd[0]);
+		close(pipefd[1]);
+		execvp(argv[0], argv);
+		_exit(127);
+	}
+	close(pipefd[1]);
+	fp = fdopen(pipefd[0], "r");
+	if (!fp) {
+		close(pipefd[0]);
+		waitpid(pid, &status, 0);
+		return -1;
+	}
+	while (fgets(line, sizeof(line), fp)) {
+		line[strcspn(line, "\n")] = '\0';
+		tally_uci_show_mode_line(line, nap, nmesh, mesh_ifs, max_mesh, nifs);
+	}
+	fclose(fp);
+	waitpid(pid, &status, 0);
+	if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
+		return -1;
+	return 0;
+}
+
+static int parse_config_option(const char *line, const char *name,
+			       char *out, size_t outlen)
+{
+	const char *p = line;
+	size_t nlen = strlen(name);
+
+	while (*p == ' ' || *p == '\t')
+		p++;
+	if (strncmp(p, "option ", 7) != 0)
+		return -1;
+	p += 7;
+	while (*p == ' ' || *p == '\t')
+		p++;
+	if (strncmp(p, name, nlen) != 0)
+		return -1;
+	p += nlen;
+	if (*p != ' ' && *p != '\t')
+		return -1;
+	while (*p == ' ' || *p == '\t')
+		p++;
+	if (*p == '\'' || *p == '"') {
+		char q = *p++;
+		size_t i = 0;
+
+		while (*p && *p != q && i + 1 < outlen)
+			out[i++] = *p++;
+		out[i] = '\0';
+		return 0;
+	}
+	{
+		size_t i = 0;
+
+		while (*p && *p != ' ' && *p != '\t' && *p != '\n' && i + 1 < outlen)
+			out[i++] = *p++;
+		out[i] = '\0';
+	}
+	return out[0] ? 0 : -1;
+}
+
+static int radio_disabled_lookup(char names[][32], const int *dis, int n,
+				 const char *radio)
+{
+	int i;
+
+	if (!radio || !radio[0])
+		return 0;
+	for (i = 0; i < n; i++) {
+		if (!strcmp(names[i], radio))
+			return dis[i];
+	}
+	return 0;
+}
+
+static int count_from_wireless_file(const char *path, int *nap, int *nmesh,
+				    char mesh_ifs[][32], int max_mesh, int *nifs)
+{
+	FILE *f;
+	char line[256];
+	char kind = 0;
+	char name[32] = "", mode[16] = "", disabled[8] = "";
+	char ifname[64] = "", device[64] = "";
+	char radio_names[16][32];
+	int radio_dis[16];
+	int nrad = 0;
+
+	f = fopen(path, "r");
+	if (!f)
+		return -1;
+	while (fgets(line, sizeof(line), f)) {
+		const char *p = line;
+
+		while (*p == ' ' || *p == '\t')
+			p++;
+		if (!strncmp(p, "config ", 7)) {
+			if (kind == 'i' && mode[0] && atoi(disabled) == 0 &&
+			    !radio_disabled_lookup(radio_names, radio_dis, nrad, device)) {
+				int is_ap = !strcmp(mode, "ap");
+				int is_mesh = !strcmp(mode, "mesh");
+
+				if (is_ap)
+					(*nap)++;
+				if (is_mesh) {
+					(*nmesh)++;
+					if (ifname[0] && *nifs < max_mesh) {
+						snprintf(mesh_ifs[*nifs], 32, "%s", ifname);
+						(*nifs)++;
+					}
+				}
+			}
+			if (kind == 'd' && name[0] && nrad < 16) {
+				snprintf(radio_names[nrad], 32, "%s", name);
+				radio_dis[nrad] = atoi(disabled) != 0;
+				nrad++;
+			}
+			kind = 0;
+			name[0] = mode[0] = disabled[0] = ifname[0] = device[0] = '\0';
+			if (strstr(p, "wifi-device")) {
+				const char *q = strchr(p, '\'');
+				kind = 'd';
+				if (q)
+					sscanf(q + 1, "%31[^']", name);
+			} else if (strstr(p, "wifi-iface")) {
+				kind = 'i';
+			}
+			continue;
+		}
+		if (kind == 'd')
+			parse_config_option(p, "disabled", disabled, sizeof(disabled));
+		if (kind == 'i') {
+			parse_config_option(p, "mode", mode, sizeof(mode));
+			parse_config_option(p, "disabled", disabled, sizeof(disabled));
+			parse_config_option(p, "ifname", ifname, sizeof(ifname));
+			parse_config_option(p, "device", device, sizeof(device));
+		}
+	}
+	if (kind == 'i' && mode[0] && atoi(disabled) == 0 &&
+	    !radio_disabled_lookup(radio_names, radio_dis, nrad, device)) {
+		if (!strcmp(mode, "ap"))
+			(*nap)++;
+		if (!strcmp(mode, "mesh")) {
+			(*nmesh)++;
+			if (ifname[0] && *nifs < max_mesh) {
+				snprintf(mesh_ifs[*nifs], 32, "%s", ifname);
+				(*nifs)++;
+			}
+		}
+	}
+	fclose(f);
+	return 0;
+}
+
 static int count_enabled_ap_mesh_ifaces(int *ap_out, int *mesh_out,
 				       char mesh_ifs[][32], int max_mesh)
 {
-	char raw[16384];
-	char *argv[] = { "uci", "show", "wireless", NULL };
-	char *p, *line;
 	int nap = 0, nmesh = 0, nifs = 0;
 
 	if (ap_out)
 		*ap_out = 0;
 	if (mesh_out)
 		*mesh_out = 0;
-	if (mesh_run_capture(argv, raw, sizeof(raw)) != 0)
-		return 0;
-	p = raw;
-	while ((line = strsep(&p, "\n")) != NULL) {
-		char sect[96], key[160], device[64], ifname[64];
-		int is_ap = (strstr(line, ".mode='ap'") != NULL ||
-			     strstr(line, ".mode=ap") != NULL);
-		int is_mesh = (strstr(line, ".mode='mesh'") != NULL ||
-			       strstr(line, ".mode=mesh") != NULL);
-
-		if (!is_ap && !is_mesh)
-			continue;
-		if (wifi_section_from_mode_line(line, sect, sizeof(sect)) != 0)
-			continue;
-		snprintf(key, sizeof(key), "wireless.%s.disabled", sect);
-		if (uci_is_disabled(key))
-			continue;
-		snprintf(key, sizeof(key), "wireless.%s.device", sect);
-		if (mesh_uci_get(key, device, sizeof(device)) == 0 && device[0]) {
-			snprintf(key, sizeof(key), "wireless.%s.disabled", device);
-			if (uci_is_disabled(key))
-				continue;
-		}
-		if (is_ap)
-			nap++;
-		if (is_mesh) {
-			nmesh++;
-			snprintf(key, sizeof(key), "wireless.%s.ifname", sect);
-			ifname[0] = '\0';
-			if (mesh_uci_get(key, ifname, sizeof(ifname)) == 0 &&
-			    ifname[0] && nifs < max_mesh) {
-				snprintf(mesh_ifs[nifs], 32, "%s", ifname);
-				nifs++;
-			}
-		}
+	if (count_from_uci_show_stream(&nap, &nmesh, mesh_ifs, max_mesh, &nifs) != 0 ||
+	    nap + nmesh == 0) {
+		nap = nmesh = nifs = 0;
+		memset(mesh_ifs, 0, sizeof(mesh_ifs[0]) * (size_t)max_mesh);
+		count_from_wireless_file("/etc/config/wireless",
+					 &nap, &nmesh, mesh_ifs, max_mesh, &nifs);
 	}
 	if (ap_out)
 		*ap_out = nap;
@@ -390,15 +569,16 @@ int mesh_wait_for_wifi_enabled(struct mesh_ctx *ctx)
 	int i;
 
 	memset(mesh_ifs, 0, sizeof(mesh_ifs));
-	if (count_enabled_ap_mesh_ifaces(&expected_ap, &expected_mesh,
-					 mesh_ifs, MESH11SD_MAX_IFACES) <= 0) {
-		mesh_log_info(ctx, "wifi: no enabled AP/mesh interfaces to wait for");
-		return 0;
-	}
 
 	for (tries = 0; tries < WIFI_ENABLED_WAIT_TRIES; tries++) {
 		if (tries > 0)
 			usleep(WIFI_ENABLED_POLL_US);
+		memset(mesh_ifs, 0, sizeof(mesh_ifs));
+		expected_ap = expected_mesh = 0;
+		count_enabled_ap_mesh_ifaces(&expected_ap, &expected_mesh,
+					     mesh_ifs, MESH11SD_MAX_IFACES);
+		if (expected_ap + expected_mesh <= 0)
+			continue;
 		ready_ap = count_hostapd_enabled();
 		ready_mesh = 0;
 		for (i = 0; i < MESH11SD_MAX_IFACES && mesh_ifs[i][0]; i++) {
@@ -419,7 +599,9 @@ int mesh_wait_for_wifi_enabled(struct mesh_ctx *ctx)
 		}
 	}
 
-	if (ok)
+	if (expected_ap + expected_mesh <= 0)
+		mesh_log_info(ctx, "wifi: no enabled AP/mesh interfaces to wait for");
+	else if (ok)
 		mesh_log_info(ctx, "wifi: all %d AP/mesh interfaces ENABLED",
 			      expected_ap + expected_mesh);
 	else

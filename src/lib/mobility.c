@@ -117,6 +117,35 @@ static void phy_val_str(int v, char *buf, size_t len)
 		snprintf(buf, len, "%d", v);
 }
 
+static void rts_unsup_path(const char *phy, char *buf, size_t len)
+{
+	snprintf(buf, len, MESH11SD_TMPDIR "/rts_unsupported_%s", phy);
+}
+
+static int rts_is_unsupported(const char *phy)
+{
+	char path[192];
+
+	if (!phy || !phy[0])
+		return 0;
+	rts_unsup_path(phy, path, sizeof(path));
+	return access(path, F_OK) == 0;
+}
+
+static void rts_mark_unsupported(struct mesh_ctx *ctx, const char *phy,
+				const char *why)
+{
+	char path[192];
+
+	if (!phy || !phy[0] || rts_is_unsupported(phy))
+		return;
+	rts_unsup_path(phy, path, sizeof(path));
+	mesh_file_write(path, "1\n");
+	mesh_log_info(ctx,
+		      "rts is unsupported on %s (%s); will not write rts or treat it as a difference",
+		      phy, why ? why : "driver ignored it");
+}
+
 static void phy_read_aqm(const char *phy, int *limit, int *quantum)
 {
 	char path[192], line[128];
@@ -208,6 +237,16 @@ static void phy_read_runtime_values(const char *phy, int *rts, int *limit, int *
 	waitpid(pid, &status, 0);
 	/* iw phy info does not print FQ limit/quantum on mt76; those live in aqm */
 	phy_read_aqm(phy, limit, quantum);
+	/* Some drivers (ath11k) omit the RTS line; debugfs may exist but stay -1 */
+	if (*rts == PHY_VAL_UNKNOWN) {
+		char rpath[192];
+		int rv;
+
+		snprintf(rpath, sizeof(rpath),
+			 "/sys/kernel/debug/ieee80211/%s/rts_threshold", phy);
+		if (mesh_sysfs_read_int(rpath, &rv) == 0 && rv >= 0)
+			*rts = rv;
+	}
 }
 
 static int mobility_eval(struct mesh_ctx *ctx, struct mobility_eval *e, int log_info)
@@ -376,7 +415,8 @@ static int mobility_eval(struct mesh_ctx *ctx, struct mobility_eval *e, int log_
 	return 0;
 }
 
-static int phy_wide_differs(const char *phy, const struct mobility_eval *e)
+static int phy_wide_differs(struct mesh_ctx *ctx, const char *phy,
+			   const struct mobility_eval *e)
 {
 	int cur_rts, cur_lim, cur_q;
 	int cur_aql_en = PHY_VAL_UNKNOWN, cur_aql = PHY_VAL_UNKNOWN;
@@ -385,6 +425,15 @@ static int phy_wide_differs(const char *phy, const struct mobility_eval *e)
 	if (!phy || !phy[0] || !e->valid_targets)
 		return 0;
 	phy_read_runtime_values(phy, &cur_rts, &cur_lim, &cur_q);
+	if (!rts_is_unsupported(phy)) {
+		if (cur_rts == PHY_VAL_UNKNOWN)
+			rts_mark_unsupported(ctx, phy,
+					     "cannot read RTS threshold");
+		else if (cur_rts != e->rts)
+			return 1;
+	}
+	if (cur_lim != e->limit || cur_q != e->quantum)
+		return 1;
 	snprintf(aqlpath, sizeof(aqlpath),
 		 "/sys/kernel/debug/ieee80211/%s/aql_enable", phy);
 	if (mesh_sysfs_read_int(aqlpath, &cur_aql_en) != 0)
@@ -393,8 +442,6 @@ static int phy_wide_differs(const char *phy, const struct mobility_eval *e)
 		 "/sys/kernel/debug/ieee80211/%s/aql_threshold", phy);
 	if (mesh_sysfs_read_int(aqlpath, &cur_aql) != 0)
 		cur_aql = PHY_VAL_UNKNOWN;
-	if (cur_rts != e->rts || cur_lim != e->limit || cur_q != e->quantum)
-		return 1;
 	if (cur_aql_en != 1 || cur_aql != e->aql_threshold)
 		return 1;
 	return 0;
@@ -413,15 +460,25 @@ static int phy_apply_wide(struct mesh_ctx *ctx, const char *phy,
 	if (!phy || !phy[0] || !e->valid_targets)
 		return 0;
 	phy_read_runtime_values(phy, &cur_rts, &cur_lim, &cur_q);
-	if (cur_rts != e->rts) {
+	if (rts_is_unsupported(phy)) {
+		/* Driver cannot report or honour RTS; never write it. */
+	} else if (cur_rts == PHY_VAL_UNKNOWN) {
+		rts_mark_unsupported(ctx, phy, "cannot read RTS threshold");
+	} else if (cur_rts != e->rts) {
 		char *a1[] = { "iw", "phy", (char *)phy, "set", "rts", rts_s, NULL };
+		int after_rts, after_lim, after_q;
 
 		snprintf(rts_s, sizeof(rts_s), "%d", e->rts);
 		mesh_run_capture(a1, NULL, 0);
 		phy_val_str(cur_rts, oldv, sizeof(oldv));
 		mesh_log_info(ctx, "Old value:rts=%s, Setting new value:rts=%d",
 			      oldv, e->rts);
-		wrote = 1;
+		phy_read_runtime_values(phy, &after_rts, &after_lim, &after_q);
+		if (after_rts == e->rts)
+			wrote = 1;
+		else
+			rts_mark_unsupported(ctx, phy,
+					     "write did not take effect");
 	}
 	if (cur_lim != e->limit) {
 		char *a2[] = { "iw", "phy", (char *)phy, "set", "txq", "limit", lim_s, NULL };
@@ -477,7 +534,7 @@ int mesh_mobility_phywide_differs(struct mesh_ctx *ctx)
 
 	if (mobility_eval(ctx, &e, 0) != 0 || !e.valid_targets || !e.phy[0])
 		return 0;
-	return phy_wide_differs(e.phy, &e);
+	return phy_wide_differs(ctx, e.phy, &e);
 }
 
 int mesh_mobility_apply_phywide(struct mesh_ctx *ctx)
@@ -496,7 +553,7 @@ int mesh_sync_phywide_via_wifi(struct mesh_ctx *ctx)
 
 	if (mobility_eval(ctx, &e, 0) != 0 || !e.valid_targets || !e.phy[0])
 		return 0;
-	if (!phy_wide_differs(e.phy, &e))
+	if (!phy_wide_differs(ctx, e.phy, &e))
 		return 0;
 	if (no_more_wifi)
 		return 0;
@@ -508,12 +565,30 @@ int mesh_sync_phywide_via_wifi(struct mesh_ctx *ctx)
 		mesh_run_capture(argv, NULL, 0);
 	}
 	mesh_wait_for_wifi_enabled(ctx);
-	if (phy_wide_differs(e.phy, &e)) {
+	if (phy_wide_differs(ctx, e.phy, &e)) {
 		no_more_wifi = 1;
 		mesh_log_info(ctx,
 			      "phy-wide settings still differ after wifi; not restarting wifi again");
 	}
 	return 1;
+}
+
+int mesh_phy_rts_display(const char *phy, char *out, size_t outlen)
+{
+	int rts, limit, quantum;
+
+	if (!out || outlen == 0)
+		return -1;
+	if (!phy || !phy[0] || rts_is_unsupported(phy)) {
+		snprintf(out, outlen, "unsupported");
+		return 0;
+	}
+	phy_read_runtime_values(phy, &rts, &limit, &quantum);
+	if (rts == PHY_VAL_UNKNOWN)
+		snprintf(out, outlen, "unsupported");
+	else
+		phy_val_str(rts, out, outlen);
+	return 0;
 }
 
 int mesh_mobility_settings(struct mesh_ctx *ctx, const char *mode)
