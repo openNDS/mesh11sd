@@ -246,6 +246,7 @@ int mesh_sync_phywide_via_wifi(struct mesh_ctx *ctx); /* write+wifi+wait if need
 int mesh_phy_rts_display(const char *phy, char *out, size_t outlen); /* live or unsupported */
 int mesh_rootmode(struct mesh_ctx *ctx);
 int mesh_check_path_changes(struct mesh_ctx *ctx);
+int mesh_path_lookup_lifetime(const char *mac, long *lifetime_ms);
 int mesh_check_channel(struct mesh_ctx *ctx);
 int mesh_check_gate(struct mesh_ctx *ctx);
 int mesh_scan_channel(struct mesh_ctx *ctx);
