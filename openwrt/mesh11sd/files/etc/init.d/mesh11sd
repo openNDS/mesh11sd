@@ -1,0 +1,40 @@
+#!/bin/sh /etc/rc.common
+
+START=90
+STOP=01
+USE_PROCD=1
+
+service_data() {
+	/usr/sbin/mesh11sd -v
+}
+
+start_service() {
+	procd_open_instance
+	procd_set_param command /usr/sbin/mesh11sd
+	procd_append_param command daemon
+	procd_set_param pidfile /var/run/mesh11sd.pid
+	procd_set_param term_timeout 1
+	procd_set_param stdout 0
+	procd_set_param stderr 0
+	procd_set_param respawn 150 10 10
+	procd_close_instance
+}
+
+# OpenWrt calls stop_service BEFORE procd_kill. v7 (and earlier alphas) put
+# uci revert here; the still-running daemon (or an in-flight/orphan
+# network|dnsmasq restart child) can then apply the reverted stock UCI —
+# lan IP / DHCP change with mesh still up. v7 intent is restore only, do
+# not activate (no network/wifi/dnsmasq reload). Defer restore until after
+# the daemon is dead.
+stop_service() {
+	return 0
+}
+
+service_stopped() {
+	/sbin/uci revert mesh11sd
+	/sbin/uci revert wireless
+	/sbin/uci revert dhcp
+	/sbin/uci revert network
+	/usr/sbin/nft delete table bridge mesh11s 2> /dev/null
+	/usr/sbin/mesh11sd "write_to_syslog" "Mesh11sd is shutting down" "notice"
+}
