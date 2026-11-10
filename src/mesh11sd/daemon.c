@@ -192,6 +192,10 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 	mesh_sys_setup(ctx);
 	mesh_get_portal_ula(ctx, "discover");
 	mesh_log_notice(ctx, "Starting daemon service...");
+	/* auto_config=0 never calls mesh_restart_mesh, but the main loop still
+	 * applies the same phy/bridge/mesh_param writes. Wait for every AP/mesh
+	 * to report ENABLED first (works without a preceding `wifi`). */
+	mesh_wait_for_wifi_enabled(ctx);
 	mesh_set_led(ctx, "init");
 	/* v7: set_led on before peers; heartbeat once peers appear */
 	mesh_set_led(ctx, "on");
@@ -348,27 +352,32 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 
 		/* v7 ~11457: mesh_mac_forced_forwarding + gateway_proxy_arp each loop */
 		{
-			FILE *f;
 			char path[192];
 			const char *meshif = ctx->active_mesh_ifname;
 			const char *br = ctx->device[0] ? ctx->device : NULL;
+			int want, cur;
+
 			if (meshif[0]) {
+				want = ctx->mesh_mac_forced_forwarding ? 1 : 0;
 				snprintf(path, sizeof(path),
 					 "/proc/sys/net/ipv4/conf/%s/proxy_arp_pvlan", meshif);
-				f = fopen(path, "w");
-				if (f) {
-					fputs(ctx->mesh_mac_forced_forwarding ? "1\n" : "0\n", f);
-					fclose(f);
-				}
+				cur = -1;
+				mesh_sysfs_read_int(path, &cur);
+				if (mesh_sysfs_write_int_if_changed(path, want) == 1)
+					mesh_log_info(ctx,
+						      "Old value:%s proxy_arp_pvlan=%d, Setting new value:proxy_arp_pvlan=%d",
+						      meshif, cur, want);
 			}
 			if (br && br[0]) {
+				want = ctx->gateway_proxy_arp ? 1 : 0;
 				snprintf(path, sizeof(path),
 					 "/proc/sys/net/ipv4/conf/%s/proxy_arp", br);
-				f = fopen(path, "w");
-				if (f) {
-					fputs(ctx->gateway_proxy_arp ? "1\n" : "0\n", f);
-					fclose(f);
-				}
+				cur = -1;
+				mesh_sysfs_read_int(path, &cur);
+				if (mesh_sysfs_write_int_if_changed(path, want) == 1)
+					mesh_log_info(ctx,
+						      "Old value:%s proxy_arp=%d, Setting new value:proxy_arp=%d",
+						      br, cur, want);
 			}
 		}
 

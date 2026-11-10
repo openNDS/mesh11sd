@@ -391,14 +391,7 @@ int mesh_restore_ipv4(struct mesh_ctx *ctx)
 			char *a[] = { "ip", "addr", "add", cidr, "dev", ctx->device, NULL };
 			mesh_run_capture(a, NULL, 0);
 		}
-		{
-			char *a[] = { "ip", "link", "set", ctx->device, "arp", "on", NULL };
-			mesh_run_capture(a, NULL, 0);
-		}
-		{
-			char *a[] = { "ip", "link", "set", ctx->device, "multicast", "on", NULL };
-			mesh_run_capture(a, NULL, 0);
-		}
+		mesh_ensure_iface_arp_multicast(ctx, ctx->device);
 	}
 	return 0;
 }

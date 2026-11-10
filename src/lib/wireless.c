@@ -178,6 +178,37 @@ int mesh_phy_is_multi_band(const char *phy)
 	return has_body;
 }
 
+int mesh_ensure_iface_arp_multicast(struct mesh_ctx *ctx, const char *ifname)
+{
+	char out[1024];
+	char *argv[] = { "ip", "link", "show", (char *)ifname, NULL };
+	int arp_on, mcast_on;
+
+	if (!ifname || !ifname[0])
+		return -1;
+	if (mesh_run_capture(argv, out, sizeof(out)) != 0)
+		return -1;
+	/* ip link lists NOARP when ARP is off; MULTICAST when multicast is on */
+	arp_on = (strstr(out, "NOARP") == NULL);
+	mcast_on = (strstr(out, "MULTICAST") != NULL);
+	if (!arp_on) {
+		char *a[] = { "ip", "link", "set", (char *)ifname, "arp", "on", NULL };
+
+		mesh_run_capture(a, NULL, 0);
+		mesh_log_info(ctx, "Old value:%s arp=off, Setting new value:arp=on",
+			      ifname);
+	}
+	if (!mcast_on) {
+		char *a[] = { "ip", "link", "set", (char *)ifname, "multicast", "on", NULL };
+
+		mesh_run_capture(a, NULL, 0);
+		mesh_log_info(ctx,
+			      "Old value:%s multicast=off, Setting new value:multicast=on",
+			      ifname);
+	}
+	return 0;
+}
+
 int mesh_wait_for_interface(struct mesh_ctx *ctx, const char *ifname,
 			    char *status_out, size_t status_len)
 {

@@ -423,3 +423,39 @@ int mesh_apply_portal_ipv4(struct mesh_ctx *ctx)
 			cur[0] ? cur : "-");
 	return applied ? 0 : -1;
 }
+
+int mesh_sysfs_read_int(const char *path, int *out)
+{
+	FILE *f;
+	int val;
+
+	if (!path || !out)
+		return -1;
+	f = fopen(path, "r");
+	if (!f)
+		return -1;
+	if (fscanf(f, "%d", &val) != 1) {
+		fclose(f);
+		return -1;
+	}
+	fclose(f);
+	*out = val;
+	return 0;
+}
+
+int mesh_sysfs_write_int_if_changed(const char *path, int want)
+{
+	int cur;
+	FILE *f;
+
+	if (!path)
+		return -1;
+	if (mesh_sysfs_read_int(path, &cur) == 0 && cur == want)
+		return 0;
+	f = fopen(path, "w");
+	if (!f)
+		return -1;
+	fprintf(f, "%d\n", want);
+	fclose(f);
+	return 1;
+}

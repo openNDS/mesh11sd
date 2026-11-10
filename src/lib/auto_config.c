@@ -180,6 +180,50 @@ int mesh_mesh_gate_state(struct mesh_ctx *ctx)
 }
 
 
+
+/* v7 check_mesh_params: `iw ... get mesh_param $param | awk '{print $1}'`
+ * so "1500 TUs", "100 milliseconds", "-72 dBm" compare equal to "1500"/"100"/"-72". */
+static int mesh_param_values_equal(const char *live, const char *conf)
+{
+	char live_tok[64], conf_tok[64];
+	const char *s;
+	size_t n;
+	char *e1, *e2;
+	long a, b;
+
+	if (!live || !conf)
+		return 0;
+	while (*live == ' ' || *live == '\t')
+		live++;
+	s = live;
+	while (*s && *s != ' ' && *s != '\t')
+		s++;
+	n = (size_t)(s - live);
+	if (n == 0 || n >= sizeof(live_tok))
+		return 0;
+	memcpy(live_tok, live, n);
+	live_tok[n] = '\0';
+
+	while (*conf == ' ' || *conf == '\t')
+		conf++;
+	s = conf;
+	while (*s && *s != ' ' && *s != '\t')
+		s++;
+	n = (size_t)(s - conf);
+	if (n == 0 || n >= sizeof(conf_tok))
+		return 0;
+	memcpy(conf_tok, conf, n);
+	conf_tok[n] = '\0';
+
+	if (!strcmp(live_tok, conf_tok))
+		return 1;
+	a = strtol(live_tok, &e1, 10);
+	b = strtol(conf_tok, &e2, 10);
+	if (e1 != live_tok && e2 != conf_tok && *e1 == '\0' && *e2 == '\0' && a == b)
+		return 1;
+	return 0;
+}
+
 int mesh_apply_mesh_params(struct mesh_ctx *ctx)
 {
 	/* v7 check_mesh_params: for every live mesh_param from iw dump, if
@@ -219,7 +263,7 @@ int mesh_apply_mesh_params(struct mesh_ctx *ctx)
 			snprintf(key, sizeof(key), "mesh11sd.mesh_params.%s", name);
 			if (mesh_uci_get(key, conf, sizeof(conf)) != 0 || !conf[0])
 				continue;
-			if (!strcmp(live, conf))
+			if (mesh_param_values_equal(live, conf))
 				continue;
 			/* v7 check_mesh_params: rssi is applied only if the
 			 * $tmpdir/mesh_rssi_threshold lock is absent; then write
@@ -326,12 +370,8 @@ int mesh_restart_mesh(struct mesh_ctx *ctx)
 			sleep(1);
 		}
 	}
-	if (ctx->device[0]) {
-		char *argv1[] = { "ip", "link", "set", ctx->device, "arp", "on", NULL };
-		char *argv2[] = { "ip", "link", "set", ctx->device, "multicast", "on", NULL };
-		mesh_run_capture(argv1, NULL, 0);
-		mesh_run_capture(argv2, NULL, 0);
-	}
+	if (ctx->device[0])
+		mesh_ensure_iface_arp_multicast(ctx, ctx->device);
 	mesh_mobility_settings(ctx, "runtime");
 	mesh_apply_mesh_params(ctx);
 	in_restart = 0;

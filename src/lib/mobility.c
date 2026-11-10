@@ -3,9 +3,11 @@
  */
 #include "mesh11sd.h"
 
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 int mesh_set_iface_path_cost(struct mesh_ctx *ctx, int path_cost,
@@ -21,17 +23,27 @@ int mesh_set_iface_path_cost(struct mesh_ctx *ctx, int path_cost,
 	if (!bridge || !bridge[0])
 		return 1;
 	if (path_cost == 0) {
+		int cur = -1;
+
 		snprintf(path, sizeof(path), "/sys/class/net/%s/bridge/stp_state", bridge);
-		f = fopen(path, "w");
-		if (f) { fputs("0\n", f); fclose(f); }
+		mesh_sysfs_read_int(path, &cur);
+		if (mesh_sysfs_write_int_if_changed(path, 0) == 1)
+			mesh_log_info(ctx, "Old value:%s stp_state=%d, Setting new value:stp_state=0",
+				      bridge, cur);
 		return 0;
 	}
 	if (path_cost <= 0 || path_cost >= 65535)
 		return 1;
 
 	snprintf(path, sizeof(path), "/sys/class/net/%s/bridge/stp_state", bridge);
-	f = fopen(path, "w");
-	if (f) { fprintf(f, "%d\n", stpstate); fclose(f); }
+	{
+		int cur = -1;
+
+		mesh_sysfs_read_int(path, &cur);
+		if (mesh_sysfs_write_int_if_changed(path, stpstate) == 1)
+			mesh_log_info(ctx, "Old value:%s stp_state=%d, Setting new value:stp_state=%d",
+				      bridge, cur, stpstate);
+	}
 
 	if (mesh_run_capture(show, out, sizeof(out)) != 0)
 		return 1;
@@ -56,16 +68,14 @@ int mesh_set_iface_path_cost(struct mesh_ctx *ctx, int path_cost,
 					fclose(f);
 				}
 				if (cur != want) {
-					f = fopen(pcpath, "w");
-					if (f) {
-						fprintf(f, "%d\n", want);
-						fclose(f);
-					}
+					if (mesh_sysfs_write_int_if_changed(pcpath, want) == 1)
+						mesh_log_info(ctx,
+							      "Old value:%s path_cost=%d, Setting new value:path_cost=%d",
+							      br_iface, cur, want);
 				}
 			}
 		}
 	}
-	(void)ctx;
 	return 0;
 }
 
@@ -81,6 +91,76 @@ int mesh_rootmode(struct mesh_ctx *ctx)
 			mesh_uci_set("mesh11sd.mesh_params.mesh_hwmp_rootmode", "4");
 	}
 	return 0;
+}
+
+
+static void phy_read_runtime_values(const char *phy, int *rts, int *limit, int *quantum)
+{
+	char *argv[] = { "iw", "phy", (char *)phy, "info", NULL };
+	int pipefd[2];
+	pid_t pid;
+	FILE *fp;
+	char line[1024];
+	int status;
+
+	*rts = *limit = *quantum = -1;
+	if (!phy || !phy[0])
+		return;
+	if (pipe(pipefd) < 0)
+		return;
+	pid = fork();
+	if (pid < 0) {
+		close(pipefd[0]);
+		close(pipefd[1]);
+		return;
+	}
+	if (pid == 0) {
+		int dn;
+
+		close(pipefd[0]);
+		dup2(pipefd[1], 1);
+		close(pipefd[1]);
+		dn = open("/dev/null", O_WRONLY);
+		if (dn >= 0) {
+			dup2(dn, 2);
+			close(dn);
+		}
+		execvp(argv[0], argv);
+		_exit(127);
+	}
+	close(pipefd[1]);
+	fp = fdopen(pipefd[0], "r");
+	if (!fp) {
+		close(pipefd[0]);
+		waitpid(pid, &status, 0);
+		return;
+	}
+	while (fgets(line, sizeof(line), fp)) {
+		char *p;
+
+		if ((p = strstr(line, "RTS threshold:"))) {
+			p += 14;
+			while (*p == ' ' || *p == '\t')
+				p++;
+			if (!strncmp(p, "off", 3))
+				*rts = -1;
+			else
+				*rts = atoi(p);
+		} else if ((p = strstr(line, "TXQ quantum:"))) {
+			*quantum = atoi(p + 12);
+		} else if ((p = strstr(line, "TXQ: quantum:"))) {
+			*quantum = atoi(p + 13);
+		} else if (strstr(line, "TXQ memory limit:") ||
+			   strstr(line, "TXQ: memory_limit:")) {
+			continue;
+		} else if ((p = strstr(line, "TXQ limit:"))) {
+			*limit = atoi(p + 10);
+		} else if ((p = strstr(line, "TXQ: limit:"))) {
+			*limit = atoi(p + 11);
+		}
+	}
+	fclose(fp);
+	waitpid(pid, &status, 0);
 }
 
 int mesh_mobility_settings(struct mesh_ctx *ctx, const char *mode)
@@ -273,33 +353,67 @@ int mesh_mobility_settings(struct mesh_ctx *ctx, const char *mode)
 	ctx->mesh_dtim_period = dtim_period;
 
 	if (phy[0] && do_runtime) {
-		char rts_s[16], lim_s[16], q_s[16], aql_s[16];
-		char *a1[] = { "iw", "phy", phy, "set", "rts", rts_s, NULL };
-		char *a2[] = { "iw", "phy", phy, "set", "txq", "limit", lim_s, NULL };
-		char *a3[] = { "iw", "phy", phy, "set", "txq", "quantum", q_s, NULL };
+		char rts_s[16], lim_s[16], q_s[16];
 		char aqlpath[160];
-		snprintf(rts_s, sizeof(rts_s), "%d", rts);
-		snprintf(lim_s, sizeof(lim_s), "%d", limit);
-		snprintf(q_s, sizeof(q_s), "%d", quantum);
-		mesh_run_capture(a1, NULL, 0);
-		mesh_run_capture(a2, NULL, 0);
-		mesh_run_capture(a3, NULL, 0);
+		int cur_rts = -1, cur_lim = -1, cur_q = -1;
+		int cur_aql_en = -1, cur_aql = -1;
+		static char applied_phy[32];
+		static int applied_ok;
+		static int applied_rts, applied_limit, applied_quantum;
+		int same_phy = (applied_ok && !strcmp(applied_phy, phy));
+
+		phy_read_runtime_values(phy, &cur_rts, &cur_lim, &cur_q);
+		if (cur_rts != rts && !(same_phy && applied_rts == rts && cur_rts < 0)) {
+			char *a1[] = { "iw", "phy", phy, "set", "rts", rts_s, NULL };
+
+			snprintf(rts_s, sizeof(rts_s), "%d", rts);
+			mesh_run_capture(a1, NULL, 0);
+			mesh_log_info(ctx, "Old value:rts=%d, Setting new value:rts=%d",
+				      cur_rts, rts);
+		}
+		if (cur_lim != limit && !(same_phy && applied_limit == limit && cur_lim < 0)) {
+			char *a2[] = { "iw", "phy", phy, "set", "txq", "limit", lim_s, NULL };
+
+			snprintf(lim_s, sizeof(lim_s), "%d", limit);
+			mesh_run_capture(a2, NULL, 0);
+			mesh_log_info(ctx,
+				      "Old value:txq_limit=%d, Setting new value:txq_limit=%d",
+				      cur_lim, limit);
+		}
+		if (cur_q != quantum && !(same_phy && applied_quantum == quantum && cur_q < 0)) {
+			char *a3[] = { "iw", "phy", phy, "set", "txq", "quantum", q_s, NULL };
+
+			snprintf(q_s, sizeof(q_s), "%d", quantum);
+			mesh_run_capture(a3, NULL, 0);
+			mesh_log_info(ctx,
+				      "Old value:txq_quantum=%d, Setting new value:txq_quantum=%d",
+				      cur_q, quantum);
+		}
 		snprintf(aqlpath, sizeof(aqlpath),
 			 "/sys/kernel/debug/ieee80211/%s/aql_enable", phy);
-		{
-			FILE *f = fopen(aqlpath, "w");
-			if (f) { fputs("1\n", f); fclose(f); }
+		if (mesh_sysfs_read_int(aqlpath, &cur_aql_en) != 0)
+			cur_aql_en = -1;
+		if (cur_aql_en != 1) {
+			if (mesh_sysfs_write_int_if_changed(aqlpath, 1) == 1)
+				mesh_log_info(ctx,
+					      "Old value:aql_enable=%d, Setting new value:aql_enable=1",
+					      cur_aql_en);
 		}
 		snprintf(aqlpath, sizeof(aqlpath),
 			 "/sys/kernel/debug/ieee80211/%s/aql_threshold", phy);
-		{
-			FILE *f = fopen(aqlpath, "w");
-			if (f) {
-				snprintf(aql_s, sizeof(aql_s), "%d\n", aql_threshold);
-				fputs(aql_s, f);
-				fclose(f);
-			}
+		if (mesh_sysfs_read_int(aqlpath, &cur_aql) != 0)
+			cur_aql = -1;
+		if (cur_aql != aql_threshold) {
+			if (mesh_sysfs_write_int_if_changed(aqlpath, aql_threshold) == 1)
+				mesh_log_info(ctx,
+					      "Old value:aql_threshold=%d, Setting new value:aql_threshold=%d",
+					      cur_aql, aql_threshold);
 		}
+		snprintf(applied_phy, sizeof(applied_phy), "%s", phy);
+		applied_rts = rts;
+		applied_limit = limit;
+		applied_quantum = quantum;
+		applied_ok = 1;
 	}
 
 	if (do_config) {
@@ -464,7 +578,6 @@ int mesh_check_gate(struct mesh_ctx *ctx)
 		mesh_uci_set("mesh11sd.mesh_params.mesh_connected_to_gate", "1");
 	else
 		mesh_uci_set("mesh11sd.mesh_params.mesh_connected_to_gate", "0");
-	(void)ctx;
 	return 0;
 }
 
