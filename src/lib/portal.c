@@ -675,6 +675,20 @@ static void portal_handoff(struct mesh_ctx *ctx)
 
 
 
+/* Re-apply the role overlay after the uncommitted changes were dropped
+ * (managed.c). */
+void mesh_peer_reapply(struct mesh_ctx *ctx)
+{
+	snprintf(ctx->last_state, sizeof(ctx->last_state), "peer");
+	peer_handoff(ctx);
+}
+
+void mesh_portal_reapply(struct mesh_ctx *ctx)
+{
+	snprintf(ctx->last_state, sizeof(ctx->last_state), "portal");
+	portal_handoff(ctx);
+}
+
 /* Ensure portal dhcp sections have force=1 so OpenWrt dnsmasq init does not
  * drop ranges when another portal answers the udhcpc dhcp_check probe.
  * Idempotent; restarts dnsmasq once if UCI changed (heals pre-alpha20 portals). */

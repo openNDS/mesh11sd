@@ -191,6 +191,11 @@ int mesh_cli_revert_all(struct mesh_ctx *ctx, int argc, char **argv)
 				char *argv_cp[] = { "cp", src, dst, NULL };
 				mesh_run_capture(argv_cp, NULL, 0);
 			}
+			/* Forget the committed portal config so it is rebuilt
+			 * from scratch rather than restored over the defaults. */
+			snprintf(src, sizeof(src), "/etc/config/%s_mesh11sd_portal",
+				 COMMIT_PKGS[i]);
+			unlink(src);
 		}
 		puts("Revert complete, auto configuration will rebuild - restarting......");
 		for (i = 0; i < 5; i++) {
@@ -228,4 +233,26 @@ int mesh_maybe_silent_commit_all(struct mesh_ctx *ctx)
 	if (atoi(status) == 1)
 		return 0;
 	return mesh_cli_commit_all(ctx, 4, fake_argv);
+}
+
+/*
+ * auto_config=1 (docs/LUCI-DESIGN.md): commit the portal configuration
+ * before portal detection, using the same package set as commit_all,
+ * then keep a copy of each file as /etc/config/<pkg>_mesh11sd_portal.
+ * Unlike commit_all this does not set commit_all=1, and the mesh11sd
+ * config itself is not committed (it stays the user's own); its copy is
+ * kept so a later change to it can be noticed.
+ */
+int mesh_commit_portal_config(struct mesh_ctx *ctx)
+{
+	int i;
+
+	for (i = 0; COMMIT_PKGS[i]; i++) {
+		if (!strcmp(COMMIT_PKGS[i], "mesh11sd"))
+			continue;
+		mesh_uci_commit(COMMIT_PKGS[i]);
+	}
+	mesh_write_portal_copies(ctx, COMMIT_PKGS);
+	mesh_log_notice(ctx, "Portal configuration committed, LuCI stays enabled");
+	return 0;
 }

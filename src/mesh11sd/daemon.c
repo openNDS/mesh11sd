@@ -89,57 +89,9 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 
 	if (ctx->auto_config > 0 ||
 	    access(MESH11SD_TMPDIR "/auto_config_test", F_OK) == 0) {
-		char setl[192];
-
 		/* v7 autostartup: revert+backup, dhcp defaults, then network apply */
 		mesh_backup_defaults(ctx);
-		if (ctx->portal_detect == 0 || ctx->portal_detect == 4)
-			mesh_set_ula_prefix(ctx, "set");
-		if (ctx->portal_detect == 5) {
-			snprintf(setl, sizeof(setl),
-				 "set dhcp.%s.dhcpv4='disabled'", ctx->auto_mesh_network);
-			mesh_uci_batch_line(setl);
-			snprintf(setl, sizeof(setl),
-				 "set dhcp.%s.dhcpv6='disabled'", ctx->auto_mesh_network);
-			mesh_uci_batch_line(setl);
-			snprintf(setl, sizeof(setl),
-				 "set dhcp.%s.ra='disabled'", ctx->auto_mesh_network);
-			mesh_uci_batch_line(setl);
-			snprintf(setl, sizeof(setl),
-				 "set dhcp.%s.ignore='1'", ctx->auto_mesh_network);
-			mesh_uci_batch_line(setl);
-			snprintf(setl, sizeof(setl),
-				 "set network.%s.proto='dhcp'", ctx->auto_mesh_network);
-			mesh_uci_batch_line(setl);
-		} else if (ctx->portal_detect != 3 && ctx->portal_detect != 4) {
-			snprintf(setl, sizeof(setl),
-				 "set dhcp.%s.dhcpv4='server'", ctx->auto_mesh_network);
-			mesh_uci_batch_line(setl);
-			snprintf(setl, sizeof(setl),
-				 "set dhcp.%s.dhcpv6='server'", ctx->auto_mesh_network);
-			mesh_uci_batch_line(setl);
-			snprintf(setl, sizeof(setl),
-				 "set dhcp.%s.ra='server'", ctx->auto_mesh_network);
-			mesh_uci_batch_line(setl);
-			snprintf(setl, sizeof(setl),
-				 "set dhcp.%s.ignore='0'", ctx->auto_mesh_network);
-			mesh_uci_batch_line(setl);
-			snprintf(setl, sizeof(setl),
-				 "set network.%s.proto='static'", ctx->auto_mesh_network);
-			mesh_uci_batch_line(setl);
-		}
-		/* v7 ~10925: deterministic lan IPv4 when portal_use_default_ipv4=0.
-		 * All nodes calculate it; portals (proto=static) apply/use it. */
-		if (ctx->portal_detect != 5)
-			mesh_apply_portal_ipv4(ctx);
-		if (ctx->portal_detect != 3) {
-			snprintf(setl, sizeof(setl),
-				 "set network.%s.ip6assign='64'", ctx->auto_mesh_network);
-			mesh_uci_batch_line(setl);
-		}
-		mesh_uci_batch_line("set dhcp.lan.ra_lifetime='3600'");
-		mesh_uci_batch_line("set dhcp.lan.ra_mininterval='20'");
-		mesh_uci_batch_line("set dhcp.lan.ra_maxinterval='60'");
+		mesh_apply_autostartup_uci(ctx);
 		if (has_mesh_uci()) {
 			char show[4096];
 			char *p, *line;
@@ -206,6 +158,7 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 
 	for (;;) {
 		int loop_interval = ctx->checkinterval;
+		int auto_config_done;
 		char buf[64];
 
 		if (mesh_daemon_stop) {
@@ -236,6 +189,7 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 			continue;
 		}
 
+		auto_config_done = 0;
 		if (!has_mesh_uci()) {
 			mesh_log_info(ctx, "No mesh interfaces detected yet.... Attempting auto configure");
 			if (ctx->auto_config != 0 ||
@@ -243,6 +197,7 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 				mesh_log_debug(ctx, "Starting auto configure process");
 				if (mesh_auto_config(ctx) == 0) {
 					ctx->changed = 1;
+					auto_config_done = 1;
 					/* Re-assert portal IPv4 after auto_config (covers test-mode
 					 * path where startup skipped the autostartup block). */
 					if (ctx->portal_detect != 5)
@@ -271,6 +226,12 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 			/* v7 ~11225: UCI macaddr before wifi so runtime MAC walk is a no-op */
 			mesh_fixup_wireless_macaddrs(ctx);
 		}
+
+		/* auto_config=1, portal_detect 0/1: commit the portal config
+		 * before detection, keep LuCI usable, and put back managed
+		 * options changed outside mesh11sd (docs/LUCI-DESIGN.md). */
+		if (has_mesh_uci() && mesh_managed_mode(ctx))
+			mesh_managed_pass(ctx, auto_config_done);
 
 		/* v7 ~11271: firstloop/changed only touches meshinterface and calls
 		 * all_nodes_rssi_update. That runs restart_mesh (wifi) only if

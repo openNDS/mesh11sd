@@ -204,6 +204,8 @@ int mesh_get_portal_state(struct mesh_ctx *ctx);
 int mesh_check_portal(struct mesh_ctx *ctx);
 int mesh_ensure_portal_dhcp_force(struct mesh_ctx *ctx);
 int mesh_portal_watchdog(struct mesh_ctx *ctx);
+void mesh_peer_reapply(struct mesh_ctx *ctx);   /* peer overlay again */
+void mesh_portal_reapply(struct mesh_ctx *ctx); /* portal runtime again */
 int mesh_set_ula_prefix(struct mesh_ctx *ctx, const char *mode);
 int mesh_get_portal_ula(struct mesh_ctx *ctx, const char *mode);
 /* Split fdxx:xxxx:xxxx:subnet::1 into base (first 3 hextets) and subnet. */
@@ -269,6 +271,13 @@ int mesh_cli_commit_changes(struct mesh_ctx *ctx, int argc, char **argv);
 int mesh_cli_commit_all(struct mesh_ctx *ctx, int argc, char **argv);
 int mesh_cli_revert_all(struct mesh_ctx *ctx, int argc, char **argv);
 int mesh_maybe_silent_commit_all(struct mesh_ctx *ctx);
+int mesh_commit_portal_config(struct mesh_ctx *ctx); /* auto_config=1, before detection */
+
+/* managed: keep LuCI usable (docs/LUCI-DESIGN.md) */
+int mesh_managed_mode(struct mesh_ctx *ctx);
+int mesh_managed_pass(struct mesh_ctx *ctx, int auto_config_done);
+int mesh_write_portal_copies(struct mesh_ctx *ctx, const char *const *pkgs);
+void mesh_apply_autostartup_uci(struct mesh_ctx *ctx);
 
 /* apmond-style JSON (Spod) — reuse for status etc. */
 void mesh_json_str(const char *in, char *out, size_t outlen);
