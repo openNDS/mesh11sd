@@ -209,7 +209,7 @@ Power nodes in any order. **One** WAN to the ISP for a detect=1 portal.
 
 1. Mesh11sd uses **uci** for dynamic changes. In normal operation those are **not** written to `/etc/config`.
 2. Editing `/etc/config/wireless` or `/etc/config/network` by hand while the daemon runs will usually break the mesh.
-3. **LuCI does not show or support mesh11sd.** The daemon disables LuCI unless `auto_config=2` (which also `commit_all` and **locks** portal detect to the first-boot role). Reverse with `mesh11sd revert_all revert`.
+3. **LuCI.** With `auto_config=1` and `portal_detect` 0 or 1, the daemon commits the portal configuration before portal detection and leaves LuCI enabled. A peer runs as uncommitted changes on top. Options mesh11sd manages (see `docs/UCI-OWNERSHIP.md`) are put back if they are changed outside mesh11sd; change them in the mesh11sd config instead. Other LuCI changes are kept. `auto_config=2` keeps the v7 behaviour (`commit_all`, role **locked** to the first-boot role). Reverse either with `mesh11sd revert_all revert`.
 4. Peers track the portal **channel**. The mesh interface is created in runtime UCI, not in `/etc/config/wireless`.
 5. All nodes must share mesh id, key, and (via tracking) channel. Auto-config does this if `auto_mesh_id` / `auto_mesh_key` match.
 6. **Known interop issue:** some MediaTek Wi-Fi 7 nodes (seen on the GL-MT3600BE) may fail to peer with ath11k nodes (seen on the GL-AXT1800). The link stays in LISTEN, OPN_RCVD or BLOCKED and wpa_supplicant logs `Mesh RSN: frame verification failed`. Mesh11sd v7 behaves the same, and other node pairs are unaffected. It often clears by itself after a while; otherwise keep those two models out of direct range of each other, or give them another node that both can peer with.
@@ -236,7 +236,7 @@ Values in the tables below are script defaults when the option is unset. Set wit
 | `checkinterval` | 10 | Seconds between reconfiguration passes. Shortest end-of-loop pause. |
 | `loop_interval_delta` | 20 | Added to `checkinterval` while a portal is answering, and on a portal node. Load at least 0.5 per core: one delta. Load at least 1.0: two deltas, held until the load falls below 0.5. Any other pass stays at `checkinterval`. 0 disables the longer pauses. Status prints the live pause as `loop_interval` while the daemon is running. |
 | `interface_timeout` | 10 | Wait for an interface to come up. |
-| `auto_config` | 0 | 0 off, 1 on, 2 on + `commit_all` + LuCI (locks first role). |
+| `auto_config` | 0 | 0 off, 1 on (portal config committed, LuCI usable in modes 0 and 1), 2 on + `commit_all` + LuCI (locks first role). |
 | `portal_detect` | 1 | See [§4](#4-node-types). Ignored if auto_config is 0. |
 | `portal_detect_threshold` | 5 | Watchdog: checkintervals without a portal before action. 0 = never. |
 | `portal_use_default_ipv4` | 0 | Portal: 1 = keep `/etc/config/network` IPv4; 0 = hash from label MAC. |
