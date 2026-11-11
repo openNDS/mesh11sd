@@ -206,6 +206,9 @@ int mesh_ensure_portal_dhcp_force(struct mesh_ctx *ctx);
 int mesh_portal_watchdog(struct mesh_ctx *ctx);
 int mesh_set_ula_prefix(struct mesh_ctx *ctx, const char *mode);
 int mesh_get_portal_ula(struct mesh_ctx *ctx, const char *mode);
+/* Split fdxx:xxxx:xxxx:subnet::1 into base (first 3 hextets) and subnet. */
+int mesh_ula_parts_from_addr(const char *addr, char *base, size_t baselen,
+			     char *subnet, size_t subnetlen);
 int mesh_manage_fallback_ula_route(struct mesh_ctx *ctx); /* v7 ULA ::1 + EUI64 */
 int mesh_get_portal_type(struct mesh_ctx *ctx);
 int mesh_restore_ipv4(struct mesh_ctx *ctx);

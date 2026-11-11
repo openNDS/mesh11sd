@@ -500,10 +500,14 @@ int mesh_portal_ula_discover(struct mesh_ctx *ctx)
 		}
 	}
 	{
-		unsigned a, b, c, d;
-		if (sscanf(best_ula, "%x:%x:%x:%x", &a, &b, &c, &d) >= 4) {
-			snprintf(ctx->ula_subnet, sizeof(ctx->ula_subnet), "%x", d);
-			snprintf(ctx->ula_base, sizeof(ctx->ula_base), "%x:%x:%x", a, b, c);
+		char base[32], subnet[8];
+
+		/* Keep hextet text as-is (v7 awk). %x drops leading zeros and
+		 * can rewrite ula_base so later stale-address matches miss. */
+		if (mesh_ula_parts_from_addr(best_ula, base, sizeof(base),
+					     subnet, sizeof(subnet)) == 0) {
+			snprintf(ctx->ula_base, sizeof(ctx->ula_base), "%s", base);
+			snprintf(ctx->ula_subnet, sizeof(ctx->ula_subnet), "%s", subnet);
 		}
 	}
 	snprintf(ctx->portal_ula, sizeof(ctx->portal_ula), "%s", best_ula);
