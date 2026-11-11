@@ -15,6 +15,7 @@
 #define MESH11SD_LOG_NAME "mesh11sd_log.log"
 #define MESH11SD_MAX_IFACES 16
 #define MESH11SD_MAX_RADIOS 8
+#define MESH11SD_MAX_PEERS 128
 
 struct mesh_ctx {
 	int debuglevel;
@@ -109,9 +110,12 @@ struct mesh_ctx {
 	int vtun_path_cost;
 	int vtun_isolate;
 	int move_ethernet_to_vxlan_bridge;
+	int connect_show_all;
 	char vxlan_group[64]; /* override for create_vxlan_if; empty → ff02::$tun_id */
 	char cpe_mode[16];
 
+	char peerlist[MESH11SD_MAX_PEERS][32];
+	int peerlist_count;
 	char iflist[MESH11SD_MAX_IFACES][32];
 	int iflist_count;
 	char radios[MESH11SD_MAX_RADIOS][32];
@@ -228,6 +232,7 @@ int mesh_portal_ula_discover(struct mesh_ctx *ctx);
 
 /* bridge / vxlan / STP */
 int mesh_convert_to_la(const char *mac, char *out, size_t outlen);
+int mesh_convert_from_la(const char *mac, char *out, size_t outlen);
 int mesh_get_indexed_mac(struct mesh_ctx *ctx, const char *devname, char *out, size_t outlen);
 int mesh_set_bridge_mac_addresses(struct mesh_ctx *ctx);
 int mesh_set_root_bridge_priority(struct mesh_ctx *ctx);

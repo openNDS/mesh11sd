@@ -25,6 +25,21 @@ int mesh_convert_to_la(const char *mac, char *out, size_t outlen)
 	return 0;
 }
 
+int mesh_convert_from_la(const char *mac, char *out, size_t outlen)
+{
+	unsigned o[6];
+
+	if (!mac || sscanf(mac, "%x:%x:%x:%x:%x:%x",
+			   &o[0], &o[1], &o[2], &o[3], &o[4], &o[5]) != 6)
+		return -1;
+	/* v7: if bit 0x02 is set, clear it; otherwise leave the octet */
+	if (o[0] & 0x02)
+		o[0] ^= 0x02;
+	snprintf(out, outlen, "%02x:%02x:%02x:%02x:%02x:%02x",
+		 o[0], o[1], o[2], o[3], o[4], o[5]);
+	return 0;
+}
+
 int mesh_get_indexed_mac(struct mesh_ctx *ctx, const char *devname,
 			 char *out, size_t outlen)
 {

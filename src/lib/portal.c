@@ -862,16 +862,45 @@ int mesh_get_portal_type(struct mesh_ctx *ctx)
 int mesh_get_peers(struct mesh_ctx *ctx)
 {
 	int i;
-	char out[4096];
+	char out[8192];
 
+	ctx->peerlist_count = 0;
 	mesh_get_mesh_iflist(ctx);
 	for (i = 0; i < ctx->iflist_count; i++) {
 		char status[16];
 		char *argv[] = { "iw", "dev", ctx->iflist[i], "mpath", "dump", NULL };
+		char *p, *line;
+
 		mesh_wait_for_interface(ctx, ctx->iflist[i], status, sizeof(status));
 		if (!strcmp(status, "down"))
 			continue;
-		mesh_run_capture(argv, out, sizeof(out));
+		if (mesh_run_capture(argv, out, sizeof(out)) != 0)
+			continue;
+		/* v7: awk NR>1, first column, plus convert_from_la form */
+		p = out;
+		while ((line = strsep(&p, "\n")) != NULL) {
+			unsigned o[6];
+			char peermac[32], from_la[32];
+			char *tok;
+
+			while (*line == ' ' || *line == '	')
+				line++;
+			if (!*line)
+				continue;
+			tok = line;
+			if (sscanf(tok, "%31s", peermac) != 1)
+				continue;
+			if (sscanf(peermac, "%x:%x:%x:%x:%x:%x",
+				   &o[0], &o[1], &o[2], &o[3], &o[4], &o[5]) != 6)
+				continue;
+			if (ctx->peerlist_count < MESH11SD_MAX_PEERS)
+				snprintf(ctx->peerlist[ctx->peerlist_count++],
+					 sizeof(ctx->peerlist[0]), "%s", peermac);
+			if (mesh_convert_from_la(peermac, from_la, sizeof(from_la)) == 0 &&
+			    ctx->peerlist_count < MESH11SD_MAX_PEERS)
+				snprintf(ctx->peerlist[ctx->peerlist_count++],
+					 sizeof(ctx->peerlist[0]), "%s", from_la);
+		}
 	}
 	return 0;
 }

@@ -49,6 +49,7 @@ void mesh_ctx_init(struct mesh_ctx *ctx, int is_daemon)
 	ctx->link_to_portal = 1;
 	ctx->reboot_on_error = 1;
 	ctx->stop_on_error = 0;
+	ctx->connect_show_all = 1;
 	mesh_mkdir_p(MESH11SD_TMPDIR);
 }
 
@@ -523,6 +524,18 @@ int mesh_ctx_load_setup(struct mesh_ctx *ctx)
 		ctx->move_ethernet_to_vxlan_bridge = parse_int_default(buf, 0);
 	else
 		ctx->move_ethernet_to_vxlan_bridge = 0;
+
+	/* v7: empty or >1 falls back to 1; 0 is kept */
+	ctx->connect_show_all = 1;
+	if (mesh_uci_get("mesh11sd.setup.connect_show_all", buf, sizeof(buf)) == 0 &&
+	    buf[0]) {
+		int v = parse_int_default(buf, 1);
+
+		if (v > 1)
+			v = 1;
+		ctx->connect_show_all = v;
+	}
+	mesh_log_info(ctx, "option connect_show_all [ %d ]", ctx->connect_show_all);
 	if (mesh_uci_get("mesh11sd.setup.cpe_mode", buf, sizeof(buf)) == 0 && buf[0])
 		snprintf(ctx->cpe_mode, sizeof(ctx->cpe_mode), "%s", buf);
 	else
