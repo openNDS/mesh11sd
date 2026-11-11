@@ -914,7 +914,8 @@ int mesh_ccpy_setup(struct mesh_ctx *ctx)
 		char *argv[] = { "ip", "-6", "neigh", NULL };
 		char *np, *nline;
 
-		eq = strchr(line, '=');
+		/* line is "wireless.<section>.mode='mesh'"; keep "wireless.<section>" */
+		eq = strstr(line, ".mode=");
 		if (!eq)
 			continue;
 		snprintf(sect, sizeof(sect), "%s", line);

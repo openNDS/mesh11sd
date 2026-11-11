@@ -1040,7 +1040,8 @@ int mesh_scan_channel(struct mesh_ctx *ctx)
 	while ((line = strsep(&p, " \n")) != NULL) {
 		char sect[96], *eq, ifn[64], key[128];
 		char *scan[] = { "iw", "dev", ifn, "scan", NULL };
-		eq = strchr(line, '=');
+		/* line is "wireless.<section>.mode='mesh'"; keep "wireless.<section>" */
+		eq = strstr(line, ".mode=");
 		if (!eq)
 			continue;
 		snprintf(sect, sizeof(sect), "%s", line);
