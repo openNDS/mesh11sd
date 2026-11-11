@@ -52,6 +52,20 @@ void mesh_ctx_init(struct mesh_ctx *ctx, int is_daemon)
 	mesh_mkdir_p(MESH11SD_TMPDIR);
 }
 
+
+/* v7 check_config_params: write a mesh_params default only if unset, then log. */
+static void mesh_param_default(struct mesh_ctx *ctx, const char *name, const char *def)
+{
+	char key[96], buf[64];
+
+	snprintf(key, sizeof(key), "mesh11sd.mesh_params.%s", name);
+	if (mesh_uci_get(key, buf, sizeof(buf)) != 0 || !buf[0]) {
+		snprintf(buf, sizeof(buf), "%s", def);
+		mesh_uci_set(key, buf);
+	}
+	mesh_log_info(ctx, "option %s [ %s ]", name, buf);
+}
+
 static int parse_int_default(const char *s, int def)
 {
 	char *end;
@@ -567,8 +581,13 @@ int mesh_check_config_params(struct mesh_ctx *ctx)
 		gate_ann = 0;
 	mesh_uci_set("mesh11sd.mesh_params.mesh_gate_announcements", gate_ann ? "1" : "0");
 
-	if (mesh_uci_get("mesh11sd.mesh_params.mesh_hwmp_rootmode", buf, sizeof(buf)) != 0)
-		mesh_uci_set("mesh11sd.mesh_params.mesh_hwmp_rootmode", "0");
+	/* v7 writes these only if unset. Mobility may later overwrite
+	 * rootmode, max_peer_links and rssi. Portals force rootmode 4. */
+	mesh_param_default(ctx, "mesh_hwmp_rootmode", "0");
+	mesh_param_default(ctx, "mesh_hwmp_root_interval", "5000");
+	mesh_param_default(ctx, "mesh_hwmp_active_path_to_root_timeout", "6000");
+	mesh_param_default(ctx, "mesh_max_peer_links", "16");
+	mesh_param_default(ctx, "mesh_plink_timeout", "500");
 
 	return 0;
 }

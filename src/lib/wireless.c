@@ -1114,13 +1114,20 @@ int mesh_cli_country(struct mesh_ctx *ctx, const char *code)
 
 int mesh_cli_mesh_rssi_threshold(struct mesh_ctx *ctx, const char *dir, int force)
 {
+	/* v7 mesh_rssi_threshold [+|-] [force]:
+	 * Without force: lock file + iw set so only NEW plinks use the value.
+	 * With force: write UCI, drop the lock, print "Forcing new threshold
+	 * on all peers...". The daemon's check_mesh_params then applies the
+	 * value and all_nodes_rssi_update restarts wifi ("Disconnecting nodes").
+	 */
 	char status[16];
-	int i, current = 0, newv;
+	int i, current = 0, newv, new_current;
 	char out[128];
+	char *iface = NULL;
 
-	(void)force;
 	mesh_get_mesh_iflist(ctx);
 	printf("===========================================================================\n");
+	printf("Change the mesh rssi threshold\n");
 	for (i = 0; i < ctx->iflist_count; i++) {
 		mesh_wait_for_interface(ctx, ctx->iflist[i], status, sizeof(status));
 		if (!strcmp(status, "down"))
@@ -1131,22 +1138,42 @@ int mesh_cli_mesh_rssi_threshold(struct mesh_ctx *ctx, const char *dir, int forc
 			if (mesh_run_capture(argv, out, sizeof(out)) == 0)
 				current = atoi(out);
 		}
+		iface = ctx->iflist[i];
 		break;
 	}
 	if (!dir || !dir[0]) {
-		printf("    Current mesh_rssi_threshold [ %d ]\n", current);
+		printf("    Current threshold for new connections [ %d ] dBm \n", current);
 		printf("    Usage: mesh11sd mesh_rssi_threshold [+|-] [force]\n");
+		printf("    where \"+\" increments by 3dBm and \"-\" decrements by 3dBm\n");
+		printf("    The keyword \"force\" forces the new threshold on all peers\n");
 	} else if (!strcmp(dir, "+") || !strcmp(dir, "-")) {
+		char val[16];
+
 		newv = !strcmp(dir, "+") ? current + 3 : current - 3;
-		{
-			char val[16];
-			char *argv[] = { "iw", "dev", ctx->iflist[i], "set", "mesh_param",
-					 "mesh_rssi_threshold", val, NULL };
-			snprintf(val, sizeof(val), "%d", newv);
-			mesh_run_capture(argv, NULL, 0);
+		snprintf(val, sizeof(val), "%d", newv);
+		printf("    Previous threshold [ %d ] dBm \n", current);
+		if (!force) {
+			mesh_file_write(MESH11SD_TMPDIR "/mesh_rssi_threshold", val);
+			if (iface) {
+				char *argv[] = { "iw", "dev", iface, "set", "mesh_param",
+						 "mesh_rssi_threshold", val, NULL };
+				mesh_run_capture(argv, NULL, 0);
+			}
 			mesh_uci_set("mesh11sd.mesh_params.mesh_rssi_threshold", val);
-			printf("    New mesh_rssi_threshold [ %d ]\n", newv);
+			new_current = newv;
+			if (iface) {
+				char *argv[] = { "iw", "dev", iface, "get", "mesh_param",
+						 "mesh_rssi_threshold", NULL };
+				if (mesh_run_capture(argv, out, sizeof(out)) == 0)
+					new_current = atoi(out);
+			}
+		} else {
+			mesh_uci_set("mesh11sd.mesh_params.mesh_rssi_threshold", val);
+			printf("\n    Forcing new threshold on all peers...\n");
+			unlink(MESH11SD_TMPDIR "/mesh_rssi_threshold");
+			new_current = newv;
 		}
+		printf("\n    New threshold - [ %d ] dBm \n", new_current);
 	}
 	printf("===========================================================================\n\n");
 	return 0;
