@@ -909,7 +909,7 @@ int mesh_ccpy_setup(struct mesh_ctx *ctx)
 	}
 	p = show;
 	while ((line = strsep(&p, " \n")) != NULL) {
-		char sect[96], *eq, netkey[96], net[64], br[64];
+		char sect[96], *eq, netkey[96], net[64], devkey[96], br[64];
 		char out[4096];
 		char *argv[] = { "ip", "-6", "neigh", NULL };
 		char *np, *nline;
@@ -922,8 +922,9 @@ int mesh_ccpy_setup(struct mesh_ctx *ctx)
 		snprintf(netkey, sizeof(netkey), "%s.network", sect);
 		if (mesh_uci_get(netkey, net, sizeof(net)) != 0)
 			continue;
-		snprintf(br, sizeof(br), "network.%s.device", net);
-		if (mesh_uci_get(br, br, sizeof(br)) != 0)
+		/* The key needs its own buffer: mesh_uci_get clears the output first. */
+		snprintf(devkey, sizeof(devkey), "network.%s.device", net);
+		if (mesh_uci_get(devkey, br, sizeof(br)) != 0 || !br[0])
 			snprintf(br, sizeof(br), "br-%s", net);
 		if (mesh_run_capture(argv, out, sizeof(out)) == 0) {
 			np = out;

@@ -10,9 +10,13 @@
 
 int mesh_uci_get(const char *tuple, char *buf, size_t buflen)
 {
-	char *argv[] = { "uci", "-q", "get", (char *)tuple, NULL };
+	/* Copy the key first so a caller may pass the same buffer for both. */
+	char key[256];
+	char *argv[] = { "uci", "-q", "get", key, NULL };
 
 	if (!tuple || !buf || buflen == 0)
+		return -1;
+	if (snprintf(key, sizeof(key), "%s", tuple) >= (int)sizeof(key))
 		return -1;
 	buf[0] = '\0';
 	return mesh_run_capture(argv, buf, buflen);
