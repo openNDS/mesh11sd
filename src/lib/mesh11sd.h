@@ -283,6 +283,18 @@ int mesh_managed_pass(struct mesh_ctx *ctx, int auto_config_done);
 int mesh_write_portal_copies(struct mesh_ctx *ctx, const char *const *pkgs);
 void mesh_apply_autostartup_uci(struct mesh_ctx *ctx);
 
+/* MAC addresses set by mesh11sd's MAC walk and fixup (never committed) */
+#define MESH_OWN_MACS_MAX 32
+struct mesh_own_mac {
+	char sect[64];
+	char val[32];
+};
+int mesh_own_macs_find(struct mesh_ctx *ctx, const char *conf,
+		       struct mesh_own_mac *tab, int max);
+void mesh_own_macs_strip(const char *conf, const struct mesh_own_mac *tab, int n);
+void mesh_own_macs_set(const char *conf, const struct mesh_own_mac *tab, int n);
+void mesh_clear_own_macaddrs(struct mesh_ctx *ctx);
+
 /* apmond-style JSON (Spod) — reuse for status etc. */
 void mesh_json_str(const char *in, char *out, size_t outlen);
 void mesh_json_field(const char *indent, const char *key, const char *value, int last);

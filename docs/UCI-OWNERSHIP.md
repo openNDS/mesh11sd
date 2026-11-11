@@ -99,13 +99,13 @@ These stay in `mesh_params`; they are not copied into wireless/network.
 | `m11sN.disabled` | 0 on the chosen band, else 1 | `auto_mesh_band`, `mesh_phy_index`, `mesh_multi_interfaces` | those options | managed (already in mesh11sd) |
 | `m11sN.mesh_rssi_threshold` | integer dBm | `mesh_params.mesh_rssi_threshold` (default −63; mobility may overwrite) | `mesh_params.mesh_rssi_threshold` | managed (already in mesh11sd) |
 | `m11sN.dtim_period` | integer | `mesh_dtim_period`, then mobility | `mesh_dtim_period`, `mesh_node_mobility_level` | managed (already in mesh11sd) |
-| `m11sN.macaddr` | factory MAC if unset and `commit_all=0` | factory / label MAC | none | leave to user once set (internal default only) |
+| `m11sN.macaddr` | factory MAC if unset and `commit_all=0` | factory / label MAC | none | not managed: set uncommitted each start, never committed (v7) |
 | `wifi-iface` AP `disabled` | 0/1, or 1 on the mesh radio when mode 2 | `mesh_gate_enable` | `mesh_gate_enable` | managed (already in mesh11sd) |
 | `wifi-iface` AP `ssid` | base, optional `-<band>-<mac4>-rNpM` suffix | `mesh_gate_base_ssid` or `vtun_base_ssid`; suffix from factory MAC if `ssid_suffix_enable` | `mesh_gate_base_ssid`, `vtun_base_ssid`, `ssid_suffix_enable` | managed (already in mesh11sd). Optional custom suffix: `ssid_suffix` |
 | `wifi-iface` AP `encryption` / `key` (LAN APs) | sae / sae-mixed+aes / psk2+aes / owe / none | `mesh_gate_encryption`, `mesh_gate_key` | those options | managed (already in mesh11sd) |
 | `wifi-iface` AP `encryption` / `key` (vxradio) | same codes | `vtun_gate_encryption`, `vtun_gate_key` (section first created with `none`, then overwritten) | those options | managed (already in mesh11sd) |
 | `wifi-iface` AP `ifname` | `phyN-apI` if unset | generated | none | leave to user once set |
-| `wifi-iface` AP `macaddr` | indexed locally-administered MAC if unset and `commit_all=0` | derived from factory MAC | none | leave to user once set |
+| `wifi-iface` AP `macaddr` | indexed locally-administered MAC if unset and `commit_all=0` | derived from factory MAC | none | not managed: indexed afresh each start, never committed (v7) |
 | `vxradioN` section (`device`, `mode=ap`, `network=vtunlan`, `ifname`, `disabled`) | created when `vtun_enable` | `vtun_enable`, `mesh_gate_enable` | those options | managed (already in mesh11sd) |
 
 Note: if `mesh_gate_base_ssid` is unset, v8 always uses `MeshGate` and
@@ -121,7 +121,7 @@ SSID if it is not OpenWrt” fallback is not in the C port.
 | `$net.proto` | `static` (portal / modes 0,1) or `dhcp` (peer, mode 5) | role / `portal_detect` | `portal_detect` | managed (already in mesh11sd) |
 | `$net.ip6assign` | `64` on portal; deleted on peer | role | `portal_detect` | managed (already in mesh11sd) |
 | `$net.ip6hint` | 4 hex digits | SHA-256 of factory MAC | none (derived) | managed (already in mesh11sd) — derived; optional override `ula_prefix` if a stable IPv6 prefix must be set by hand |
-| `$net.macaddr` | indexed MAC if it differs | derived | `swconfig_mac_skip` (swconfig only) | leave to user once set |
+| `$net.macaddr` | indexed MAC if it differs | derived | `swconfig_mac_skip` (swconfig only) | not managed: indexed afresh each start, never committed (v7) |
 | `globals.ula_prefix` | `fdXX:XXXX:XXXX::/48` | slices of hashed `auto_mesh_id`; revert path restores the backup | `auto_mesh_id` (derived) | managed (already in mesh11sd). Optional same `ula_prefix` override as above |
 | `wan6.reqprefix` / `reqaddress` | `auto` / `try` | hardcoded, written with the IPv4 apply | none | leave to user — stop writing unless CPE prefix delegation needs it |
 | `vtunnel` device (`name`, `type=bridge`, `bridge_empty`, `ports`) | created with `vtun_enable` | `tun_id` | `vtun_enable`, `tun_id` | managed (already in mesh11sd) |

@@ -245,14 +245,25 @@ int mesh_maybe_silent_commit_all(struct mesh_ctx *ctx)
  */
 int mesh_commit_portal_config(struct mesh_ctx *ctx)
 {
-	int i;
+	static struct mesh_own_mac wmac[MESH_OWN_MACS_MAX], nmac[MESH_OWN_MACS_MAX];
+	int i, nw, nn;
+
+	/* v7 never commits the MACs set by the MAC walk and fixup: keep
+	 * them out of the committed files and copies, then put them back
+	 * as uncommitted changes. */
+	nw = mesh_own_macs_find(ctx, "wireless", wmac, MESH_OWN_MACS_MAX);
+	nn = mesh_own_macs_find(ctx, "network", nmac, MESH_OWN_MACS_MAX);
 
 	for (i = 0; COMMIT_PKGS[i]; i++) {
 		if (!strcmp(COMMIT_PKGS[i], "mesh11sd"))
 			continue;
 		mesh_uci_commit(COMMIT_PKGS[i]);
 	}
+	mesh_own_macs_strip("wireless", wmac, nw);
+	mesh_own_macs_strip("network", nmac, nn);
 	mesh_write_portal_copies(ctx, COMMIT_PKGS);
+	mesh_own_macs_set("wireless", wmac, nw);
+	mesh_own_macs_set("network", nmac, nn);
 	mesh_log_notice(ctx, "Portal configuration committed, LuCI stays enabled");
 	return 0;
 }

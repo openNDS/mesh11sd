@@ -91,6 +91,8 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 	    access(MESH11SD_TMPDIR "/auto_config_test", F_OK) == 0) {
 		/* v7 autostartup: revert+backup, dhcp defaults, then network apply */
 		mesh_backup_defaults(ctx);
+		/* v7 clean sheet: no committed MACs from an earlier run */
+		mesh_clear_own_macaddrs(ctx);
 		mesh_apply_autostartup_uci(ctx);
 		if (has_mesh_uci()) {
 			char show[4096];

@@ -835,14 +835,15 @@ int mesh_auto_config(struct mesh_ctx *ctx)
 	return 0;
 }
 
-/* v7 ~11225: set mesh/AP macaddr in UCI before wifi so runtime MAC walk is a no-op. */
+/* v7 ~11225: set mesh/AP macaddr in UCI before wifi so runtime MAC walk
+ * is a no-op. v7 runs this every loop pass (its macfixup gate is
+ * commented out) and only fills options that are unset; the AP MACs
+ * come from the walk's maclist, so the two always agree. These options
+ * are never committed (see mesh_commit_portal_config). */
 int mesh_fixup_wireless_macaddrs(struct mesh_ctx *ctx)
 {
 	char *p, *line;
 	int did = 0;
-
-	if (ctx->macfixup)
-		return 0;
 	if (!ctx->factory_mac[0])
 		mesh_get_factory_mac(ctx, ctx->factory_mac, sizeof(ctx->factory_mac));
 	if (!ctx->factory_mac[0])
@@ -924,10 +925,7 @@ int mesh_fixup_wireless_macaddrs(struct mesh_ctx *ctx)
 				mesh_uci_batch_line(setl);
 				mesh_log_notice(ctx, "Setting mac address of %s to [ %s ]",
 						ifn, want);
-				/* v7 leaves changed alone for AP (firstloop covers it).
-				 * Mark changed so a later all_nodes_rssi_update can wifi
-				 * if the rssi lock is absent. */
-				ctx->changed = 1;
+				/* v7 leaves changed alone for AP (firstloop covers it) */
 				did = 1;
 			}
 		}

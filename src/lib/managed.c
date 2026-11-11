@@ -273,6 +273,11 @@ static int is_managed(struct mesh_ctx *ctx, const char *pkg, const char *sect,
 	};
 	const char *net = ctx->auto_mesh_network;
 
+	/* MAC addresses come from the v7 MAC walk and fixup on every
+	 * start and are never committed, so never compare or restore them. */
+	if (!strcmp(opt, "macaddr"))
+		return 0;
+
 	if (!strcmp(pkg, "wireless")) {
 		if (!strcmp(type, "wifi-device"))
 			return in_list(opt, radio);
@@ -605,6 +610,133 @@ static int check_package(struct mesh_ctx *ctx, const char *pkg)
 	}
 	reload_package(ctx, pkg);
 	return 1;
+}
+
+/* ---- MAC addresses set by mesh11sd (v7 clean sheet) ----
+ *
+ * v7 numbers the AP and bridge MACs afresh on every start (MAC walk
+ * and fixup) and never commits them with auto_config=1. A committed
+ * one would stop the fixup and fight the walk, so they are kept out
+ * of the committed files and the portal copies.
+ *
+ * A MAC is mesh11sd's own if it is the factory MAC (mesh vif) or the
+ * locally administered factory MAC with any 4th octet (indexed MAC).
+ */
+static int mesh_is_own_mac(struct mesh_ctx *ctx, const char *mac)
+{
+	unsigned m[6], f[6];
+	int i;
+
+	if (!ctx->factory_mac[0])
+		mesh_get_factory_mac(ctx, ctx->factory_mac, sizeof(ctx->factory_mac));
+	if (!ctx->factory_mac[0])
+		return 0;
+	if (sscanf(mac, "%x:%x:%x:%x:%x:%x",
+		   &m[0], &m[1], &m[2], &m[3], &m[4], &m[5]) != 6)
+		return 0;
+	if (sscanf(ctx->factory_mac, "%x:%x:%x:%x:%x:%x",
+		   &f[0], &f[1], &f[2], &f[3], &f[4], &f[5]) != 6)
+		return 0;
+	for (i = 0; i < 6 && m[i] == f[i]; i++)
+		;
+	if (i == 6)
+		return 1;	/* factory MAC */
+	f[0] |= 0x02;
+	return m[0] == f[0] && m[1] == f[1] && m[2] == f[2] &&
+	       m[4] == f[4] && m[5] == f[5];
+}
+
+/* Find "<conf>.<sect>.macaddr" options holding one of our MACs. */
+int mesh_own_macs_find(struct mesh_ctx *ctx, const char *conf,
+		       struct mesh_own_mac *tab, int max)
+{
+	char *argv[] = { "uci", "-q", "show", (char *)conf, NULL };
+	char *p, *line;
+	int n = 0;
+
+	if (mesh_run_capture(argv, show_buf, sizeof(show_buf)) != 0)
+		return 0;
+	p = show_buf;
+	while ((line = strsep(&p, "\n")) != NULL && n < max) {
+		char *sect, *opt, *eq, val[64];
+		size_t clen = strlen(conf);
+
+		if (strncmp(line, conf, clen) || line[clen] != '.')
+			continue;
+		sect = line + clen + 1;
+		eq = strchr(sect, '=');
+		opt = strchr(sect, '.');
+		if (!eq || !opt || opt > eq)
+			continue;
+		if ((size_t)(eq - opt - 1) != strlen("macaddr") ||
+		    strncmp(opt + 1, "macaddr", 7))
+			continue;
+		unquote(eq + 1, val, sizeof(val));
+		if (!mesh_is_own_mac(ctx, val))
+			continue;
+		*opt = '\0';
+		snprintf(tab[n].sect, sizeof(tab[n].sect), "%s", sect);
+		snprintf(tab[n].val, sizeof(tab[n].val), "%s", val);
+		n++;
+	}
+	return n;
+}
+
+/* Delete the options from the committed file. Only call this when the
+ * package has no other uncommitted changes. */
+void mesh_own_macs_strip(const char *conf, const struct mesh_own_mac *tab, int n)
+{
+	char line[192];
+	int i;
+
+	if (n <= 0)
+		return;
+	for (i = 0; i < n; i++) {
+		snprintf(line, sizeof(line), "delete %s.%s.macaddr", conf, tab[i].sect);
+		mesh_uci_batch_line(line);
+	}
+	mesh_uci_commit(conf);
+}
+
+/* Put the options back as uncommitted changes. */
+void mesh_own_macs_set(const char *conf, const struct mesh_own_mac *tab, int n)
+{
+	char line[192];
+	int i;
+
+	for (i = 0; i < n; i++) {
+		snprintf(line, sizeof(line), "set %s.%s.macaddr='%s'",
+			 conf, tab[i].sect, tab[i].val);
+		mesh_uci_batch_line(line);
+	}
+}
+
+/* Daemon startup, after the uncommitted changes have been reverted:
+ * remove our MACs from the committed files and the portal copies, so
+ * the walk and the fixup start from a clean sheet as in v7. */
+void mesh_clear_own_macaddrs(struct mesh_ctx *ctx)
+{
+	static const char *const confs[] = {
+		"wireless", "network",
+		"wireless" PORTAL_SUFFIX, "network" PORTAL_SUFFIX, NULL
+	};
+	struct mesh_own_mac tab[MESH_OWN_MACS_MAX];
+	int i, n;
+
+	if (ctx->auto_config != 1 || ctx->commit_all)
+		return;
+	for (i = 0; confs[i]; i++) {
+		char path[128];
+
+		snprintf(path, sizeof(path), "/etc/config/%s", confs[i]);
+		if (access(path, R_OK) != 0)
+			continue;
+		n = mesh_own_macs_find(ctx, confs[i], tab, MESH_OWN_MACS_MAX);
+		if (n <= 0)
+			continue;
+		mesh_own_macs_strip(confs[i], tab, n);
+		mesh_log_notice(ctx, "Removed %d committed mesh11sd MAC address(es) from %s", n, path);
+	}
 }
 
 /* ---- portal base settings, also used at daemon startup ---- */
