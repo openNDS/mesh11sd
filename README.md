@@ -212,6 +212,7 @@ Power nodes in any order. **One** WAN to the ISP for a detect=1 portal.
 3. **LuCI does not show or support mesh11sd.** The daemon disables LuCI unless `auto_config=2` (which also `commit_all` and **locks** portal detect to the first-boot role). Reverse with `mesh11sd revert_all revert`.
 4. Peers track the portal **channel**. The mesh interface is created in runtime UCI, not in `/etc/config/wireless`.
 5. All nodes must share mesh id, key, and (via tracking) channel. Auto-config does this if `auto_mesh_id` / `auto_mesh_key` match.
+6. **Known interop issue:** some MediaTek Wi-Fi 7 nodes (seen on the GL-MT3600BE) may fail to peer with ath11k nodes (seen on the GL-AXT1800). The link stays in LISTEN, OPN_RCVD or BLOCKED and wpa_supplicant logs `Mesh RSN: frame verification failed`. Mesh11sd v7 behaves the same, and other node pairs are unaffected. It often clears by itself after a while; otherwise keep those two models out of direct range of each other, or give them another node that both can peer with.
 
 ## 7. Configuration - Setup Options
 
