@@ -548,33 +548,6 @@ int mesh_mobility_apply_phywide(struct mesh_ctx *ctx)
 	return phy_apply_wide(ctx, e.phy, &e);
 }
 
-int mesh_sync_phywide_via_wifi(struct mesh_ctx *ctx)
-{
-	static int no_more_wifi;
-	struct mobility_eval e;
-
-	if (mobility_eval(ctx, &e, 0) != 0 || !e.valid_targets || !e.phy[0])
-		return 0;
-	if (!phy_wide_differs(ctx, e.phy, &e))
-		return 0;
-	if (no_more_wifi)
-		return 0;
-	phy_apply_wide(ctx, e.phy, &e);
-	mesh_log_info(ctx,
-		      "phy-wide settings changed; running wifi so vifs come up after them");
-	{
-		char *argv[] = { "wifi", NULL };
-		mesh_run_capture(argv, NULL, 0);
-	}
-	mesh_wait_for_wifi_enabled(ctx);
-	if (phy_wide_differs(ctx, e.phy, &e)) {
-		no_more_wifi = 1;
-		mesh_log_info(ctx,
-			      "phy-wide settings still differ after wifi; not restarting wifi again");
-	}
-	return 1;
-}
-
 int mesh_phy_rts_display(const char *phy, char *out, size_t outlen)
 {
 	int rts, limit, quantum;

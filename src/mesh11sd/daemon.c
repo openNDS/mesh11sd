@@ -148,11 +148,10 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 	mesh_sys_setup(ctx);
 	mesh_get_portal_ula(ctx, "discover");
 	mesh_log_notice(ctx, "Starting daemon service...");
-	/* Wait for boot-netifd vifs before any phy-wide writes. On drivers
-	 * that ignore RTS, that write used to count as a difference, run
-	 * wifi immediately, then skip this wait. */
+	/* Wait for boot-netifd vifs before any phy-wide writes. */
 	mesh_wait_for_wifi_enabled(ctx);
-	mesh_sync_phywide_via_wifi(ctx);
+	/* v7 mobility_settings: phy-wide values with iw only, no wifi */
+	mesh_mobility_apply_phywide(ctx);
 	mesh_set_led(ctx, "init");
 	/* v7: set_led on before peers; heartbeat once peers appear */
 	mesh_set_led(ctx, "on");
@@ -358,7 +357,7 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 		mesh_pin_active_portal_arp(ctx);
 
 		mesh_rootmode(ctx);
-		mesh_sync_phywide_via_wifi(ctx);
+		mesh_mobility_apply_phywide(ctx);
 		mesh_mobility_settings(ctx, "runtime");
 		mesh_check_gate(ctx);
 		mesh_check_path_changes(ctx);
