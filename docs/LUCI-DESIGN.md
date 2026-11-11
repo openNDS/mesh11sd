@@ -110,3 +110,12 @@ Each pass checks:
   (`uci changes`); if an apply or a direct edit dropped them, re-apply them;
 - whether the mesh is still up (peer links ESTAB, as the existing watchdog
   already does).
+
+## Decision 3: changing a mesh11sd override (Rob, Nov 11 2026)
+
+The mesh11sd config is the single place to change managed settings. A change
+there (for example `portal_channel`) is legitimate: when the loop sees it, the
+daemon rebuilds the portal configuration from the new values, commits it,
+refreshes the `_mesh11sd_portal` copy, and applies it with one reload. A
+change to the same setting made directly in wireless or network is reverted
+as in decision 1.
