@@ -119,3 +119,15 @@ daemon rebuilds the portal configuration from the new values, commits it,
 refreshes the `_mesh11sd_portal` copy, and applies it with one reload. A
 change to the same setting made directly in wireless or network is reverted
 as in decision 1.
+
+## Decision 4: existing nodes (Rob, Nov 11 2026)
+
+- `auto_config=2` nodes keep v7's commit-all mode with the role locked,
+  unchanged. A future release may deprecate `auto_config=2`, since this
+  design makes it largely redundant.
+- `auto_config=1` nodes upgraded from v7 or an earlier v8 have no portal
+  copy. On first start the daemon treats them as a new node: it commits the
+  portal configuration, writes the `_mesh11sd_portal` copy, then runs
+  detection.
+- If the portal copy is missing or unreadable, the daemon rebuilds it
+  rather than restoring from nothing, and logs that it did so.
