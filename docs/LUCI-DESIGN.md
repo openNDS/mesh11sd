@@ -96,3 +96,17 @@ Guards:
 - Log a notice naming the option and the restored value.
 - Back off: if the same option keeps changing, revert once, then only warn,
   so there is never a restart loop.
+
+## Decision 2: changes from any source (Rob, Nov 11 2026)
+
+The loop check from decision 1 covers every source of change, not just LuCI:
+LuCI Save & Apply, `uci` commands followed by a restart, or editing the
+config files directly. The result is the same, so it is handled the same way.
+Each pass checks:
+
+- whether any managed option differs from the portal copy (revert as in
+  decision 1);
+- on a peer, whether the uncommitted peer changes are still present
+  (`uci changes`); if an apply or a direct edit dropped them, re-apply them;
+- whether the mesh is still up (peer links ESTAB, as the existing watchdog
+  already does).
