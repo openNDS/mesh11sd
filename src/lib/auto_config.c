@@ -932,6 +932,5 @@ int mesh_fixup_wireless_macaddrs(struct mesh_ctx *ctx)
 	}
 
 	ctx->macfixup = 1;
-	(void)did;
-	return 0;
+	return did;
 }

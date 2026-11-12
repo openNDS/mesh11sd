@@ -230,7 +230,14 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 
 		if (has_mesh_uci()) {
 			/* v7 ~11225: UCI macaddr before wifi so runtime MAC walk is a no-op */
-			mesh_fixup_wireless_macaddrs(ctx);
+			if (mesh_fixup_wireless_macaddrs(ctx) > 0 && ctx->firstloop) {
+				/* hostapd started on the old MACs; one wifi reload
+				 * brings the vifs up on the walk MACs */
+				char *wr[] = { "/sbin/wifi", "reload", NULL };
+
+				mesh_log_notice(ctx, "wireless MAC addresses changed, reloading wifi");
+				mesh_run_capture(wr, NULL, 0);
+			}
 		}
 
 		/* auto_config=1, portal_detect 0/1: commit the portal config
