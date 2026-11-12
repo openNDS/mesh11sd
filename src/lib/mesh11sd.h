@@ -215,6 +215,8 @@ int mesh_apply_mesh_params(struct mesh_ctx *ctx);
 
 /* portal / peer */
 int mesh_get_portal_state(struct mesh_ctx *ctx);
+int mesh_wan_upstream_present(struct mesh_ctx *ctx);
+int mesh_portal_probe(const char *addr);
 int mesh_check_portal(struct mesh_ctx *ctx);
 int mesh_ensure_portal_dhcp_force(struct mesh_ctx *ctx);
 int mesh_portal_watchdog(struct mesh_ctx *ctx);

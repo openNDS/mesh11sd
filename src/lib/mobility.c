@@ -1056,6 +1056,14 @@ int mesh_check_channel(struct mesh_ctx *ctx)
 		return 0;
 	}
 	last_check = now;
+	/* A peer that has just gained a wan uplink becomes the portal at the
+	 * next portal check, so don't spend this pass probing for the old
+	 * portal or scanning channels. */
+	if (ctx->portal_detect == 1 && strcmp(ctx->detected_state, "portal") != 0 &&
+	    mesh_wan_upstream_present(ctx)) {
+		mesh_log_debug(ctx, "Check Channel - wan upstream present, skipping scan");
+		return 0;
+	}
 	mesh_get_portal_ula(ctx, "get");
 	mesh_manage_fallback_ula_route(ctx);
 	if (ctx->link_to_portal == 0) {

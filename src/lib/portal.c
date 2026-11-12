@@ -184,9 +184,8 @@ int mesh_set_ula_prefix(struct mesh_ctx *ctx, const char *mode)
 
 static int ping_portal(struct mesh_ctx *ctx, const char *addr)
 {
-	char *argv[] = { "ping", "-W", "20", "-c", "1", (char *)addr, NULL };
 	(void)ctx;
-	return mesh_run_capture(argv, NULL, 0) == 0 ? 0 : 1;
+	return mesh_portal_probe(addr) == 0 ? 0 : 1;
 }
 
 int mesh_get_portal_ula(struct mesh_ctx *ctx, const char *mode)
@@ -269,6 +268,56 @@ int mesh_get_portal_ula(struct mesh_ctx *ctx, const char *mode)
 	return 1;
 }
 
+/* Look for a router neighbour on the wan device. Fills v6/v4 with the
+ * first one found and returns 0 if there is an upstream. */
+static int wan_upstream(char *up_zone, size_t zlen, char *v6, size_t v6len,
+			char *v4, size_t v4len)
+{
+	char out[4096];
+
+	(void)v6len;
+	(void)v4len;
+	v6[0] = '\0';
+	v4[0] = '\0';
+	up_zone[0] = '\0';
+	mesh_uci_get("network.wan.device", up_zone, zlen);
+	if (!up_zone[0] || !iface_is_up(up_zone))
+		return 1;
+	{
+		char *argv6[] = { "ip", "-6", "neigh", NULL };
+		char *argv4[] = { "ip", "-4", "neigh", NULL };
+		if (mesh_run_capture(argv6, out, sizeof(out)) == 0) {
+			char *p = out, *line;
+			while ((line = strsep(&p, "\n")) != NULL) {
+				if (!strstr(line, up_zone) || !strstr(line, "router"))
+					continue;
+				if (!strncmp(line, "fe80:", 5))
+					continue;
+				sscanf(line, "%255s", v6);
+				break;
+			}
+		}
+		if (mesh_run_capture(argv4, out, sizeof(out)) == 0) {
+			char *p = out, *line;
+			while ((line = strsep(&p, "\n")) != NULL) {
+				if (!strstr(line, up_zone))
+					continue;
+				sscanf(line, "%63s", v4);
+				break;
+			}
+		}
+	}
+	return (v6[0] || v4[0]) ? 0 : 1;
+}
+
+int mesh_wan_upstream_present(struct mesh_ctx *ctx)
+{
+	char zone[64], v6[256], v4[64];
+
+	(void)ctx;
+	return wan_upstream(zone, sizeof(zone), v6, sizeof(v6), v4, sizeof(v4)) == 0;
+}
+
 int mesh_get_portal_state(struct mesh_ctx *ctx)
 {
 	char up_zone[64] = "";
@@ -315,31 +364,8 @@ int mesh_get_portal_state(struct mesh_ctx *ctx)
 	}
 
 	/* portal_detect 1 (auto) */
-	mesh_uci_get("network.wan.device", up_zone, sizeof(up_zone));
-	if (up_zone[0] && iface_is_up(up_zone)) {
-		char *argv6[] = { "ip", "-6", "neigh", NULL };
-		char *argv4[] = { "ip", "-4", "neigh", NULL };
-		if (mesh_run_capture(argv6, out, sizeof(out)) == 0) {
-			char *p = out, *line;
-			while ((line = strsep(&p, "\n")) != NULL) {
-				if (!strstr(line, up_zone) || !strstr(line, "router"))
-					continue;
-				if (!strncmp(line, "fe80:", 5))
-					continue;
-				sscanf(line, "%255s", default_ipv6);
-				break;
-			}
-		}
-		if (mesh_run_capture(argv4, out, sizeof(out)) == 0) {
-			char *p = out, *line;
-			while ((line = strsep(&p, "\n")) != NULL) {
-				if (!strstr(line, up_zone))
-					continue;
-				sscanf(line, "%63s", default_ipv4);
-				break;
-			}
-		}
-	}
+	wan_upstream(up_zone, sizeof(up_zone), default_ipv6, sizeof(default_ipv6),
+		     default_ipv4, sizeof(default_ipv4));
 
 	if (default_ipv6[0] || default_ipv4[0]) {
 		snprintf(ctx->is_portal, sizeof(ctx->is_portal), "detected");

@@ -8,11 +8,20 @@
 #include <string.h>
 #include <unistd.h>
 
+/* Probe a portal ULA with three pings a second apart, then wait up to
+ * 3 s for a reply. Any one reply counts, so a slow or lossy mesh path
+ * still passes, while a dead portal costs about 5 s rather than 20 s
+ * (v7 used a single ping with a 20 s wait). Returns 0 on a reply. */
+int mesh_portal_probe(const char *addr)
+{
+	char *argv[] = { "ping", "-c", "3", "-W", "3", (char *)addr, NULL };
+	return mesh_run_capture(argv, NULL, 0) == 0 ? 0 : 1;
+}
+
 static int ping_ok(struct mesh_ctx *ctx, const char *addr)
 {
-	char *argv[] = { "ping", "-W", "20", "-c", "1", (char *)addr, NULL };
 	(void)ctx;
-	return mesh_run_capture(argv, NULL, 0) == 0;
+	return mesh_portal_probe(addr) == 0;
 }
 
 
@@ -441,8 +450,7 @@ int mesh_portal_ula_discover(struct mesh_ctx *ctx)
 				continue;
 			snprintf(cand, sizeof(cand), "%s", line);
 			{
-				char *pargv[] = { "ping", "-W", "20", "-c", "1", cand, NULL };
-				if (mesh_run_capture(pargv, NULL, 0) != 0)
+				if (mesh_portal_probe(cand) != 0)
 					continue;
 			}
 			if (mesh_get_metrics_from_ula(ctx, cand, &metric, &hops, peer, sizeof(peer)) != 0)
@@ -491,8 +499,7 @@ int mesh_portal_ula_discover(struct mesh_ctx *ctx)
 		return 1;
 	}
 	{
-		char *pargv[] = { "ping", "-W", "20", "-c", "1", best_ula, NULL };
-		if (mesh_run_capture(pargv, NULL, 0) != 0) {
+		if (mesh_portal_probe(best_ula) != 0) {
 			mesh_log_warn(ctx, "No responsive portal found");
 			unlink(MESH11SD_TMPDIR "/active_portal");
 			ctx->link_to_portal = 1;
