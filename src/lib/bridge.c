@@ -859,9 +859,9 @@ int mesh_create_vxlan_if(struct mesh_ctx *ctx)
 		mesh_uci_batch_line("del_list dhcp.vtunlan.ra_flags='other-config'");
 		mesh_uci_batch_line("del_list dhcp.vtunlan.ra_flags='none'");
 		mesh_uci_batch_line("add_list dhcp.vtunlan.ra_flags='none'");
-		/* DHCP on vtunlan started before the vxlan joined the bridge
-		 * and udhcpc may have given up, so ask again now. */
-		if (fork() == 0) {
+		/* Trunk peer: DHCP on vtunlan started before the vxlan joined
+		 * the bridge and udhcpc may have given up, so ask again now. */
+		if (ctx->portal_detect == 5 && fork() == 0) {
 			char *ifup[] = { "ifup", "vtunlan", NULL };
 			int dn = open("/dev/null", O_RDWR);
 			if (dn >= 0) {
@@ -1021,11 +1021,18 @@ static void vtunnel_uci_network(struct mesh_ctx *ctx, const char *vxname,
 	mesh_uci_batch_line(setl);
 	snprintf(setl, sizeof(setl), "set network.vtunlan.proto='%s'", proto);
 	mesh_uci_batch_line(setl);
-	if (!strcmp(proto, "dhcp"))
+	if (!strcmp(proto, "dhcp")) {
+		/* trunk peer: default route via lan, no prefix from its own ULA */
 		mesh_uci_batch_line("set network.vtunlan.defaultroute='0'");
-	else
+		mesh_uci_batch_line("delete network.vtunlan.ip6assign");
+	} else if (!strcmp(proto, "none")) {
+		/* peer: br-tun is only a bridge, with no address */
 		mesh_uci_batch_line("delete network.vtunlan.defaultroute");
-	mesh_uci_batch_line("set network.vtunlan.ip6assign='64'");
+		mesh_uci_batch_line("delete network.vtunlan.ip6assign");
+	} else {
+		mesh_uci_batch_line("delete network.vtunlan.defaultroute");
+		mesh_uci_batch_line("set network.vtunlan.ip6assign='64'");
+	}
 	snprintf(setl, sizeof(setl), "set network.vtunlan.ip6hint='%s'",
 		 ctx->ula_vxsubnet);
 	mesh_uci_batch_line(setl);
@@ -1185,8 +1192,10 @@ int mesh_check_vtunnel(struct mesh_ctx *ctx)
 		    (ctx->portal_detect == 1 && !strcmp(ctx->detected_state, "portal")) ||
 		    ctx->portal_detect == 3 || ctx->portal_detect == 4)
 			proto = "static";
-		else
+		else if (ctx->portal_detect == 5)
 			proto = "dhcp";
+		else
+			proto = "none";
 
 		vtunnel_uci_network(ctx, vxname, brname, proto);
 

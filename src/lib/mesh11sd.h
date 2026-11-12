@@ -219,6 +219,7 @@ int mesh_wan_upstream_present(struct mesh_ctx *ctx);
 int mesh_portal_probe(const char *addr);
 int mesh_check_portal(struct mesh_ctx *ctx);
 int mesh_ensure_portal_dhcp_force(struct mesh_ctx *ctx);
+int mesh_ensure_portal_vtun_dnsmasq(struct mesh_ctx *ctx);
 int mesh_portal_watchdog(struct mesh_ctx *ctx);
 void mesh_peer_reapply(struct mesh_ctx *ctx);   /* peer overlay again */
 void mesh_peer_stage_uci(struct mesh_ctx *ctx);  /* peer network/dhcp values */

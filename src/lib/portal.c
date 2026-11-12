@@ -507,9 +507,19 @@ void mesh_peer_stage_uci(struct mesh_ctx *ctx)
 
 	/* startup may have written vtunlan before the vxlan exists */
 	if (mesh_uci_get("network.vtunlan", cur, sizeof(cur)) == 0 && cur[0]) {
-		mesh_uci_batch_line("set network.vtunlan.proto='dhcp'");
-		/* the default route goes via lan, straight over the mesh */
-		mesh_uci_batch_line("set network.vtunlan.defaultroute='0'");
+		/* A peer's br-tun only bridges the vxlan to its APs, so it
+		 * needs no address. The trunk peer (portal_detect 5) keeps
+		 * dhcp until that mode has been tested. */
+		if (ctx->portal_detect == 5) {
+			mesh_uci_batch_line("set network.vtunlan.proto='dhcp'");
+			/* the default route goes via lan, straight over the mesh */
+			mesh_uci_batch_line("set network.vtunlan.defaultroute='0'");
+		} else {
+			mesh_uci_batch_line("set network.vtunlan.proto='none'");
+			mesh_uci_batch_line("delete network.vtunlan.defaultroute");
+		}
+		/* no prefix from this peer's own ULA on br-tun */
+		mesh_uci_batch_line("delete network.vtunlan.ip6assign");
 	}
 
 	/* v7: proto dhcp, never none */
@@ -677,6 +687,7 @@ static void portal_handoff(struct mesh_ctx *ctx)
 	if (vxlan_up || !vxlan_pending) {
 		mesh_uci_batch_line("set network.vtunlan.proto='static'");
 		mesh_uci_batch_line("delete network.vtunlan.defaultroute");
+		mesh_uci_batch_line("set network.vtunlan.ip6assign='64'");
 	}
 
 	snprintf(setl, sizeof(setl), "set network.%s.proto='static'", ctx->auto_mesh_network);
@@ -831,6 +842,44 @@ int mesh_ensure_portal_dhcp_force(struct mesh_ctx *ctx)
 		service_cmd_bg("dnsmasq", "restart");
 	}
 	return changed;
+}
+
+/* Restart dnsmasq once on a portal, after vtunlan has its IPv4 address
+ * and the vxlan has joined the tunnel bridge.
+ *
+ * If dnsmasq starts at boot before vtunlan is up, OpenWrt's init script
+ * leaves the vtunlan dhcp-range out.  Later reloads only send SIGHUP,
+ * which does not add a new range to a running dnsmasq, so tunnel clients
+ * get no lease.  One restart at this point fixes that and writes nothing
+ * to flash. */
+int mesh_ensure_portal_vtun_dnsmasq(struct mesh_ctx *ctx)
+{
+	static int done;
+	const char *id = ctx->tun_id[0] ? ctx->tun_id : "69";
+	char brname[32];
+	char path[96];
+	char out[256];
+	char *show[] = { "ip", "-4", "-o", "addr", "show", "dev", brname, NULL };
+
+	if (!ctx->vtun_enable || strcmp(ctx->detected_state, "portal") != 0) {
+		done = 0;
+		return 0;
+	}
+	if (done)
+		return 0;
+
+	snprintf(brname, sizeof(brname), "br-tun%s", id);
+	snprintf(path, sizeof(path), "/sys/class/net/%s/brif/vxlan%s", brname, id);
+	if (access(path, F_OK) != 0)
+		return 0;
+	out[0] = '\0';
+	if (mesh_run_capture(show, out, sizeof(out)) != 0 || !strstr(out, "inet "))
+		return 0;
+
+	mesh_log_notice(ctx, "vtunlan is up on %s, restarting dnsmasq once", brname);
+	service_cmd_bg("dnsmasq", "restart");
+	done = 1;
+	return 1;
 }
 
 int mesh_check_portal(struct mesh_ctx *ctx)

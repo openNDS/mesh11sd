@@ -343,6 +343,7 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 			/* Heal: force=1 so dnsmasq init keeps lan/vtun ranges when
 			 * another portal answers dhcp_check (see portal_handoff). */
 			mesh_ensure_portal_dhcp_force(ctx);
+			mesh_ensure_portal_vtun_dnsmasq(ctx);
 		}
 
 		/* v7 ~11457: mesh_mac_forced_forwarding + gateway_proxy_arp each loop */
