@@ -1509,17 +1509,25 @@ int mesh_manage_fallback_ula_route(struct mesh_ctx *ctx)
 	if (ctx->vtun_enable && ctx->tun_id[0] && ctx->ula_vxsubnet[0]) {
 		char syspath[64];
 		char vtun_gw[96];
+		const char *tun_sub;
+
 		snprintf(tun_dev, sizeof(tun_dev), "br-tun%s", ctx->tun_id);
 		snprintf(syspath, sizeof(syspath), "/sys/class/net/%s", tun_dev);
 		snprintf(vtun_gw, sizeof(vtun_gw), "%s:%s::1",
 			 ctx->ula_base, ctx->ula_vxsubnet);
+		/* The vxlan subnet is this node's own hint, so only a portal
+		 * serves it. A peer's br-tun is bridged to the portal's, so
+		 * it must not carry its own subnet: drop any mesh-owned ULA. */
+		tun_sub = is_portal ? ctx->ula_vxsubnet : "";
+
 		if (access(syspath, F_OK) == 0) {
-			ensure_bridge_ulas(ctx, tun_dev, vtun_gw, ctx->ula_vxsubnet,
-					   is_portal);
-			cleanup_stale_bridge_ulas(ctx, tun_dev, ctx->ula_vxsubnet,
+			if (is_portal)
+				ensure_bridge_ulas(ctx, tun_dev, vtun_gw,
+						   ctx->ula_vxsubnet, is_portal);
+			cleanup_stale_bridge_ulas(ctx, tun_dev, tun_sub,
 						  is_portal);
-			cleanup_stale_onlink_routes(ctx, tun_dev, ctx->ula_vxsubnet);
-			cleanup_stale_portal_neighs(ctx, tun_dev, ctx->ula_vxsubnet);
+			cleanup_stale_onlink_routes(ctx, tun_dev, tun_sub);
+			cleanup_stale_portal_neighs(ctx, tun_dev, tun_sub);
 		}
 	}
 
