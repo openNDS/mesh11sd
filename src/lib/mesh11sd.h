@@ -15,6 +15,7 @@
 #define MESH11SD_LOG_NAME "mesh11sd_log.log"
 #define MESH11SD_MAX_IFACES 16
 #define MESH11SD_MAX_RADIOS 8
+#define MESH11SD_MAX_PEERS 128
 
 struct mesh_ctx {
 	int debuglevel;
@@ -73,6 +74,7 @@ struct mesh_ctx {
 	/* portal/peer runtime (tmpdir/is_portal etc.) */
 	char detected_state[16];	/* portal|peer */
 	char last_state[16];	/* initial|portal|peer */
+	char last_role[16];	/* mesh11sd.setup.last_role: role at last boot */
 	char is_portal[32];
 	char portal_ula[64];
 	char ula_prefix[48];
@@ -81,6 +83,10 @@ struct mesh_ctx {
 	char ula_vxsubnet[8];
 	char portal_type[16];
 	int link_to_portal;
+	/* Main-loop pass counter, and the pass in which portal discovery
+	 * last failed, so a dead portal is probed once per pass. */
+	unsigned int loop_seq;
+	unsigned int portal_fail_seq;
 	int portal_metric;
 	int portal_hops;
 	char portal_mac[32];
@@ -104,15 +110,17 @@ struct mesh_ctx {
 	int gateway_proxy_arp;
 	int watchdog_nonvolatile_log;
 	int mesh_path_stabilisation;
-	int reactive_path_stabilisation_threshold;
 	char vtun_ip[32];
 	char vtun_mask[16];
 	int vtun_path_cost;
 	int vtun_isolate;
 	int move_ethernet_to_vxlan_bridge;
+	int connect_show_all;
 	char vxlan_group[64]; /* override for create_vxlan_if; empty → ff02::$tun_id */
 	char cpe_mode[16];
 
+	char peerlist[MESH11SD_MAX_PEERS][32];
+	int peerlist_count;
 	char iflist[MESH11SD_MAX_IFACES][32];
 	int iflist_count;
 	char radios[MESH11SD_MAX_RADIOS][32];
@@ -129,6 +137,7 @@ int mesh_sha256_hex(const char *in, char *out, size_t outlen);
 int mesh_sha256_hex_echo(const char *in, char *out, size_t outlen); /* v7 echo|sha256sum */
 int mesh_is_installed(const char *package);
 int mesh_check_package_any(const char *const *names, int *installed_flags);
+int mesh_check_requirements(struct mesh_ctx *ctx); /* 0=ok, -1=unmet; logs on change */
 int mesh_file_write(const char *path, const char *content);
 int mesh_mkdir_p(const char *path);
 /* ignore_ip: current network.*.ipaddr (no CIDR) so re-entry is idempotent —
@@ -137,6 +146,7 @@ int mesh_mkdir_p(const char *path);
 int mesh_generate_ipv4_base(struct mesh_ctx *ctx, const char *seed, char *out,
 			    size_t outlen, const char *ignore_ip);
 int mesh_apply_portal_ipv4(struct mesh_ctx *ctx); /* v7 autostartup portal_use_default_ipv4=0 */
+void mesh_reserve_bridge_macs(struct mesh_ctx *ctx);
 int mesh_fixup_wireless_macaddrs(struct mesh_ctx *ctx); /* v7 ~11225 macaddr UCI before wifi */
 
 /* uci_ops: v7 uncommitted default; commit_all mode honoured by callers */
@@ -146,6 +156,10 @@ int mesh_uci_add(const char *tuple); /* uci add ... */
 int mesh_uci_commit(const char *package);
 int mesh_uci_revert(const char *package);
 int mesh_uci_changes(const char *package, char *buf, size_t buflen);
+void mesh_uci_restage_change(const char *line);
+int mesh_uci_commit_option(const char *package, const char *tuple, const char *value);
+void mesh_network_mark_applied(void);
+int mesh_network_reload_if_changed(struct mesh_ctx *ctx, const char *who);
 int mesh_uci_batch_line(const char *line); /* "set foo.bar='baz'" */
 int mesh_uci_show_filter(const char *package, const char *grep_pat,
 			 char *buf, size_t buflen);
@@ -201,11 +215,20 @@ int mesh_apply_mesh_params(struct mesh_ctx *ctx);
 
 /* portal / peer */
 int mesh_get_portal_state(struct mesh_ctx *ctx);
+int mesh_wan_upstream_present(struct mesh_ctx *ctx);
+int mesh_portal_probe(const char *addr);
 int mesh_check_portal(struct mesh_ctx *ctx);
 int mesh_ensure_portal_dhcp_force(struct mesh_ctx *ctx);
 int mesh_portal_watchdog(struct mesh_ctx *ctx);
+void mesh_peer_reapply(struct mesh_ctx *ctx);   /* peer overlay again */
+void mesh_peer_stage_uci(struct mesh_ctx *ctx);  /* peer network/dhcp values */
+int mesh_predicted_peer(struct mesh_ctx *ctx);   /* last_role peer, mode 1/4 */
+void mesh_portal_reapply(struct mesh_ctx *ctx); /* portal runtime again */
 int mesh_set_ula_prefix(struct mesh_ctx *ctx, const char *mode);
 int mesh_get_portal_ula(struct mesh_ctx *ctx, const char *mode);
+/* Split fdxx:xxxx:xxxx:subnet::1 into base (first 3 hextets) and subnet. */
+int mesh_ula_parts_from_addr(const char *addr, char *base, size_t baselen,
+			     char *subnet, size_t subnetlen);
 int mesh_manage_fallback_ula_route(struct mesh_ctx *ctx); /* v7 ULA ::1 + EUI64 */
 int mesh_get_portal_type(struct mesh_ctx *ctx);
 int mesh_restore_ipv4(struct mesh_ctx *ctx);
@@ -223,10 +246,13 @@ int mesh_portal_ula_discover(struct mesh_ctx *ctx);
 
 /* bridge / vxlan / STP */
 int mesh_convert_to_la(const char *mac, char *out, size_t outlen);
+int mesh_convert_from_la(const char *mac, char *out, size_t outlen);
 int mesh_get_indexed_mac(struct mesh_ctx *ctx, const char *devname, char *out, size_t outlen);
 int mesh_set_bridge_mac_addresses(struct mesh_ctx *ctx);
 int mesh_set_root_bridge_priority(struct mesh_ctx *ctx);
 int mesh_check_vtunnel(struct mesh_ctx *ctx);
+int mesh_vtunnel_preconfigure(struct mesh_ctx *ctx);
+int mesh_network_preconfigure(struct mesh_ctx *ctx);
 int mesh_create_vxlan_if(struct mesh_ctx *ctx);
 int mesh_update_vxlan_for_active_portal(struct mesh_ctx *ctx);
 int mesh_block_bridge_loops(struct mesh_ctx *ctx);
@@ -242,13 +268,14 @@ int mesh_set_iface_path_cost(struct mesh_ctx *ctx, int path_cost,
 int mesh_mobility_settings(struct mesh_ctx *ctx, const char *mode);
 int mesh_mobility_phywide_differs(struct mesh_ctx *ctx);
 int mesh_mobility_apply_phywide(struct mesh_ctx *ctx); /* 1 if a value was written */
-int mesh_sync_phywide_via_wifi(struct mesh_ctx *ctx); /* write+wifi+wait if needed */
 int mesh_phy_rts_display(const char *phy, char *out, size_t outlen); /* live or unsupported */
 int mesh_rootmode(struct mesh_ctx *ctx);
 int mesh_check_path_changes(struct mesh_ctx *ctx);
+int mesh_path_lookup_lifetime(const char *mac, long *lifetime_ms);
 int mesh_check_channel(struct mesh_ctx *ctx);
 int mesh_check_gate(struct mesh_ctx *ctx);
 int mesh_scan_channel(struct mesh_ctx *ctx);
+int mesh_fix_mesh_noscan(struct mesh_ctx *ctx);
 
 /* remote CLI ops */
 int mesh_cli_connect(struct mesh_ctx *ctx, int argc, char **argv);
@@ -265,6 +292,25 @@ int mesh_cli_commit_changes(struct mesh_ctx *ctx, int argc, char **argv);
 int mesh_cli_commit_all(struct mesh_ctx *ctx, int argc, char **argv);
 int mesh_cli_revert_all(struct mesh_ctx *ctx, int argc, char **argv);
 int mesh_maybe_silent_commit_all(struct mesh_ctx *ctx);
+int mesh_commit_portal_config(struct mesh_ctx *ctx); /* auto_config=1, before detection */
+
+/* managed: keep LuCI usable (docs/LUCI-DESIGN.md) */
+int mesh_managed_mode(struct mesh_ctx *ctx);
+int mesh_managed_pass(struct mesh_ctx *ctx, int auto_config_done);
+int mesh_write_portal_copies(struct mesh_ctx *ctx, const char *const *pkgs);
+void mesh_apply_autostartup_uci(struct mesh_ctx *ctx);
+
+/* MAC addresses set by mesh11sd's MAC walk and fixup (never committed) */
+#define MESH_OWN_MACS_MAX 32
+struct mesh_own_mac {
+	char sect[64];
+	char val[32];
+};
+int mesh_own_macs_find(struct mesh_ctx *ctx, const char *conf,
+		       struct mesh_own_mac *tab, int max);
+void mesh_own_macs_strip(const char *conf, const struct mesh_own_mac *tab, int n);
+void mesh_own_macs_set(const char *conf, const struct mesh_own_mac *tab, int n);
+void mesh_clear_own_macaddrs(struct mesh_ctx *ctx);
 
 /* apmond-style JSON (Spod) — reuse for status etc. */
 void mesh_json_str(const char *in, char *out, size_t outlen);

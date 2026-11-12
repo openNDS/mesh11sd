@@ -185,6 +185,129 @@ int mesh_check_package_any(const char *const *names, int *installed_flags)
 	return any;
 }
 
+static int path_is_busybox(const char *path)
+{
+	char link[256];
+	ssize_t n;
+
+	if (!path)
+		return 0;
+	n = readlink(path, link, sizeof(link) - 1);
+	if (n < 0)
+		return 0;
+	link[n] = '\0';
+	return strstr(link, "busybox") != NULL;
+}
+
+/* Search a file (binary or text) for a literal string. No extra deps. */
+static int file_has_string(const char *path, const char *needle)
+{
+	FILE *f;
+	char buf[4096];
+	size_t nlen, n, keep = 0, i;
+
+	if (!path || !needle || !needle[0])
+		return 0;
+	nlen = strlen(needle);
+	if (nlen >= sizeof(buf))
+		return 0;
+	f = fopen(path, "r");
+	if (!f)
+		return 0;
+	while ((n = fread(buf + keep, 1, sizeof(buf) - 1 - keep, f)) > 0) {
+		size_t total = keep + n;
+
+		for (i = 0; i + nlen <= total; i++) {
+			if (memcmp(buf + i, needle, nlen) == 0) {
+				fclose(f);
+				return 1;
+			}
+		}
+		if (total >= nlen) {
+			memmove(buf, buf + total - (nlen - 1), nlen - 1);
+			keep = nlen - 1;
+		} else {
+			keep = total;
+		}
+	}
+	fclose(f);
+	return 0;
+}
+
+/* /sbin/ip is iproute2 (ip-full), not a BusyBox applet. Package is fallback. */
+static int has_ip_full(void)
+{
+	static const char *const paths[] = {
+		"/sbin/ip", "/usr/sbin/ip", "/usr/bin/ip", NULL
+	};
+	int i;
+
+	for (i = 0; paths[i]; i++) {
+		if (access(paths[i], X_OK) != 0)
+			continue;
+		if (path_is_busybox(paths[i]))
+			continue;
+		if (file_has_string(paths[i], "iproute2"))
+			return 1;
+	}
+	return mesh_is_installed("ip-full") == 0;
+}
+
+/*
+ * A mesh-capable wpad/hostapd/wpa_supplicant has ieee80211s and SAE
+ * compiled in. Package list is the v7 fallback.
+ */
+static int has_mesh_wpad(void)
+{
+	static const char *const paths[] = {
+		"/usr/sbin/wpad", "/usr/sbin/hostapd",
+		"/usr/sbin/wpa_supplicant", NULL
+	};
+	static const char *const pkgs[] = {
+		"wpad-mbedtls", "wpad-wolfssl", "wpad-openssl",
+		"wpad-mesh-mbedtls", "wpad-mesh-wolfssl", "wpad-mesh-openssl",
+		NULL
+	};
+	int i;
+
+	for (i = 0; paths[i]; i++) {
+		if (access(paths[i], X_OK) != 0)
+			continue;
+		if (file_has_string(paths[i], "ieee80211s") &&
+		    file_has_string(paths[i], "SAE"))
+			return 1;
+	}
+	return mesh_check_package_any(pkgs, NULL) == 0;
+}
+
+int mesh_check_requirements(struct mesh_ctx *ctx)
+{
+	/* Bit 0: ath10k-ct present (must be absent)
+	 * Bit 1: ip-full missing
+	 * Bit 2: mesh-capable wpad missing
+	 */
+	static int last_mask = -1;
+	int mask = 0;
+
+	if (mesh_is_installed("kmod-ath10k-ct") == 0)
+		mask |= 1;
+	if (!has_ip_full())
+		mask |= 2;
+	if (!has_mesh_wpad())
+		mask |= 4;
+
+	if (mask && mask != last_mask) {
+		if (mask & 1)
+			mesh_log_err(ctx, "Unable to autoconfigure. Please install ath10k NON ct drivers for mesh support");
+		if (mask & 2)
+			mesh_log_err(ctx, "Unable to autoconfigure. Please install package ip-full");
+		if (mask & 4)
+			mesh_log_err(ctx, "Unable to autoconfigure. Please install package wpad-mbedtls, wpad-wolfssl, wpad-openssl or an equivalent mesh only version");
+	}
+	last_mask = mask;
+	return mask ? -1 : 0;
+}
+
 int mesh_file_write(const char *path, const char *content)
 {
 	FILE *f = fopen(path, "w");
@@ -457,5 +580,43 @@ int mesh_sysfs_write_int_if_changed(const char *path, int want)
 		return -1;
 	fprintf(f, "%d\n", want);
 	fclose(f);
+	return 1;
+}
+
+/* Hash of the network config netifd last loaded, so a reload with nothing
+ * new to apply can be skipped. uci show includes uncommitted changes. */
+static char network_applied_hash[72];
+
+static int network_config_hash(char *hash, size_t hashlen)
+{
+	static char out[32768];
+	char *argv[] = { "uci", "-q", "show", "network", NULL };
+
+	out[0] = '\0';
+	if (mesh_run_capture(argv, out, sizeof(out)) != 0 || !out[0])
+		return -1;
+	return mesh_sha256_hex(out, hash, hashlen);
+}
+
+void mesh_network_mark_applied(void)
+{
+	if (network_config_hash(network_applied_hash, sizeof(network_applied_hash)) != 0)
+		network_applied_hash[0] = '\0';
+}
+
+int mesh_network_reload_if_changed(struct mesh_ctx *ctx, const char *who)
+{
+	char hash[72];
+	char *argv[] = { "/sbin/service", "network", "reload", NULL };
+
+	if (network_applied_hash[0] &&
+	    network_config_hash(hash, sizeof(hash)) == 0 &&
+	    !strcmp(hash, network_applied_hash)) {
+		mesh_log_debug(ctx, "%s: network config unchanged, reload skipped", who);
+		return 0;
+	}
+	mesh_log_debug(ctx, "%s: network reload", who);
+	mesh_run_capture(argv, NULL, 0);
+	mesh_network_mark_applied();
 	return 1;
 }

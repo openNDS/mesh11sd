@@ -49,7 +49,22 @@ void mesh_ctx_init(struct mesh_ctx *ctx, int is_daemon)
 	ctx->link_to_portal = 1;
 	ctx->reboot_on_error = 1;
 	ctx->stop_on_error = 0;
+	ctx->connect_show_all = 1;
 	mesh_mkdir_p(MESH11SD_TMPDIR);
+}
+
+
+/* v7 check_config_params: write a mesh_params default only if unset, then log. */
+static void mesh_param_default(struct mesh_ctx *ctx, const char *name, const char *def)
+{
+	char key[96], buf[64];
+
+	snprintf(key, sizeof(key), "mesh11sd.mesh_params.%s", name);
+	if (mesh_uci_get(key, buf, sizeof(buf)) != 0 || !buf[0]) {
+		snprintf(buf, sizeof(buf), "%s", def);
+		mesh_uci_set(key, buf);
+	}
+	mesh_log_info(ctx, "option %s [ %s ]", name, buf);
 }
 
 static int parse_int_default(const char *s, int def)
@@ -124,6 +139,10 @@ int mesh_ctx_load_setup(struct mesh_ctx *ctx)
 		ctx->debuglevel = parse_int_default(buf, 3);
 	else
 		ctx->debuglevel = 3;
+	if (mesh_uci_get("mesh11sd.setup.last_role", buf, sizeof(buf)) == 0)
+		snprintf(ctx->last_role, sizeof(ctx->last_role), "%s", buf);
+	else
+		ctx->last_role[0] = '\0';
 	if (ctx->debuglevel < 0)
 		ctx->debuglevel = 0;
 	if (ctx->debuglevel > 3)
@@ -475,10 +494,6 @@ int mesh_ctx_load_setup(struct mesh_ctx *ctx)
 		ctx->mesh_path_stabilisation = parse_int_default(buf, 1);
 	else
 		ctx->mesh_path_stabilisation = 1;
-	if (mesh_uci_get("mesh11sd.setup.reactive_path_stabilisation_threshold", buf, sizeof(buf)) == 0)
-		ctx->reactive_path_stabilisation_threshold = parse_int_default(buf, 0);
-	else
-		ctx->reactive_path_stabilisation_threshold = 0;
 	/* v7 get_current_setup vtun_ip: if unset, generate_ipv4_base(auto_mesh_key) */
 	{
 		char vtun_net[64] = "";
@@ -513,6 +528,18 @@ int mesh_ctx_load_setup(struct mesh_ctx *ctx)
 		ctx->move_ethernet_to_vxlan_bridge = parse_int_default(buf, 0);
 	else
 		ctx->move_ethernet_to_vxlan_bridge = 0;
+
+	/* v7: empty or >1 falls back to 1; 0 is kept */
+	ctx->connect_show_all = 1;
+	if (mesh_uci_get("mesh11sd.setup.connect_show_all", buf, sizeof(buf)) == 0 &&
+	    buf[0]) {
+		int v = parse_int_default(buf, 1);
+
+		if (v > 1)
+			v = 1;
+		ctx->connect_show_all = v;
+	}
+	mesh_log_info(ctx, "option connect_show_all [ %d ]", ctx->connect_show_all);
 	if (mesh_uci_get("mesh11sd.setup.cpe_mode", buf, sizeof(buf)) == 0 && buf[0])
 		snprintf(ctx->cpe_mode, sizeof(ctx->cpe_mode), "%s", buf);
 	else
@@ -571,8 +598,13 @@ int mesh_check_config_params(struct mesh_ctx *ctx)
 		gate_ann = 0;
 	mesh_uci_set("mesh11sd.mesh_params.mesh_gate_announcements", gate_ann ? "1" : "0");
 
-	if (mesh_uci_get("mesh11sd.mesh_params.mesh_hwmp_rootmode", buf, sizeof(buf)) != 0)
-		mesh_uci_set("mesh11sd.mesh_params.mesh_hwmp_rootmode", "0");
+	/* v7 writes these only if unset. Mobility may later overwrite
+	 * rootmode, max_peer_links and rssi. Portals force rootmode 4. */
+	mesh_param_default(ctx, "mesh_hwmp_rootmode", "0");
+	mesh_param_default(ctx, "mesh_hwmp_root_interval", "5000");
+	mesh_param_default(ctx, "mesh_hwmp_active_path_to_root_timeout", "6000");
+	mesh_param_default(ctx, "mesh_max_peer_links", "16");
+	mesh_param_default(ctx, "mesh_plink_timeout", "500");
 
 	return 0;
 }

@@ -89,57 +89,11 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 
 	if (ctx->auto_config > 0 ||
 	    access(MESH11SD_TMPDIR "/auto_config_test", F_OK) == 0) {
-		char setl[192];
-
 		/* v7 autostartup: revert+backup, dhcp defaults, then network apply */
 		mesh_backup_defaults(ctx);
-		if (ctx->portal_detect == 0 || ctx->portal_detect == 4)
-			mesh_set_ula_prefix(ctx, "set");
-		if (ctx->portal_detect == 5) {
-			snprintf(setl, sizeof(setl),
-				 "set dhcp.%s.dhcpv4='disabled'", ctx->auto_mesh_network);
-			mesh_uci_batch_line(setl);
-			snprintf(setl, sizeof(setl),
-				 "set dhcp.%s.dhcpv6='disabled'", ctx->auto_mesh_network);
-			mesh_uci_batch_line(setl);
-			snprintf(setl, sizeof(setl),
-				 "set dhcp.%s.ra='disabled'", ctx->auto_mesh_network);
-			mesh_uci_batch_line(setl);
-			snprintf(setl, sizeof(setl),
-				 "set dhcp.%s.ignore='1'", ctx->auto_mesh_network);
-			mesh_uci_batch_line(setl);
-			snprintf(setl, sizeof(setl),
-				 "set network.%s.proto='dhcp'", ctx->auto_mesh_network);
-			mesh_uci_batch_line(setl);
-		} else if (ctx->portal_detect != 3 && ctx->portal_detect != 4) {
-			snprintf(setl, sizeof(setl),
-				 "set dhcp.%s.dhcpv4='server'", ctx->auto_mesh_network);
-			mesh_uci_batch_line(setl);
-			snprintf(setl, sizeof(setl),
-				 "set dhcp.%s.dhcpv6='server'", ctx->auto_mesh_network);
-			mesh_uci_batch_line(setl);
-			snprintf(setl, sizeof(setl),
-				 "set dhcp.%s.ra='server'", ctx->auto_mesh_network);
-			mesh_uci_batch_line(setl);
-			snprintf(setl, sizeof(setl),
-				 "set dhcp.%s.ignore='0'", ctx->auto_mesh_network);
-			mesh_uci_batch_line(setl);
-			snprintf(setl, sizeof(setl),
-				 "set network.%s.proto='static'", ctx->auto_mesh_network);
-			mesh_uci_batch_line(setl);
-		}
-		/* v7 ~10925: deterministic lan IPv4 when portal_use_default_ipv4=0.
-		 * All nodes calculate it; portals (proto=static) apply/use it. */
-		if (ctx->portal_detect != 5)
-			mesh_apply_portal_ipv4(ctx);
-		if (ctx->portal_detect != 3) {
-			snprintf(setl, sizeof(setl),
-				 "set network.%s.ip6assign='64'", ctx->auto_mesh_network);
-			mesh_uci_batch_line(setl);
-		}
-		mesh_uci_batch_line("set dhcp.lan.ra_lifetime='3600'");
-		mesh_uci_batch_line("set dhcp.lan.ra_mininterval='20'");
-		mesh_uci_batch_line("set dhcp.lan.ra_maxinterval='60'");
+		/* v7 clean sheet: no committed MACs from an earlier run */
+		mesh_clear_own_macaddrs(ctx);
+		mesh_apply_autostartup_uci(ctx);
 		if (has_mesh_uci()) {
 			char show[4096];
 			char *p, *line;
@@ -147,7 +101,8 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 			p = show;
 			while ((line = strsep(&p, " \n")) != NULL) {
 				char sect[96], *eq, dis[128], ifn[128];
-				eq = strchr(line, '=');
+				/* line is "wireless.<section>.mode='mesh'"; keep "wireless.<section>" */
+				eq = strstr(line, ".mode=");
 				if (!eq)
 					continue;
 				snprintf(sect, sizeof(sect), "%s", line);
@@ -168,13 +123,25 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 				}
 			}
 		}
+		/* Stage the walk MACs in the wireless UCI too, so the restart
+		 * brings the vifs up on them and the live MAC walk after it
+		 * changes nothing (ath11k loses 5g beacons when an AP MAC moves
+		 * under a running hostapd). The first loop then has no reload. */
+		if (has_mesh_uci()) {
+			mesh_reserve_bridge_macs(ctx);
+			mesh_fixup_wireless_macaddrs(ctx);
+		}
+		/* portal-side network UCI first, so this one restart covers it */
+		mesh_network_preconfigure(ctx);
 		/* v7 ~11100: network restart, bridge mac, dnsmasq, firewall, probe */
 		{
 			char *nr[] = { "/sbin/service", "network", "restart", NULL };
 			mesh_run_capture(nr, NULL, 0);
+			mesh_network_mark_applied();
 		}
 		/* v7 restore_ipv4: ensure calculated portal address is on the bridge */
-		if (ctx->portal_detect != 5 && ctx->portal_use_default_ipv4 == 0)
+		if (ctx->portal_detect != 5 && ctx->portal_use_default_ipv4 == 0 &&
+		    !mesh_predicted_peer(ctx))
 			mesh_restore_ipv4(ctx);
 		mesh_move_ethernet_to_vxlan_bridge(ctx);
 		mesh_set_bridge_mac_addresses(ctx);
@@ -195,19 +162,20 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 	mesh_sys_setup(ctx);
 	mesh_get_portal_ula(ctx, "discover");
 	mesh_log_notice(ctx, "Starting daemon service...");
-	/* Wait for boot-netifd vifs before any phy-wide writes. On drivers
-	 * that ignore RTS, that write used to count as a difference, run
-	 * wifi immediately, then skip this wait. */
+	/* Wait for boot-netifd vifs before any phy-wide writes. */
 	mesh_wait_for_wifi_enabled(ctx);
-	mesh_sync_phywide_via_wifi(ctx);
+	/* v7 mobility_settings: phy-wide values with iw only, no wifi */
+	mesh_mobility_apply_phywide(ctx);
 	mesh_set_led(ctx, "init");
 	/* v7: set_led on before peers; heartbeat once peers appear */
 	mesh_set_led(ctx, "on");
 
 	for (;;) {
 		int loop_interval = ctx->checkinterval;
+		int auto_config_done;
 		char buf[64];
 
+		ctx->loop_seq++;
 		if (mesh_daemon_stop) {
 			mesh_log_notice(ctx, "Mesh11sd is shutting down");
 			break;
@@ -229,6 +197,14 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 			continue;
 		}
 
+		/* Block auto_config (and further config this pass) until
+		 * requirements are met: no ath10k-ct, ip-full, mesh wpad. */
+		if (mesh_check_requirements(ctx) != 0) {
+			sleep((unsigned)ctx->checkinterval);
+			continue;
+		}
+
+		auto_config_done = 0;
 		if (!has_mesh_uci()) {
 			mesh_log_info(ctx, "No mesh interfaces detected yet.... Attempting auto configure");
 			if (ctx->auto_config != 0 ||
@@ -236,6 +212,7 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 				mesh_log_debug(ctx, "Starting auto configure process");
 				if (mesh_auto_config(ctx) == 0) {
 					ctx->changed = 1;
+					auto_config_done = 1;
 					/* Re-assert portal IPv4 after auto_config (covers test-mode
 					 * path where startup skipped the autostartup block). */
 					if (ctx->portal_detect != 5)
@@ -246,6 +223,7 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 						char *dns[] = { "/sbin/service", "dnsmasq", "restart", NULL };
 						char *fw[] = { "/sbin/service", "firewall", "restart", NULL };
 						mesh_run_capture(nr, NULL, 0);
+						mesh_network_mark_applied();
 						mesh_move_ethernet_to_vxlan_bridge(ctx);
 						mesh_run_capture(dns, NULL, 0);
 						mesh_run_capture(fw, NULL, 0);
@@ -262,8 +240,21 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 
 		if (has_mesh_uci()) {
 			/* v7 ~11225: UCI macaddr before wifi so runtime MAC walk is a no-op */
-			mesh_fixup_wireless_macaddrs(ctx);
+			if (mesh_fixup_wireless_macaddrs(ctx) > 0 && ctx->firstloop) {
+				/* hostapd started on the old MACs; one wifi reload
+				 * brings the vifs up on the walk MACs */
+				char *wr[] = { "/sbin/wifi", "reload", NULL };
+
+				mesh_log_notice(ctx, "wireless MAC addresses changed, reloading wifi");
+				mesh_run_capture(wr, NULL, 0);
+			}
 		}
+
+		/* auto_config=1, portal_detect 0/1: commit the portal config
+		 * before detection, keep LuCI usable, and put back managed
+		 * options changed outside mesh11sd (docs/LUCI-DESIGN.md). */
+		if (has_mesh_uci() && mesh_managed_mode(ctx))
+			mesh_managed_pass(ctx, auto_config_done);
 
 		/* v7 ~11271: firstloop/changed only touches meshinterface and calls
 		 * all_nodes_rssi_update. That runs restart_mesh (wifi) only if
@@ -389,8 +380,9 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 		mesh_pin_active_portal_arp(ctx);
 
 		mesh_rootmode(ctx);
-		mesh_sync_phywide_via_wifi(ctx);
+		mesh_mobility_apply_phywide(ctx);
 		mesh_mobility_settings(ctx, "runtime");
+		mesh_fix_mesh_noscan(ctx);
 		mesh_check_gate(ctx);
 		mesh_check_path_changes(ctx);
 		mesh_check_odhcpd(ctx);

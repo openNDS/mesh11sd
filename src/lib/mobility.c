@@ -3,11 +3,14 @@
  */
 #include "mesh11sd.h"
 
+#include <dirent.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 int mesh_set_iface_path_cost(struct mesh_ctx *ctx, int path_cost,
@@ -546,33 +549,6 @@ int mesh_mobility_apply_phywide(struct mesh_ctx *ctx)
 	return phy_apply_wide(ctx, e.phy, &e);
 }
 
-int mesh_sync_phywide_via_wifi(struct mesh_ctx *ctx)
-{
-	static int no_more_wifi;
-	struct mobility_eval e;
-
-	if (mobility_eval(ctx, &e, 0) != 0 || !e.valid_targets || !e.phy[0])
-		return 0;
-	if (!phy_wide_differs(ctx, e.phy, &e))
-		return 0;
-	if (no_more_wifi)
-		return 0;
-	phy_apply_wide(ctx, e.phy, &e);
-	mesh_log_info(ctx,
-		      "phy-wide settings changed; running wifi so vifs come up after them");
-	{
-		char *argv[] = { "wifi", NULL };
-		mesh_run_capture(argv, NULL, 0);
-	}
-	mesh_wait_for_wifi_enabled(ctx);
-	if (phy_wide_differs(ctx, e.phy, &e)) {
-		no_more_wifi = 1;
-		mesh_log_info(ctx,
-			      "phy-wide settings still differ after wifi; not restarting wifi again");
-	}
-	return 1;
-}
-
 int mesh_phy_rts_display(const char *phy, char *out, size_t outlen)
 {
 	int rts, limit, quantum;
@@ -696,87 +672,314 @@ int mesh_mobility_settings(struct mesh_ctx *ctx, const char *mode)
 
 
 
+#define MESH11SD_MAX_PATH_NODES 64
+#define MESH11SD_PATH_NODES_FILE MESH11SD_TMPDIR "/path_nodes"
+
+struct mesh_path_node {
+	char mac[32];
+	char next_hop[32];
+	int hop_count;
+	int path_change_count;
+	unsigned long sequence_number;
+	time_t previous_time;
+	long hwmp_seq_lifetime_ms;
+	int seen;
+};
+
+static struct mesh_path_node path_nodes[MESH11SD_MAX_PATH_NODES];
+static int path_node_count;
+static int path_nodes_loaded;
+
+static int path_node_parse_line(const char *line, struct mesh_path_node *n)
+{
+	char buf[512];
+	char *p, *tok;
+
+	memset(n, 0, sizeof(*n));
+	snprintf(buf, sizeof(buf), "%s", line);
+	p = buf;
+	while ((tok = strsep(&p, " \t\n")) != NULL) {
+		char *eq;
+
+		if (!*tok)
+			continue;
+		eq = strchr(tok, '=');
+		if (!eq)
+			continue;
+		*eq++ = '\0';
+		if (!strcmp(tok, "mac"))
+			snprintf(n->mac, sizeof(n->mac), "%s", eq);
+		else if (!strcmp(tok, "next_hop"))
+			snprintf(n->next_hop, sizeof(n->next_hop), "%s", eq);
+		else if (!strcmp(tok, "hop_count"))
+			n->hop_count = atoi(eq);
+		else if (!strcmp(tok, "path_change_count"))
+			n->path_change_count = atoi(eq);
+		else if (!strcmp(tok, "sequence_number"))
+			n->sequence_number = strtoul(eq, NULL, 10);
+		else if (!strcmp(tok, "previous_time"))
+			n->previous_time = (time_t)strtoul(eq, NULL, 10);
+		else if (!strcmp(tok, "hwmp_sequence_lifetime_ms"))
+			n->hwmp_seq_lifetime_ms = strtol(eq, NULL, 10);
+	}
+	return n->mac[0] ? 0 : -1;
+}
+
+static void path_nodes_load(void)
+{
+	FILE *f;
+	char line[512];
+	struct mesh_path_node n;
+
+	if (path_nodes_loaded)
+		return;
+	path_nodes_loaded = 1;
+	f = fopen(MESH11SD_PATH_NODES_FILE, "r");
+	if (!f)
+		return;
+	while (fgets(line, sizeof(line), f)) {
+		if (path_node_parse_line(line, &n) != 0)
+			continue;
+		if (path_node_count >= MESH11SD_MAX_PATH_NODES)
+			break;
+		n.seen = 0;
+		path_nodes[path_node_count++] = n;
+	}
+	fclose(f);
+}
+
+static void path_nodes_save(void)
+{
+	FILE *f;
+	int i;
+
+	f = fopen(MESH11SD_PATH_NODES_FILE, "w");
+	if (!f)
+		return;
+	for (i = 0; i < path_node_count; i++) {
+		fprintf(f,
+			"mac=%s next_hop=%s hop_count=%d path_change_count=%d "
+			"sequence_number=%lu previous_time=%lu "
+			"hwmp_sequence_lifetime_ms=%ld\n",
+			path_nodes[i].mac,
+			path_nodes[i].next_hop,
+			path_nodes[i].hop_count,
+			path_nodes[i].path_change_count,
+			path_nodes[i].sequence_number,
+			(unsigned long)path_nodes[i].previous_time,
+			path_nodes[i].hwmp_seq_lifetime_ms);
+	}
+	fclose(f);
+}
+
+static void path_nodes_prune(void)
+{
+	int i, o = 0;
+
+	for (i = 0; i < path_node_count; i++) {
+		if (!path_nodes[i].seen)
+			continue;
+		if (o != i)
+			path_nodes[o] = path_nodes[i];
+		path_nodes[o].seen = 0;
+		o++;
+	}
+	path_node_count = o;
+}
+
+static struct mesh_path_node *path_node_get(const char *mac, time_t now)
+{
+	int i;
+	struct mesh_path_node *n;
+
+	for (i = 0; i < path_node_count; i++) {
+		if (!strcasecmp(path_nodes[i].mac, mac))
+			return &path_nodes[i];
+	}
+	if (path_node_count >= MESH11SD_MAX_PATH_NODES)
+		return NULL;
+	n = &path_nodes[path_node_count++];
+	memset(n, 0, sizeof(*n));
+	snprintf(n->mac, sizeof(n->mac), "%s", mac);
+	n->path_change_count = 1;
+	n->sequence_number = 0;
+	n->previous_time = now;
+	return n;
+}
+
+int mesh_path_lookup_lifetime(const char *mac, long *lifetime_ms)
+{
+	FILE *f;
+	char line[512];
+	struct mesh_path_node n;
+
+	if (lifetime_ms)
+		*lifetime_ms = 0;
+	if (!mac || !mac[0])
+		return -1;
+	f = fopen(MESH11SD_PATH_NODES_FILE, "r");
+	if (!f)
+		return -1;
+	while (fgets(line, sizeof(line), f)) {
+		if (path_node_parse_line(line, &n) != 0)
+			continue;
+		if (strcasecmp(n.mac, mac) != 0)
+			continue;
+		if (lifetime_ms)
+			*lifetime_ms = n.hwmp_seq_lifetime_ms;
+		fclose(f);
+		return 0;
+	}
+	fclose(f);
+	return -1;
+}
+
+static int station_is_connected(const char *dump, const char *mac)
+{
+	return dump && mac && mac[0] && strstr(dump, mac) != NULL;
+}
+
 int mesh_check_path_changes(struct mesh_ctx *ctx)
 {
 	int i;
 	char out[8192];
+	time_t now;
 
+	path_nodes_load();
+	now = time(NULL);
 	mesh_get_mesh_iflist(ctx);
 	for (i = 0; i < ctx->iflist_count; i++) {
 		char status[16];
+		char sta_dump[8192];
 		char *argv[] = { "iw", "dev", ctx->iflist[i], "mpath", "dump", NULL };
+		char *sta_argv[] = { "iw", "dev", ctx->iflist[i], "station", "dump", NULL };
+		char *p, *line;
+		int hdr = 1;
+		int have_sta = 0;
+
 		mesh_wait_for_interface(ctx, ctx->iflist[i], status, sizeof(status));
 		if (!strcmp(status, "down"))
 			continue;
 		if (mesh_run_capture(argv, out, sizeof(out)) != 0)
 			continue;
-		/* v7: peermac_id state in tmpdir; log multi-hop path changes */
-		{
-			char *p = out, *line;
-			int hdr = 1;
-			while ((line = strsep(&p, "\n")) != NULL) {
-				char dest[32], nh[32];
-				int metric = 0, hops = 0, pchg = 0, seq = 0;
-				int prev_pchg = 1, prev_seq = 0;
-				char *toks[16];
-				int nt = 0;
-				char buf[512], *bp, *tok;
-				char peermac_id[72];
-				char statepath[192];
-				char state[256];
-				FILE *sf;
-				if (hdr) { hdr = 0; continue; }
-				snprintf(buf, sizeof(buf), "%s", line);
-				bp = buf;
-				while (nt < 16 && (tok = strsep(&bp, " \t")) != NULL)
-					if (*tok)
-						toks[nt++] = tok;
-				if (nt < 11)
-					continue;
-				snprintf(dest, sizeof(dest), "%s", toks[0]);
-				snprintf(nh, sizeof(nh), "%s", toks[1]);
-				metric = atoi(toks[4]);
-				seq = atoi(toks[3]);
-				hops = atoi(toks[10]);
-				if (nt > 11)
-					pchg = atoi(toks[11]);
-				if (mesh_sha256_hex(dest, peermac_id, sizeof(peermac_id)) != 0)
-					continue;
-				snprintf(statepath, sizeof(statepath), "%s/%s",
-					 MESH11SD_TMPDIR, peermac_id);
-				if ((sf = fopen(statepath, "r"))) {
-					if (fgets(state, sizeof(state), sf)) {
-						char *q = strstr(state, "previous_path_change_count=");
-						if (q)
-							prev_pchg = atoi(q + 27);
-						q = strstr(state, "previous_sequence_number=");
-						if (q)
-							prev_seq = atoi(q + 25);
+		sta_dump[0] = '\0';
+		p = out;
+		while ((line = strsep(&p, "\n")) != NULL) {
+			char dest[32], nh[32];
+			char *toks[16];
+			int nt = 0;
+			char buf[512], *bp, *tok;
+			int hops = 0, pchg = 0;
+			unsigned long seq = 0;
+			unsigned long prev_seq;
+			int prev_pchg;
+			time_t prev_time;
+			long lifetime;
+			unsigned long path_updates;
+			unsigned long elapsed_ms;
+			struct mesh_path_node *n;
+
+			if (hdr) {
+				hdr = 0;
+				continue;
+			}
+			snprintf(buf, sizeof(buf), "%s", line);
+			bp = buf;
+			while (nt < 16 && (tok = strsep(&bp, " \t")) != NULL)
+				if (*tok)
+					toks[nt++] = tok;
+			if (nt < 11)
+				continue;
+			snprintf(dest, sizeof(dest), "%s", toks[0]);
+			snprintf(nh, sizeof(nh), "%s", toks[1]);
+			seq = strtoul(toks[3], NULL, 10);
+			hops = atoi(toks[10]);
+			if (nt > 11)
+				pchg = atoi(toks[11]);
+
+			n = path_node_get(dest, now);
+			if (n) {
+				prev_pchg = n->path_change_count;
+				prev_seq = n->sequence_number;
+				prev_time = n->previous_time;
+				lifetime = n->hwmp_seq_lifetime_ms;
+			} else {
+				/* table full: log this pass only, same first-sight defaults */
+				prev_pchg = 1;
+				prev_seq = 0;
+				prev_time = now;
+				lifetime = 0;
+				n = NULL;
+			}
+
+			if (prev_seq < seq) {
+				path_updates = seq - prev_seq;
+				if (now > prev_time)
+					elapsed_ms = (unsigned long)(now - prev_time) * 1000UL;
+				else
+					elapsed_ms = 0;
+				if (path_updates > 0)
+					lifetime = (long)(elapsed_ms / path_updates);
+			}
+
+			if (pchg != prev_pchg) {
+				if (hops > 1 && pchg > 1) {
+					if (!have_sta) {
+						if (mesh_run_capture(sta_argv, sta_dump,
+								     sizeof(sta_dump)) != 0)
+							sta_dump[0] = '\0';
+						have_sta = 1;
 					}
-					fclose(sf);
-				}
-				if (pchg != prev_pchg && hops > 1 && pchg > 1) {
+					if (station_is_connected(sta_dump, dest)) {
+						mesh_log_debug(ctx,
+							"Station [ %s ] is [ %d ] hops away, path_change_count [ %d ]",
+							dest, hops, pchg);
+						mesh_log_info(ctx,
+							"Path to [ %s ], changed, [ %d ] hop(s) via [ %s ], HWMP Sequence Lifetime [ %ld ] ms",
+							dest, hops, nh, lifetime);
+						/* Reactive path stabilisation (threshold removed). */
+						if (ctx->mesh_path_stabilisation == 1 &&
+						    strcmp(ctx->detected_state, "portal") != 0) {
+							mesh_log_debug(ctx,
+								"Station [ %s ] has an incrementing path change count.",
+								dest);
+						}
+					}
+				} else if (hops == 1 && pchg > 1) {
 					mesh_log_debug(ctx,
-						"Station [ %s ] is [ %d ] hops away, path_change_count [ %d ]",
-						dest, hops, pchg);
+						"Station [ %s ] is an immediate neighbour, but has had [ %d ] path_change(s) detected",
+						dest, pchg);
 					mesh_log_info(ctx,
-						"Path to [ %s ], changed, [ %d ] hop(s) via [ %s ]",
-						dest, hops, nh);
-					(void)metric;
-					(void)seq;
-					(void)prev_seq;
+						"Path to [ %s ], changed, [ %d ] hop(s) via [ %s ], HWMP Sequence Lifetime [ %ld ] ms",
+						dest, hops, nh, lifetime);
+					if (ctx->mesh_path_stabilisation == 1) {
+						mesh_log_debug(ctx,
+							"Station [ %s ], consider its location or adjust txpower and/or rssi_threshold",
+							dest);
+						if (strcmp(ctx->detected_state, "portal") != 0)
+							mesh_log_debug(ctx,
+								" ..... or, if not already enabled, consider setting a higher mesh mobility level on this node");
+					}
 				}
-				{
-					char content[192];
-					snprintf(content, sizeof(content),
-						 "previous_path_change_count=%d\n"
-						 "previous_sequence_number=%d\n",
-						 pchg, seq);
-					mesh_file_write(statepath, content);
-				}
+			} else {
+				mesh_log_info(ctx,
+					"Path to [ %s ], stable, [ %d ] hop(s) via [ %s ], HWMP Sequence Lifetime [ %ld ] ms",
+					dest, hops, nh, lifetime);
+			}
+
+			if (n) {
+				snprintf(n->next_hop, sizeof(n->next_hop), "%s", nh);
+				n->hop_count = hops;
+				n->path_change_count = pchg;
+				n->sequence_number = seq;
+				n->previous_time = now;
+				n->hwmp_seq_lifetime_ms = lifetime;
+				n->seen = 1;
 			}
 		}
 	}
+	path_nodes_prune();
+	path_nodes_save();
 	return 0;
 }
 
@@ -811,7 +1014,8 @@ int mesh_scan_channel(struct mesh_ctx *ctx)
 	while ((line = strsep(&p, " \n")) != NULL) {
 		char sect[96], *eq, ifn[64], key[128];
 		char *scan[] = { "iw", "dev", ifn, "scan", NULL };
-		eq = strchr(line, '=');
+		/* line is "wireless.<section>.mode='mesh'"; keep "wireless.<section>" */
+		eq = strstr(line, ".mode=");
 		if (!eq)
 			continue;
 		snprintf(sect, sizeof(sect), "%s", line);
@@ -853,6 +1057,14 @@ int mesh_check_channel(struct mesh_ctx *ctx)
 		return 0;
 	}
 	last_check = now;
+	/* A peer that has just gained a wan uplink becomes the portal at the
+	 * next portal check, so don't spend this pass probing for the old
+	 * portal or scanning channels. */
+	if (ctx->portal_detect == 1 && strcmp(ctx->detected_state, "portal") != 0 &&
+	    mesh_wan_upstream_present(ctx)) {
+		mesh_log_debug(ctx, "Check Channel - wan upstream present, skipping scan");
+		return 0;
+	}
 	mesh_get_portal_ula(ctx, "get");
 	mesh_manage_fallback_ula_route(ctx);
 	if (ctx->link_to_portal == 0) {
@@ -861,5 +1073,90 @@ int mesh_check_channel(struct mesh_ctx *ctx)
 	}
 	mesh_log_debug(ctx, "Check Channel - portal not detected - Scanning...");
 	mesh_scan_channel(ctx);
+	return 0;
+}
+
+/* Send one control-interface command to wpa_supplicant over ubus. */
+static int supplicant_control(const char *ifn, const char *cmd, char *out, size_t outlen)
+{
+	char obj[96], json[160];
+	char *argv[] = { "ubus", "call", obj, "control", json, NULL };
+
+	snprintf(obj, sizeof(obj), "wpa_supplicant.%s", ifn);
+	snprintf(json, sizeof(json), "{\"command\":\"%s\"}", cmd);
+	return mesh_run_capture(argv, out, outlen);
+}
+
+/*
+ * A 2.4 GHz mesh only uses 40 MHz when its wpa_supplicant network has
+ * noscan set. OpenWrt 25.12 passes the radio's noscan option to hostapd
+ * (the APs) but not to the mesh network, so the mesh falls back to
+ * 20 MHz. When the radio has noscan='1' and the mesh is at 20 MHz, set
+ * noscan on the running network and rejoin. Runtime only, nothing is
+ * written to flash; a wifi reload resets it and the next pass redoes it.
+ */
+int mesh_fix_mesh_noscan(struct mesh_ctx *ctx)
+{
+	DIR *d;
+	struct dirent *e;
+
+	d = opendir("/sys/class/net");
+	if (!d)
+		return 0;
+	while ((e = readdir(d)) != NULL) {
+		char ifn[64], key[96], val[16] = "", out[1024], cmd[64], id[16] = "";
+		char *info[] = { "iw", "dev", ifn, "info", NULL };
+		char *p, *cur;
+		int radio;
+
+		if (strncmp(e->d_name, ctx->mesh_basename, strlen(ctx->mesh_basename)))
+			continue;
+		snprintf(ifn, sizeof(ifn), "%s", e->d_name);
+		p = ifn + strlen(ctx->mesh_basename);
+		if (*p != 'r' || sscanf(p + 1, "%d", &radio) != 1)
+			continue;
+
+		snprintf(key, sizeof(key), "wireless.radio%d.noscan", radio);
+		if (mesh_uci_get(key, val, sizeof(val)) != 0 || strcmp(val, "1"))
+			continue;
+		snprintf(key, sizeof(key), "wireless.radio%d.htmode", radio);
+		if (mesh_uci_get(key, val, sizeof(val)) != 0 || !strstr(val, "40"))
+			continue;
+
+		/* only a 2.4 GHz mesh running at 20 MHz needs it */
+		if (mesh_run_capture(info, out, sizeof(out)) != 0)
+			continue;
+		p = strstr(out, "channel ");
+		if (!p || !strstr(p, "(24") || !strstr(p, "width: 20 MHz"))
+			continue;
+
+		/* The current network's id. ubus returns the table as one JSON
+		 * string, with each row starting after an escaped newline:
+		 * "...flags\n3\t<ssid>\tany\t[CURRENT]". */
+		if (supplicant_control(ifn, "LIST_NETWORKS", out, sizeof(out)) != 0)
+			continue;
+		cur = strstr(out, "[CURRENT]");
+		if (!cur)
+			continue;
+		for (p = cur; p > out + 1 && !(p[-2] == '\\' && p[-1] == 'n'); p--)
+			;
+		sscanf(p, "%15[0-9]", id);
+		if (!id[0])
+			continue;
+
+		snprintf(cmd, sizeof(cmd), "GET_NETWORK %s noscan", id);
+		if (supplicant_control(ifn, cmd, out, sizeof(out)) != 0 ||
+		    !strstr(out, "\"0\""))
+			continue;
+
+		mesh_log_notice(ctx, "%s is at 20 MHz without noscan, setting noscan and rejoining for 40 MHz",
+				ifn);
+		snprintf(cmd, sizeof(cmd), "SET_NETWORK %s noscan 1", id);
+		supplicant_control(ifn, cmd, out, sizeof(out));
+		supplicant_control(ifn, "DISCONNECT", out, sizeof(out));
+		sleep(2);
+		supplicant_control(ifn, "RECONNECT", out, sizeof(out));
+	}
+	closedir(d);
 	return 0;
 }

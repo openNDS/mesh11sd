@@ -13,6 +13,10 @@
 #include <string.h>
 #include <unistd.h>
 
+#define NDP_RESPONSE_MAX 32768
+
+static char ndp_response[NDP_RESPONSE_MAX];
+
 static void normalize_nodeaddr(const char *in, char *out, size_t outlen)
 {
 	size_t i, o = 0;
@@ -25,18 +29,101 @@ static void normalize_nodeaddr(const char *in, char *out, size_t outlen)
 	out[o] = '\0';
 }
 
+static void mac_to_dashed(const char *mac, char *out, size_t outlen)
+{
+	size_t i, o = 0;
+
+	for (i = 0; mac && mac[i] && o + 1 < outlen; i++)
+		out[o++] = (mac[i] == ':') ? '-' : mac[i];
+	out[o] = '\0';
+}
+
+static void mac_strip_colons(const char *mac, char *out, size_t outlen)
+{
+	size_t i, o = 0;
+
+	for (i = 0; mac && mac[i] && o + 1 < outlen; i++) {
+		if (mac[i] != ':')
+			out[o++] = (char)tolower((unsigned char)mac[i]);
+	}
+	out[o] = '\0';
+}
+
+static void load_tmpdir_quoted(const char *path, const char *key, char *out, size_t outlen)
+{
+	FILE *f;
+	char line[256];
+	char prefix[80];
+	size_t plen;
+
+	if (!out || !outlen)
+		return;
+	snprintf(prefix, sizeof(prefix), "%s=\"", key);
+	plen = strlen(prefix);
+	f = fopen(path, "r");
+	if (!f)
+		return;
+	while (fgets(line, sizeof(line), f)) {
+		char *p = strstr(line, prefix);
+		char val[128];
+
+		if (!p)
+			continue;
+		if (sscanf(p + plen, "%127[^\"]", val) == 1)
+			snprintf(out, outlen, "%s", val);
+	}
+	fclose(f);
+}
+
+/* v7 connect/copy source tmpdir/is_portal and tmpdir/active_mesh_ifname. */
+static void load_connect_runtime(struct mesh_ctx *ctx, int clear_if_missing)
+{
+	if (access(MESH11SD_TMPDIR "/is_portal", R_OK) == 0)
+		load_tmpdir_quoted(MESH11SD_TMPDIR "/is_portal",
+				   "detected_state", ctx->detected_state,
+				   sizeof(ctx->detected_state));
+	else if (clear_if_missing)
+		ctx->detected_state[0] = '\0';
+
+	if (!ctx->active_mesh_ifname[0])
+		load_tmpdir_quoted(MESH11SD_TMPDIR "/active_mesh_ifname",
+				   "active_mesh_ifname", ctx->active_mesh_ifname,
+				   sizeof(ctx->active_mesh_ifname));
+}
+
+static void ndp_response_append(const char *chunk)
+{
+	size_t have, need;
+
+	if (!chunk || !chunk[0])
+		return;
+	have = strlen(ndp_response);
+	need = strlen(chunk) + 2; /* space + NUL */
+	if (have + need > sizeof(ndp_response))
+		need = sizeof(ndp_response) - have;
+	if (need < 2)
+		return;
+	snprintf(ndp_response + have, need, " %s", chunk);
+}
+
 static void wait_for_nodes(struct mesh_ctx *ctx)
 {
 	int i;
+	char br[64], pingaddr[96];
+	char round[4096];
+
 	fputs(" Building node list * ", stdout);
 	fflush(stdout);
 	mesh_ccpy_setup(ctx);
+	ndp_response[0] = '\0';
+	snprintf(br, sizeof(br), "br-%s", ctx->auto_mesh_network);
+	snprintf(pingaddr, sizeof(pingaddr), "ff02::2%%%s", br);
 	for (i = 0; i < 5; i++) {
-		char br[64], pingaddr[96];
 		char *pargv[] = { "ping", "-c", "2", pingaddr, NULL };
-		snprintf(br, sizeof(br), "br-%s", ctx->auto_mesh_network);
-		snprintf(pingaddr, sizeof(pingaddr), "ff02::2%%%s", br);
-		mesh_run_capture(pargv, NULL, 0);
+
+		round[0] = '\0';
+		mesh_run_capture(pargv, round, sizeof(round));
+		ndp_response_append(round);
 		fputs("* ", stdout);
 		fflush(stdout);
 	}
@@ -63,18 +150,236 @@ static int load_connectlist(char entries[][96], int max)
 	return n;
 }
 
+/* v7 check_if_peer: 0 if octets 2,3,5 of ndpmac match a peerlist MAC. */
+static int check_if_peer(struct mesh_ctx *ctx, const char *ndpmac)
+{
+	unsigned n[6], p[6];
+	int i;
+
+	if (sscanf(ndpmac, "%x:%x:%x:%x:%x:%x",
+		   &n[0], &n[1], &n[2], &n[3], &n[4], &n[5]) != 6)
+		return 1;
+	for (i = 0; i < ctx->peerlist_count; i++) {
+		if (sscanf(ctx->peerlist[i], "%x:%x:%x:%x:%x:%x",
+			   &p[0], &p[1], &p[2], &p[3], &p[4], &p[5]) != 6)
+			continue;
+		if (n[1] == p[1] && n[2] == p[2] && n[4] == p[4])
+			return 0;
+	}
+	return 1;
+}
+
+/* v7: column 2 of the mpp dump line containing ndpmac. */
+static int lookup_label_mac(struct mesh_ctx *ctx, const char *ndpmac,
+			    char *out, size_t outlen)
+{
+	char dump[16384];
+	char *argv[] = { "iw", "dev", ctx->active_mesh_ifname, "mpp", "dump", NULL };
+	char *p, *line;
+
+	out[0] = '\0';
+	if (!ctx->active_mesh_ifname[0])
+		return -1;
+	if (mesh_run_capture(argv, dump, sizeof(dump)) != 0)
+		return -1;
+	p = dump;
+	while ((line = strsep(&p, "\n")) != NULL) {
+		char c1[64], c2[64];
+
+		if (!strstr(line, ndpmac))
+			continue;
+		if (sscanf(line, "%63s %63s", c1, c2) >= 2) {
+			snprintf(out, outlen, "%s", c2);
+			return 0;
+		}
+	}
+	return -1;
+}
+
+static void maybe_rewrite_label_mac(const char *ndpmac, char *label_mac, size_t labellen)
+{
+	char ndp[16], lab[16];
+
+	mac_strip_colons(ndpmac, ndp, sizeof(ndp));
+	mac_strip_colons(label_mac, lab, sizeof(lab));
+	if (strlen(ndp) < 12 || strlen(lab) < 12)
+		return;
+	if (strncmp(ndp + 8, lab + 8, 4) != 0)
+		snprintf(label_mac, labellen, "xx:xx:xx:xx:%c%c:%c%c",
+			 ndp[8], ndp[9], ndp[10], ndp[11]);
+}
+
+static void build_node_ula(struct mesh_ctx *ctx, const char *ndpmac,
+			   char *out, size_t outlen)
+{
+	char hex[16];
+	unsigned first;
+	char eui[17];
+
+	out[0] = '\0';
+	mac_strip_colons(ndpmac, hex, sizeof(hex));
+	if (strlen(hex) < 12)
+		return;
+	if (sscanf(hex, "%2x", &first) != 1)
+		return;
+	first ^= 0x02;
+	/* first_byte + octets 2-3 + fffe + octets 4-6 */
+	snprintf(eui, sizeof(eui), "%02x%c%c%c%cfffe%c%c%c%c%c%c",
+		 first,
+		 hex[2], hex[3], hex[4], hex[5],
+		 hex[6], hex[7], hex[8], hex[9], hex[10], hex[11]);
+	snprintf(out, outlen, "%s:%s:%c%c%c%c:%c%c%c%c:%c%c%c%c:%c%c%c%c",
+		 ctx->ula_base, ctx->ula_subnet,
+		 eui[0], eui[1], eui[2], eui[3],
+		 eui[4], eui[5], eui[6], eui[7],
+		 eui[8], eui[9], eui[10], eui[11],
+		 eui[12], eui[13], eui[14], eui[15]);
+}
+
+/* ssh/scp must inherit the terminal; mesh_run_capture swallows stdout. */
+static int run_interactive(char *const argv[])
+{
+	pid_t pid;
+	int status;
+
+	pid = fork();
+	if (pid < 0)
+		return -1;
+	if (pid == 0) {
+		execvp(argv[0], argv);
+		_exit(127);
+	}
+	if (waitpid(pid, &status, 0) < 0)
+		return -1;
+	if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
+		return -1;
+	return 0;
+}
+
+static int linklocal_in_response(const char *linklocal)
+{
+	char ip6[96];
+	char *pct = strchr(linklocal, '%');
+	size_t nlen;
+
+	snprintf(ip6, sizeof(ip6), "%s", linklocal);
+	if (pct) {
+		nlen = (size_t)(pct - linklocal);
+		if (nlen >= sizeof(ip6))
+			nlen = sizeof(ip6) - 1;
+		ip6[nlen] = '\0';
+	}
+	return ndp_response[0] && strstr(ndp_response, ip6) != NULL;
+}
+
+static int ping6_linklocal(struct mesh_ctx *ctx, const char *ip6)
+{
+	char br[64];
+	char *pargv[] = { "ping6", "-q", "-c", "1", "-W", "1", "-I", br,
+			  (char *)ip6, NULL };
+
+	snprintf(br, sizeof(br), "br-%s", ctx->auto_mesh_network);
+	return mesh_run_capture(pargv, NULL, 0) == 0;
+}
+
+static void print_node_line(struct mesh_ctx *ctx, const char *ndpmacf,
+			    const char *label_mac, const char *ndpmac,
+			    const char *ip6)
+{
+	char node_ula[128];
+
+	build_node_ula(ctx, ndpmac, node_ula, sizeof(node_ula));
+	if (!ping6_linklocal(ctx, ip6))
+		return;
+	if (node_ula[0])
+		printf("Node ID: %s [ label mac: %s ] [ ULA: %s ] [ web_ui: https://[%s] ]\n",
+		       ndpmacf, label_mac, node_ula, node_ula);
+	else
+		printf("%s [ ipaddress: %s ]\n", ndpmacf, ip6);
+}
+
+enum { REMOTE_CONNECT = 0, REMOTE_COPY = 1 };
+
+static void walk_connectlist(struct mesh_ctx *ctx, int mode,
+			     const char *nodeaddr, const char *filepath)
+{
+	char entries[64][96];
+	int n, i;
+	int show_all = ctx->connect_show_all;
+
+	if (!ctx->peerlist_count)
+		return;
+	mesh_get_portal_ula(ctx, "get");
+	n = load_connectlist(entries, 64);
+	for (i = 0; i < n; i++) {
+		char linklocal[128] = "", ndpmac[32] = "";
+		char *comma = strchr(entries[i], ',');
+		char ndpmacf[40], label_mac[64], ip6[96];
+		char *pct;
+
+		if (!comma)
+			continue;
+		*comma = '\0';
+		snprintf(linklocal, sizeof(linklocal), "%s", entries[i]);
+		snprintf(ndpmac, sizeof(ndpmac), "%s", comma + 1);
+
+		if (show_all != 1 && check_if_peer(ctx, ndpmac) != 0)
+			continue;
+
+		if (lookup_label_mac(ctx, ndpmac, label_mac, sizeof(label_mac)) != 0 ||
+		    !label_mac[0])
+			continue;
+
+		if (!linklocal_in_response(linklocal))
+			continue;
+
+		maybe_rewrite_label_mac(ndpmac, label_mac, sizeof(label_mac));
+		mac_to_dashed(ndpmac, ndpmacf, sizeof(ndpmacf));
+
+		snprintf(ip6, sizeof(ip6), "%s", linklocal);
+		pct = strchr(ip6, '%');
+		if (pct)
+			*pct = '\0';
+
+		if (!nodeaddr[0]) {
+			print_node_line(ctx, ndpmacf, label_mac, ndpmac, ip6);
+			continue;
+		}
+		if (strcmp(nodeaddr, ndpmac) != 0)
+			continue;
+
+		if (mode == REMOTE_CONNECT) {
+			char target[160];
+			char *ssh[] = { "ssh", target, NULL };
+
+			snprintf(target, sizeof(target), "root@%s", linklocal);
+			printf("\nTrying to connect to meshnode \"%s\".....\n", ndpmacf);
+			run_interactive(ssh);
+			printf("\nDisconnected from meshnode \"%s\"\n\n", ndpmacf);
+			break;
+		}
+		if (mode == REMOTE_COPY && filepath && filepath[0]) {
+			char dest[256];
+			const char *base = strrchr(filepath, '/');
+			char *scp[] = { "scp", (char *)filepath, dest, NULL };
+
+			base = base ? base + 1 : filepath;
+			snprintf(dest, sizeof(dest), "root@[%s]:%s/%s",
+				 linklocal, MESH11SD_TMPDIR, base);
+			printf("\nTrying to copy [ %s/%s ] to meshnode [ %s ].....\n",
+			       MESH11SD_TMPDIR, base, ndpmacf);
+			run_interactive(scp);
+			printf("\nDisconnected from meshnode \"%s\"\n\n", ndpmacf);
+			break;
+		}
+	}
+}
+
 int mesh_cli_connect(struct mesh_ctx *ctx, int argc, char **argv)
 {
 	char nodeaddr[64] = "";
-	int filter_list = 0;
-	char entries[64][96];
-	int n, i;
 
-	puts("=============================================================================================================================================================================");
-	puts(" Connect a remote terminal session on a remote meshnode");
-	puts("    Usage: mesh11sd connect [Node ID]");
-	puts("           mesh11sd connect filter_list   (show only nodes from this contiguous mesh)");
-	puts("");
+	load_connect_runtime(ctx, 1);
 
 	if (ctx->auto_config == 0 || !ctx->detected_state[0]) {
 		puts("======================================================================");
@@ -83,13 +388,17 @@ int mesh_cli_connect(struct mesh_ctx *ctx, int argc, char **argv)
 		return 1;
 	}
 	if (argc >= 3 && !strcmp(argv[2], "filter_list"))
-		filter_list = 1;
+		ctx->connect_show_all = 0;
 	else if (argc >= 3)
 		normalize_nodeaddr(argv[2], nodeaddr, sizeof(nodeaddr));
 
+	puts("=============================================================================================================================================================================");
+	puts(" Connect a remote terminal session on a remote meshnode");
+	puts("    Usage: mesh11sd connect [Node ID]");
+	puts("           mesh11sd connect filter_list   (show only nodes from this contiguous mesh)");
+	puts("");
 	wait_for_nodes(ctx);
-	mesh_get_portal_ula(ctx, "get");
-	n = load_connectlist(entries, 64);
+	puts("");
 
 	if (!nodeaddr[0]) {
 		puts(" If the node you are looking for is not in the list - re-run this command.");
@@ -97,47 +406,8 @@ int mesh_cli_connect(struct mesh_ctx *ctx, int argc, char **argv)
 		puts(" The following meshnodes are available for remote connection:");
 	}
 
-	for (i = 0; i < n; i++) {
-		char linklocal[128] = "", ndpmac[32] = "";
-		char *comma = strchr(entries[i], ',');
-		char ndpmacf[40];
-		int j;
-		if (!comma)
-			continue;
-		*comma = '\0';
-		snprintf(linklocal, sizeof(linklocal), "%s", entries[i]);
-		snprintf(ndpmac, sizeof(ndpmac), "%s", comma + 1);
-		for (j = 0; ndpmac[j]; j++)
-			ndpmacf[j] = (ndpmac[j] == ':') ? '-' : ndpmac[j];
-		ndpmacf[j] = '\0';
+	walk_connectlist(ctx, REMOTE_CONNECT, nodeaddr, NULL);
 
-		if (nodeaddr[0]) {
-			if (strcmp(nodeaddr, ndpmac) != 0)
-				continue;
-			printf("\nTrying to connect to meshnode \"%s\".....\n", ndpmacf);
-			{
-				char *ssh[] = { "ssh", NULL, NULL };
-				char target[160];
-				snprintf(target, sizeof(target), "root@%s", linklocal);
-				ssh[1] = target;
-				mesh_run_capture(ssh, NULL, 0);
-			}
-			printf("\nDisconnected from meshnode \"%s\"\n\n", ndpmacf);
-			break;
-		} else {
-			char ip6[96];
-			char *pct = strchr(linklocal, '%');
-			snprintf(ip6, sizeof(ip6), "%s", linklocal);
-			if (pct) {
-				size_t nlen = (size_t)(pct - linklocal);
-				if (nlen >= sizeof(ip6))
-					nlen = sizeof(ip6) - 1;
-				ip6[nlen] = '\0';
-			}
-			printf("Node ID: %s [ ipaddress: %s ]\n", ndpmacf, ip6);
-		}
-		(void)filter_list;
-	}
 	puts("=============================================================================================================================================================================");
 	puts("");
 	return 0;
@@ -147,14 +417,8 @@ int mesh_cli_copy(struct mesh_ctx *ctx, int argc, char **argv)
 {
 	char nodeaddr[64] = "";
 	const char *filepath = NULL;
-	char entries[64][96];
-	int n, i;
 
-	puts("=============================================================================================================================================================================");
-	puts(" Copy a file to /tmp/mesh11sd/ on a remote meshnode");
-	puts("    Usage: mesh11sd copy [Node ID] [path_to_file]");
-	puts("           mesh11sd copy filter_list   (show only nodes from this contiguous mesh)");
-	puts("");
+	load_connect_runtime(ctx, 0);
 
 	if (ctx->auto_config == 0) {
 		puts("================================================================");
@@ -162,14 +426,20 @@ int mesh_cli_copy(struct mesh_ctx *ctx, int argc, char **argv)
 		puts("================================================================");
 		return 1;
 	}
-	if (argc >= 3 && strcmp(argv[2], "filter_list") != 0)
+	if (argc >= 3 && !strcmp(argv[2], "filter_list"))
+		ctx->connect_show_all = 0;
+	else if (argc >= 3)
 		normalize_nodeaddr(argv[2], nodeaddr, sizeof(nodeaddr));
 	if (argc >= 4)
 		filepath = argv[3];
 
+	puts("=============================================================================================================================================================================");
+	puts(" Copy a file to /tmp/mesh11sd/ on a remote meshnode");
+	puts("    Usage: mesh11sd copy [Node ID] [path_to_file]");
+	puts("           mesh11sd copy filter_list   (show only nodes from this contiguous mesh)");
+	puts("");
 	wait_for_nodes(ctx);
-	mesh_get_portal_ula(ctx, "get");
-	n = load_connectlist(entries, 64);
+	puts("");
 
 	if (!nodeaddr[0]) {
 		puts(" If the node you are looking for is not in the list - re-run this command.");
@@ -177,43 +447,8 @@ int mesh_cli_copy(struct mesh_ctx *ctx, int argc, char **argv)
 		puts(" The following meshnodes are available for remote copy:");
 	}
 
-	for (i = 0; i < n; i++) {
-		char linklocal[128] = "", ndpmac[32] = "";
-		char *comma = strchr(entries[i], ',');
-		char ndpmacf[40];
-		int j;
-		if (!comma)
-			continue;
-		*comma = '\0';
-		snprintf(linklocal, sizeof(linklocal), "%s", entries[i]);
-		snprintf(ndpmac, sizeof(ndpmac), "%s", comma + 1);
-		for (j = 0; ndpmac[j]; j++)
-			ndpmacf[j] = (ndpmac[j] == ':') ? '-' : ndpmac[j];
-		ndpmacf[j] = '\0';
+	walk_connectlist(ctx, REMOTE_COPY, nodeaddr, filepath);
 
-		if (!nodeaddr[0]) {
-			printf("Node ID: %s\n", ndpmacf);
-			continue;
-		}
-		if (strcmp(nodeaddr, ndpmac) != 0)
-			continue;
-		if (!filepath || !filepath[0]) {
-			puts("Missing path_to_file");
-			return 1;
-		}
-		{
-			char dest[256];
-			const char *base = strrchr(filepath, '/');
-			char *scp[] = { "scp", (char *)filepath, dest, NULL };
-			base = base ? base + 1 : filepath;
-			snprintf(dest, sizeof(dest), "root@%s:%s/%s",
-				 linklocal, MESH11SD_TMPDIR, base);
-			printf("Copying to meshnode \"%s\".....\n", ndpmacf);
-			mesh_run_capture(scp, NULL, 0);
-			printf("Done.\n");
-		}
-		break;
-	}
 	puts("=============================================================================================================================================================================");
 	puts("");
 	return 0;
