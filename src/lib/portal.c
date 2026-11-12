@@ -510,6 +510,8 @@ void mesh_peer_stage_uci(struct mesh_ctx *ctx)
 		mesh_uci_batch_line("set network.vtunlan.proto='dhcp'");
 		/* the default route goes via lan, straight over the mesh */
 		mesh_uci_batch_line("set network.vtunlan.defaultroute='0'");
+		/* no prefix from this peer's own ULA on br-tun */
+		mesh_uci_batch_line("delete network.vtunlan.ip6assign");
 	}
 
 	/* v7: proto dhcp, never none */
@@ -677,6 +679,7 @@ static void portal_handoff(struct mesh_ctx *ctx)
 	if (vxlan_up || !vxlan_pending) {
 		mesh_uci_batch_line("set network.vtunlan.proto='static'");
 		mesh_uci_batch_line("delete network.vtunlan.defaultroute");
+		mesh_uci_batch_line("set network.vtunlan.ip6assign='64'");
 	}
 
 	snprintf(setl, sizeof(setl), "set network.%s.proto='static'", ctx->auto_mesh_network);

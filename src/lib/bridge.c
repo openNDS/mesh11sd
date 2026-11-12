@@ -1021,11 +1021,14 @@ static void vtunnel_uci_network(struct mesh_ctx *ctx, const char *vxname,
 	mesh_uci_batch_line(setl);
 	snprintf(setl, sizeof(setl), "set network.vtunlan.proto='%s'", proto);
 	mesh_uci_batch_line(setl);
-	if (!strcmp(proto, "dhcp"))
+	if (!strcmp(proto, "dhcp")) {
+		/* peer: default route via lan, no prefix from its own ULA */
 		mesh_uci_batch_line("set network.vtunlan.defaultroute='0'");
-	else
+		mesh_uci_batch_line("delete network.vtunlan.ip6assign");
+	} else {
 		mesh_uci_batch_line("delete network.vtunlan.defaultroute");
-	mesh_uci_batch_line("set network.vtunlan.ip6assign='64'");
+		mesh_uci_batch_line("set network.vtunlan.ip6assign='64'");
+	}
 	snprintf(setl, sizeof(setl), "set network.vtunlan.ip6hint='%s'",
 		 ctx->ula_vxsubnet);
 	mesh_uci_batch_line(setl);
