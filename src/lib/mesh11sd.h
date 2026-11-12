@@ -141,6 +141,7 @@ int mesh_mkdir_p(const char *path);
 int mesh_generate_ipv4_base(struct mesh_ctx *ctx, const char *seed, char *out,
 			    size_t outlen, const char *ignore_ip);
 int mesh_apply_portal_ipv4(struct mesh_ctx *ctx); /* v7 autostartup portal_use_default_ipv4=0 */
+void mesh_reserve_bridge_macs(struct mesh_ctx *ctx);
 int mesh_fixup_wireless_macaddrs(struct mesh_ctx *ctx); /* v7 ~11225 macaddr UCI before wifi */
 
 /* uci_ops: v7 uncommitted default; commit_all mode honoured by callers */

@@ -127,8 +127,10 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 		 * brings the vifs up on them and the live MAC walk after it
 		 * changes nothing (ath11k loses 5g beacons when an AP MAC moves
 		 * under a running hostapd). The first loop then has no reload. */
-		if (has_mesh_uci())
+		if (has_mesh_uci()) {
+			mesh_reserve_bridge_macs(ctx);
 			mesh_fixup_wireless_macaddrs(ctx);
+		}
 		/* portal-side network UCI first, so this one restart covers it */
 		mesh_network_preconfigure(ctx);
 		/* v7 ~11100: network restart, bridge mac, dnsmasq, firewall, probe */

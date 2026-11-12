@@ -308,6 +308,26 @@ static void apply_member_mac(struct mesh_ctx *ctx, const char *iface,
 	}
 }
 
+/*
+ * Indexed MACs are handed out in call order. Take the bridge ones first,
+ * in the same order as mesh_set_bridge_mac_addresses, so staging the
+ * wireless MACs early does not move the bridge MACs (and the addresses
+ * derived from them).
+ */
+void mesh_reserve_bridge_macs(struct mesh_ctx *ctx)
+{
+	char name[64], mac[32];
+
+	snprintf(name, sizeof(name), "br-%s", ctx->auto_mesh_network);
+	mesh_get_indexed_mac(ctx, name, mac, sizeof(mac));
+	if (ctx->portal_detect == 3)
+		mesh_get_indexed_mac(ctx, "br-lan", mac, sizeof(mac));
+	if (ctx->vtun_enable && ctx->tun_id[0] && strcmp(ctx->tun_id, "0") != 0) {
+		snprintf(name, sizeof(name), "br-tun%s", ctx->tun_id);
+		mesh_get_indexed_mac(ctx, name, mac, sizeof(mac));
+	}
+}
+
 int mesh_set_bridge_mac_addresses(struct mesh_ctx *ctx)
 {
 	char mesh_bridge[64];
