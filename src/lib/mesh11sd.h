@@ -275,6 +275,7 @@ int mesh_path_lookup_lifetime(const char *mac, long *lifetime_ms);
 int mesh_check_channel(struct mesh_ctx *ctx);
 int mesh_check_gate(struct mesh_ctx *ctx);
 int mesh_scan_channel(struct mesh_ctx *ctx);
+int mesh_fix_mesh_noscan(struct mesh_ctx *ctx);
 
 /* remote CLI ops */
 int mesh_cli_connect(struct mesh_ctx *ctx, int argc, char **argv);

@@ -382,6 +382,7 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 		mesh_rootmode(ctx);
 		mesh_mobility_apply_phywide(ctx);
 		mesh_mobility_settings(ctx, "runtime");
+		mesh_fix_mesh_noscan(ctx);
 		mesh_check_gate(ctx);
 		mesh_check_path_changes(ctx);
 		mesh_check_odhcpd(ctx);

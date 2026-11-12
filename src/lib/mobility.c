@@ -3,6 +3,7 @@
  */
 #include "mesh11sd.h"
 
+#include <dirent.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -1072,5 +1073,90 @@ int mesh_check_channel(struct mesh_ctx *ctx)
 	}
 	mesh_log_debug(ctx, "Check Channel - portal not detected - Scanning...");
 	mesh_scan_channel(ctx);
+	return 0;
+}
+
+/* Send one control-interface command to wpa_supplicant over ubus. */
+static int supplicant_control(const char *ifn, const char *cmd, char *out, size_t outlen)
+{
+	char obj[96], json[160];
+	char *argv[] = { "ubus", "call", obj, "control", json, NULL };
+
+	snprintf(obj, sizeof(obj), "wpa_supplicant.%s", ifn);
+	snprintf(json, sizeof(json), "{\"command\":\"%s\"}", cmd);
+	return mesh_run_capture(argv, out, outlen);
+}
+
+/*
+ * A 2.4 GHz mesh only uses 40 MHz when its wpa_supplicant network has
+ * noscan set. OpenWrt 25.12 passes the radio's noscan option to hostapd
+ * (the APs) but not to the mesh network, so the mesh falls back to
+ * 20 MHz. When the radio has noscan='1' and the mesh is at 20 MHz, set
+ * noscan on the running network and rejoin. Runtime only, nothing is
+ * written to flash; a wifi reload resets it and the next pass redoes it.
+ */
+int mesh_fix_mesh_noscan(struct mesh_ctx *ctx)
+{
+	DIR *d;
+	struct dirent *e;
+
+	d = opendir("/sys/class/net");
+	if (!d)
+		return 0;
+	while ((e = readdir(d)) != NULL) {
+		char ifn[64], key[96], val[16] = "", out[1024], cmd[64], id[16] = "";
+		char *info[] = { "iw", "dev", ifn, "info", NULL };
+		char *p, *cur;
+		int radio;
+
+		if (strncmp(e->d_name, ctx->mesh_basename, strlen(ctx->mesh_basename)))
+			continue;
+		snprintf(ifn, sizeof(ifn), "%s", e->d_name);
+		p = ifn + strlen(ctx->mesh_basename);
+		if (*p != 'r' || sscanf(p + 1, "%d", &radio) != 1)
+			continue;
+
+		snprintf(key, sizeof(key), "wireless.radio%d.noscan", radio);
+		if (mesh_uci_get(key, val, sizeof(val)) != 0 || strcmp(val, "1"))
+			continue;
+		snprintf(key, sizeof(key), "wireless.radio%d.htmode", radio);
+		if (mesh_uci_get(key, val, sizeof(val)) != 0 || !strstr(val, "40"))
+			continue;
+
+		/* only a 2.4 GHz mesh running at 20 MHz needs it */
+		if (mesh_run_capture(info, out, sizeof(out)) != 0)
+			continue;
+		p = strstr(out, "channel ");
+		if (!p || !strstr(p, "(24") || !strstr(p, "width: 20 MHz"))
+			continue;
+
+		/* The current network's id. ubus returns the table as one JSON
+		 * string, with each row starting after an escaped newline:
+		 * "...flags\n3\t<ssid>\tany\t[CURRENT]". */
+		if (supplicant_control(ifn, "LIST_NETWORKS", out, sizeof(out)) != 0)
+			continue;
+		cur = strstr(out, "[CURRENT]");
+		if (!cur)
+			continue;
+		for (p = cur; p > out + 1 && !(p[-2] == '\\' && p[-1] == 'n'); p--)
+			;
+		sscanf(p, "%15[0-9]", id);
+		if (!id[0])
+			continue;
+
+		snprintf(cmd, sizeof(cmd), "GET_NETWORK %s noscan", id);
+		if (supplicant_control(ifn, cmd, out, sizeof(out)) != 0 ||
+		    !strstr(out, "\"0\""))
+			continue;
+
+		mesh_log_notice(ctx, "%s is at 20 MHz without noscan, setting noscan and rejoining for 40 MHz",
+				ifn);
+		snprintf(cmd, sizeof(cmd), "SET_NETWORK %s noscan 1", id);
+		supplicant_control(ifn, cmd, out, sizeof(out));
+		supplicant_control(ifn, "DISCONNECT", out, sizeof(out));
+		sleep(2);
+		supplicant_control(ifn, "RECONNECT", out, sizeof(out));
+	}
+	closedir(d);
 	return 0;
 }
