@@ -60,7 +60,10 @@ config mesh11sd 'setup'
 	#  	A nat routed ipv4 lan is created with its own ipv4 subnet.
 	#  	By default a nat66 routed ipv6 lan is created with its own ipv6 subnet.
 	#
-	#   	Depending on the upstream ISP, possible optional modes are prefix_delegation, relay and nat66, settable using the cpe_mode option (see below)
+	#  	The mesh backhaul is the wan, on bridge br-wan, and gets its ipv4 address by dhcp.
+	#  	VTunnel access points are bridged to the portal over the vxlan; the CPE's own vtunlan has no address.
+	#
+	#   	Depending on the upstream ISP, possible ipv6 modes are nat66 and prefix_delegation, settable using the cpe_mode option (see below)
 	#
 	#  4  - Mesh Bridge Portal (MBP) node. Force Bridge vxlan trunk portal node
 	#	This mode should be used if a bridged connection to the upstream ISP router is required (ie bridged/no-nat ipv4/ipv6 ).
@@ -341,7 +344,7 @@ config mesh11sd 'setup'
 	#
 	# Enables point to multi-point vxlan tunneling from portal to all compatible nodes
 	#
-	# Default: 1 (enabled) unless portal_detect is set to 3 (cpe mode), in which case the default is 0 (disabled)
+	# Default: 1 (enabled)
 	#
 	# To disable, set to zero:
 	#option vtun_enable '0'
@@ -691,13 +694,13 @@ config mesh11sd 'setup'
 	# Sets the cpe ipv6 mode
 	# Applicable only when portal_detect is set to 3
 	#
-	# Possible modes are prefix_delegation, relay and nat66
+	# Possible modes are nat66 and prefix_delegation (or pd)
 	#
 	# Prefix Delegation works with all client devices, including Android,
 	#	but the ISP needs to provide a prefix large enough to delegate a /64 subnet to every cpe mesh node.
 	#	Exhausting available delegations is a danger.
 	#
-	# Relay does not require any prefix delegation, but some versions of Android devices will detect the relay and turn off the device's interface within ~60 seconds - because - Google.
+	# Relay mode is not supported, as Android turns off ipv6 behind a relay. Any other value is treated as nat66.
 	#
 	# NAT66 will work with all types of client devices, including Android, so is used as the default.
 	# Default: nat66

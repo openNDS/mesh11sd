@@ -139,9 +139,13 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 			mesh_run_capture(nr, NULL, 0);
 			mesh_network_mark_applied();
 		}
-		/* v7 restore_ipv4: ensure calculated portal address is on the bridge */
-		if (ctx->portal_detect != 5 && ctx->portal_use_default_ipv4 == 0 &&
-		    !mesh_predicted_peer(ctx))
+		/* CPE: br-wan exists only after the restart; use it from now on */
+		if (ctx->portal_detect == 3)
+			mesh_refresh_bridgemac(ctx);
+		/* v7 restore_ipv4: ensure calculated portal address is on the bridge.
+		 * Not on a CPE: its mesh bridge is wan, which uses DHCP. */
+		if (ctx->portal_detect != 3 && ctx->portal_detect != 5 &&
+		    ctx->portal_use_default_ipv4 == 0 && !mesh_predicted_peer(ctx))
 			mesh_restore_ipv4(ctx);
 		mesh_move_ethernet_to_vxlan_bridge(ctx);
 		mesh_set_bridge_mac_addresses(ctx);
@@ -314,6 +318,10 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 			if (!ctx->firstloop)
 				mesh_check_portal(ctx);
 		}
+		if (ctx->portal_detect == 3 &&
+		    (ctx->auto_config != 0 ||
+		     access(MESH11SD_TMPDIR "/auto_config_test", F_OK) == 0))
+			mesh_cpe_conf(ctx);
 
 		if (ctx->vtun_enable) {
 			mesh_check_vtunnel(ctx);
@@ -379,6 +387,7 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 
 		mesh_block_bridge_loops(ctx);
 		mesh_pin_active_portal_arp(ctx);
+		mesh_cpe_discovery_rule(ctx);
 
 		mesh_rootmode(ctx);
 		mesh_mobility_apply_phywide(ctx);

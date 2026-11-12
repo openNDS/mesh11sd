@@ -849,7 +849,13 @@ int mesh_refresh_bridgemac(struct mesh_ctx *ctx)
 	char content[256];
 	char *argv[] = { "ip", "link", "show", "dev", device, NULL };
 
-	if (mesh_uci_get("network.lan.device", device, sizeof(device)) != 0 || !device[0]) {
+	if (ctx->portal_detect == 3) {
+		/* CPE: the mesh bridge is the wan device, br-wan (v7) */
+		char key[96];
+		snprintf(key, sizeof(key), "network.%s.device", ctx->auto_mesh_network);
+		if (mesh_uci_get(key, device, sizeof(device)) != 0 || !device[0])
+			snprintf(device, sizeof(device), "br-wan");
+	} else if (mesh_uci_get("network.lan.device", device, sizeof(device)) != 0 || !device[0]) {
 		char key[96];
 		snprintf(key, sizeof(key), "network.%s.device", ctx->auto_mesh_network);
 		if (mesh_uci_get(key, device, sizeof(device)) != 0 || !device[0])

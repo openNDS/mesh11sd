@@ -338,6 +338,12 @@ int mesh_get_portal_state(struct mesh_ctx *ctx)
 		return 0;
 	}
 	if (ctx->portal_detect == 3) {
+		/* v7 detect_cpe_upstream: default route via the mesh on br-wan */
+		if (mesh_detect_cpe_upstream(ctx) == 0) {
+			snprintf(ctx->is_portal, sizeof(ctx->is_portal), "detected");
+			mesh_log_debug(ctx, "Node has upstream gateway(s), zone [ %s ], [ %s ], [ %s ]",
+				       ctx->up_zone, ctx->default_ipv6_gw, ctx->default_ipv4_gw);
+		}
 		snprintf(ctx->detected_state, sizeof(ctx->detected_state), "peer");
 		mesh_log_debug(ctx, "CPE mode...");
 		write_is_portal(ctx);
@@ -892,8 +898,13 @@ int mesh_check_portal(struct mesh_ctx *ctx)
 
 	mesh_get_portal_state(ctx);
 
-	if (ctx->portal_detect == 3 || ctx->portal_detect == 5) {
-		/* CPE/TPN special-cased earlier in v7; peer-like */
+	if (ctx->portal_detect == 3) {
+		/* CPE: always a peer; v7 runs the portal watchdog for it */
+		mesh_portal_watchdog(ctx);
+		return 0;
+	}
+	if (ctx->portal_detect == 5) {
+		/* TPN special-cased earlier in v7; peer-like */
 		return 0;
 	}
 	if (ctx->portal_detect == 4)
@@ -923,7 +934,7 @@ int mesh_check_portal(struct mesh_ctx *ctx)
 
 int mesh_portal_watchdog(struct mesh_ctx *ctx)
 {
-	int auto_detect = (ctx->portal_detect == 1);
+	int auto_detect = (ctx->portal_detect == 1 || ctx->portal_detect == 3);
 
 	if (strcmp(ctx->detected_state, "portal") != 0 && auto_detect) {
 		if (ctx->portal_detect_threshold > ctx->failcount) {

@@ -436,8 +436,12 @@ int mesh_apply_portal_ipv4(struct mesh_ctx *ctx)
 			       ctx->portal_use_default_ipv4);
 		return 0;
 	}
-	snprintf(net, sizeof(net), "%s",
-		 ctx->auto_mesh_network[0] ? ctx->auto_mesh_network : "lan");
+	/* A CPE's mesh network is wan; its own routed subnet is lan (v7). */
+	if (ctx->portal_detect == 3)
+		snprintf(net, sizeof(net), "lan");
+	else
+		snprintf(net, sizeof(net), "%s",
+			 ctx->auto_mesh_network[0] ? ctx->auto_mesh_network : "lan");
 	if (ctx->portal_detect == 3) {
 		if (!ctx->factory_mac[0])
 			mesh_get_factory_mac(ctx, ctx->factory_mac, sizeof(ctx->factory_mac));
@@ -477,14 +481,17 @@ int mesh_apply_portal_ipv4(struct mesh_ctx *ctx)
 	/* Atomic del+set: stock OpenWrt uses list ipaddr '192.168.1.1/24';
 	 * v7 does set network.lan.ipaddr=... (no delete). del+set converts
 	 * list→option cleanly so netifd sees a single non-CIDR address. */
+	/* A CPE sets wan6 itself for its cpe_mode (mesh_cpe_stage_network). */
 	snprintf(batch, sizeof(batch),
 		 "del network.%s.ipaddr\n"
 		 "set network.%s.ipaddr='%s'\n"
 		 "set network.%s.netmask='255.255.255.0'\n"
 		 "set network.%s.ip6assign='64'\n"
+		 "%s",
+		 net, net, newip, net, net,
+		 ctx->portal_detect == 3 ? "" :
 		 "set network.wan6.reqprefix='auto'\n"
-		 "set network.wan6.reqaddress='try'\n",
-		 net, net, newip, net, net);
+		 "set network.wan6.reqaddress='try'\n");
 	{
 		char *argv[] = { "uci", "batch", NULL };
 		int pipefd[2];

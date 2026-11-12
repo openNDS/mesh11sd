@@ -826,6 +826,8 @@ void mesh_apply_autostartup_uci(struct mesh_ctx *ctx)
 	mesh_uci_batch_line("set dhcp.lan.ra_lifetime='3600'");
 	mesh_uci_batch_line("set dhcp.lan.ra_mininterval='20'");
 	mesh_uci_batch_line("set dhcp.lan.ra_maxinterval='60'");
+	/* CPE: br-wan, wan dhcp, lan server, NAT/NAT66 (mode 3 only) */
+	mesh_cpe_stage_network(ctx);
 }
 
 /* ---- portal configuration build (decisions 3 and 4) ---- */

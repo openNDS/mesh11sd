@@ -540,10 +540,20 @@ int mesh_ctx_load_setup(struct mesh_ctx *ctx)
 		ctx->connect_show_all = v;
 	}
 	mesh_log_info(ctx, "option connect_show_all [ %d ]", ctx->connect_show_all);
-	if (mesh_uci_get("mesh11sd.setup.cpe_mode", buf, sizeof(buf)) == 0 && buf[0])
-		snprintf(ctx->cpe_mode, sizeof(ctx->cpe_mode), "%s", buf);
-	else
-		snprintf(ctx->cpe_mode, sizeof(ctx->cpe_mode), "auto");
+	/* CPE IPv6: nat66 (default) or pd (prefix delegation). v7 relay mode
+	 * is not supported: Android drops IPv6 behind an RA/NDP relay. */
+	if (mesh_uci_get("mesh11sd.setup.cpe_mode", buf, sizeof(buf)) != 0 || !buf[0])
+		snprintf(buf, sizeof(buf), "nat66");
+	if (!strcmp(buf, "prefix_delegation"))
+		snprintf(buf, sizeof(buf), "pd");
+	if (strcmp(buf, "nat66") != 0 && strcmp(buf, "pd") != 0) {
+		if (ctx->portal_detect == 3)
+			mesh_log_warn(ctx, "option cpe_mode [ %s ] is not supported, using nat66", buf);
+		snprintf(buf, sizeof(buf), "nat66");
+	}
+	snprintf(ctx->cpe_mode, sizeof(ctx->cpe_mode), "%s", buf);
+	if (ctx->portal_detect == 3)
+		mesh_log_info(ctx, "option cpe_mode [ %s ]", ctx->cpe_mode);
 	if (!ctx->mesh_backhaul_led[0])
 		snprintf(ctx->mesh_backhaul_led, sizeof(ctx->mesh_backhaul_led), "auto");
 	ctx->mesh_driver[0] = '\0';

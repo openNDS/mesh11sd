@@ -1057,8 +1057,16 @@ int mesh_vtunnel_preconfigure(struct mesh_ctx *ctx)
 
 	if (!ctx->vtun_enable || ctx->commit_all)
 		return 0;
-	if (mesh_uci_get("network.vtunlan", cur, sizeof(cur)) == 0 && cur[0])
+	if (mesh_uci_get("network.vtunlan", cur, sizeof(cur)) == 0 && cur[0]) {
+		/* A CPE's br-tun has no address, even if an earlier role
+		 * left a committed static vtunlan on flash. */
+		if (ctx->portal_detect == 3) {
+			mesh_uci_batch_line("set network.vtunlan.proto='none'");
+			mesh_uci_batch_line("delete network.vtunlan.defaultroute");
+			mesh_uci_batch_line("delete network.vtunlan.ip6assign");
+		}
 		return 0;
+	}
 
 	snprintf(vxname, sizeof(vxname), "vxlan%s",
 		 ctx->tun_id[0] ? ctx->tun_id : "69");
@@ -1071,7 +1079,12 @@ int mesh_vtunnel_preconfigure(struct mesh_ctx *ctx)
 
 	/* The committed config is the portal config, so start as a portal.
 	 * The peer handoff switches proto to dhcp and reloads anyway. */
-	proto = (ctx->portal_detect == 5) ? "dhcp" : "static";
+	if (ctx->portal_detect == 5)
+		proto = "dhcp";
+	else if (ctx->portal_detect == 3)
+		proto = "none";	/* CPE: br-tun only bridges APs to the vxlan */
+	else
+		proto = "static";
 	vtunnel_uci_network(ctx, vxname, brname, proto);
 	mesh_log_debug(ctx, "vtunnel configuration written before network restart");
 	return 0;
@@ -1190,7 +1203,7 @@ int mesh_check_vtunnel(struct mesh_ctx *ctx)
 	if (!recreate) {
 		if (ctx->portal_detect == 0 ||
 		    (ctx->portal_detect == 1 && !strcmp(ctx->detected_state, "portal")) ||
-		    ctx->portal_detect == 3 || ctx->portal_detect == 4)
+		    ctx->portal_detect == 4)
 			proto = "static";
 		else if (ctx->portal_detect == 5)
 			proto = "dhcp";

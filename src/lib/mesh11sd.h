@@ -237,6 +237,11 @@ int mesh_check_odhcpd(struct mesh_ctx *ctx);
 int mesh_ccpy_setup(struct mesh_ctx *ctx);
 int mesh_get_peers(struct mesh_ctx *ctx);
 int mesh_detect_mbp_upstream(struct mesh_ctx *ctx);
+int mesh_detect_cpe_upstream(struct mesh_ctx *ctx);
+/* cpe.c: portal_detect 3 */
+int mesh_cpe_stage_network(struct mesh_ctx *ctx);
+int mesh_cpe_conf(struct mesh_ctx *ctx);
+int mesh_cpe_discovery_rule(struct mesh_ctx *ctx);
 int mesh_detect_l3_upstream(struct mesh_ctx *ctx);
 int mesh_update_known_portals_from_ras(struct mesh_ctx *ctx);
 int mesh_calc_airtime_metric(struct mesh_ctx *ctx, const char *peer_mac,
