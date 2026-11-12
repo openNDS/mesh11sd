@@ -669,6 +669,7 @@ int mesh_create_vxlan_if(struct mesh_ctx *ctx)
 	char vxmac[32] = "";
 	char linklocal[64] = "";
 	char group[64];
+	char subnet[8] = "";
 	char vni_s[16];
 	char out[512], status[16];
 	char conf[320];
@@ -686,8 +687,26 @@ int mesh_create_vxlan_if(struct mesh_ctx *ctx)
 	if (mesh_run_capture(show, out, sizeof(out)) == 0)
 		return 0; /* already exists */
 
-	mesh_set_ula_prefix(ctx, "get");
-	vni = ctx->ula_subnet[0] ? (unsigned)strtoul(ctx->ula_subnet, NULL, 16) : 69;
+	/* Every node on a portal must use the portal's ULA subnet for both
+	 * the VNI and the group, or the tunnel drops the traffic. A peer
+	 * takes it from the portal ULA; the portal uses its own. A peer that
+	 * has not found its portal yet waits, so the vxlan is made once with
+	 * the right values instead of being made and then remade. */
+	if (ctx->portal_ula[0]) {
+		char base[32];
+		if (mesh_ula_parts_from_addr(ctx->portal_ula, base, sizeof(base),
+					     subnet, sizeof(subnet)) != 0)
+			subnet[0] = '\0';
+	} else if (!strcmp(ctx->detected_state, "portal") || ctx->portal_detect == 0) {
+		mesh_set_ula_prefix(ctx, "get");
+		snprintf(subnet, sizeof(subnet), "%s", ctx->ula_subnet);
+	}
+	if (!subnet[0]) {
+		mesh_log_debug(ctx, "create_vxlan_if: waiting for the portal before making %s",
+			       vxname);
+		return 0;
+	}
+	vni = (unsigned)strtoul(subnet, NULL, 16);
 	if (!vni)
 		vni = 69;
 	snprintf(vni_s, sizeof(vni_s), "%u", vni);
@@ -704,12 +723,10 @@ int mesh_create_vxlan_if(struct mesh_ctx *ctx)
 		snprintf(device, sizeof(device), "br-%s",
 			 ctx->auto_mesh_network[0] ? ctx->auto_mesh_network : "lan");
 
-	/* group: override from update_vxlan, else ff02::$tun_id (NOT ula_subnet) */
 	if (ctx->vxlan_group[0])
 		snprintf(group, sizeof(group), "%s", ctx->vxlan_group);
 	else
-		snprintf(group, sizeof(group), "ff02::%s",
-			 ctx->tun_id[0] ? ctx->tun_id : "69");
+		snprintf(group, sizeof(group), "ff02::%s", subnet);
 
 	/* link-local on underlay bridge — required by ip -6 vxlan */
 	{
