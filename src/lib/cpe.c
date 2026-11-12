@@ -44,6 +44,26 @@ static int find_wan_zone(char *sect, size_t len)
 	return -1;
 }
 
+/* Put every wifi-iface in mesh mode on the given network. */
+static void stage_mesh_vif_network(const char *network)
+{
+	char buf[1024], line[160];
+	char *p, *tok, *dot;
+
+	if (mesh_uci_show_filter("wireless", ".mode='mesh'", buf, sizeof(buf)) != 0)
+		return;
+	p = buf;
+	while ((tok = strsep(&p, " ")) != NULL) {
+		/* tok is wireless.<section>.mode='mesh' */
+		dot = strstr(tok, ".mode=");
+		if (!dot || strncmp(tok, "wireless.", 9) != 0)
+			continue;
+		*dot = '\0';
+		snprintf(line, sizeof(line), "set %s.network='%s'", tok, network);
+		mesh_uci_batch_line(line);
+	}
+}
+
 /* Delete a dhcp option if it is set to relay. */
 static void drop_relay(const char *key)
 {
@@ -111,6 +131,13 @@ int mesh_cpe_stage_network(struct mesh_ctx *ctx)
 		stage("del_list network.cpewan.ports='%s'", wanif);
 		stage("add_list network.cpewan.ports='%s'", wanif);
 	}
+
+	/*
+	 * The mesh vif must be on wan. auto_config sets this, but it is
+	 * skipped when the mesh wifi-ifaces are already in flash (committed
+	 * from an earlier role), so stage it for each mesh wifi-iface.
+	 */
+	stage_mesh_vif_network(ctx->auto_mesh_network);
 
 	/* wan: IPv4 by DHCP from the mesh backhaul */
 	mesh_uci_batch_line("set network.wan.device='" CPE_BRIDGE "'");
