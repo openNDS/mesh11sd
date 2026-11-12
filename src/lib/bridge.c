@@ -1191,26 +1191,23 @@ int mesh_update_vxlan_for_active_portal(struct mesh_ctx *ctx)
 		 ctx->tun_id[0] ? ctx->tun_id : "69");
 	show[3] = vxname;
 
-	mesh_get_portal_ula(ctx, "get");
-	if (!ctx->portal_ula[0]) {
-		mesh_create_vxlan_if(ctx);
+	if (mesh_get_portal_ula(ctx, "get") != 0) {
+		/* No reachable portal: keep the current vxlan as it is, or
+		 * let create_vxlan_if wait for a portal if there is none. */
+		if (!ctx->portal_ula[0])
+			mesh_create_vxlan_if(ctx);
 		return 0;
 	}
-	if (!ctx->ula_subnet[0]) {
-		/* 4th hextet of portal_ula */
-		char *p = ctx->portal_ula;
-		int col = 0;
-		char hextet[8] = "";
-		while (*p && col < 3) {
-			if (*p++ == ':')
-				col++;
-		}
-		sscanf(p, "%7[^:]", hextet);
-		if (hextet[0])
-			snprintf(ctx->ula_subnet, sizeof(ctx->ula_subnet), "%s", hextet);
+	/* The group is always the portal's 4th hextet. ctx->ula_subnet may
+	 * hold this node's own hint, which would split the tunnel. */
+	{
+		char base[32], hextet[8] = "";
+
+		if (mesh_ula_parts_from_addr(ctx->portal_ula, base, sizeof(base),
+					     hextet, sizeof(hextet)) != 0 || !hextet[0])
+			return 0;
+		snprintf(new_group, sizeof(new_group), "ff02::%s", hextet);
 	}
-	snprintf(new_group, sizeof(new_group), "ff02::%s",
-		 ctx->ula_subnet[0] ? ctx->ula_subnet : (ctx->tun_id[0] ? ctx->tun_id : "69"));
 
 	if (access(MESH11SD_TMPDIR "/vxlan_conf", R_OK) == 0) {
 		FILE *f = fopen(MESH11SD_TMPDIR "/vxlan_conf", "r");

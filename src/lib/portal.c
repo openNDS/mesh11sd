@@ -212,6 +212,15 @@ int mesh_get_portal_ula(struct mesh_ctx *ctx, const char *mode)
 		return 0;
 	}
 
+	/* Each probe of a dead portal costs up to 20 s per candidate, and
+	 * many steps ask for the portal in one pass. Once discovery has
+	 * failed in this pass, report the failure without probing again,
+	 * so the loop gets back to the upstream check in good time. */
+	if (ctx->loop_seq && ctx->portal_fail_seq == ctx->loop_seq) {
+		ctx->link_to_portal = 1;
+		return 1;
+	}
+
 	if (!strcmp(m, "get") && access(MESH11SD_TMPDIR "/active_portal", R_OK) == 0) {
 		FILE *f = fopen(MESH11SD_TMPDIR "/active_portal", "r");
 		char line[256];
@@ -251,8 +260,12 @@ int mesh_get_portal_ula(struct mesh_ctx *ctx, const char *mode)
 		snprintf(m, sizeof(m), "discover");
 	}
 
-	if (!strcmp(m, "discover"))
-		return mesh_portal_ula_discover(ctx);
+	if (!strcmp(m, "discover")) {
+		if (mesh_portal_ula_discover(ctx) == 0)
+			return 0;
+		ctx->portal_fail_seq = ctx->loop_seq;
+		return 1;
+	}
 	return 1;
 }
 

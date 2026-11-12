@@ -83,6 +83,10 @@ struct mesh_ctx {
 	char ula_vxsubnet[8];
 	char portal_type[16];
 	int link_to_portal;
+	/* Main-loop pass counter, and the pass in which portal discovery
+	 * last failed, so a dead portal is probed once per pass. */
+	unsigned int loop_seq;
+	unsigned int portal_fail_seq;
 	int portal_metric;
 	int portal_hops;
 	char portal_mac[32];

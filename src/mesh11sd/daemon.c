@@ -175,6 +175,7 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 		int auto_config_done;
 		char buf[64];
 
+		ctx->loop_seq++;
 		if (mesh_daemon_stop) {
 			mesh_log_notice(ctx, "Mesh11sd is shutting down");
 			break;
