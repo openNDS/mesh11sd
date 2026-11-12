@@ -506,8 +506,11 @@ void mesh_peer_stage_uci(struct mesh_ctx *ctx)
 	char cur[64] = "";
 
 	/* startup may have written vtunlan before the vxlan exists */
-	if (mesh_uci_get("network.vtunlan", cur, sizeof(cur)) == 0 && cur[0])
+	if (mesh_uci_get("network.vtunlan", cur, sizeof(cur)) == 0 && cur[0]) {
 		mesh_uci_batch_line("set network.vtunlan.proto='dhcp'");
+		/* the default route goes via lan, straight over the mesh */
+		mesh_uci_batch_line("set network.vtunlan.defaultroute='0'");
+	}
 
 	/* v7: proto dhcp, never none */
 	snprintf(setl, sizeof(setl), "set network.%s.proto='dhcp'", net);
@@ -671,8 +674,10 @@ static void portal_handoff(struct mesh_ctx *ctx)
 		if (mesh_uci_get("network.vtunlan", cur, sizeof(cur)) == 0 && cur[0])
 			vxlan_pending = 0;
 	}
-	if (vxlan_up || !vxlan_pending)
+	if (vxlan_up || !vxlan_pending) {
 		mesh_uci_batch_line("set network.vtunlan.proto='static'");
+		mesh_uci_batch_line("delete network.vtunlan.defaultroute");
+	}
 
 	snprintf(setl, sizeof(setl), "set network.%s.proto='static'", ctx->auto_mesh_network);
 	mesh_uci_batch_line(setl);

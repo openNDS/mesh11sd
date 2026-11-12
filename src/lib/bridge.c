@@ -859,6 +859,18 @@ int mesh_create_vxlan_if(struct mesh_ctx *ctx)
 		mesh_uci_batch_line("del_list dhcp.vtunlan.ra_flags='other-config'");
 		mesh_uci_batch_line("del_list dhcp.vtunlan.ra_flags='none'");
 		mesh_uci_batch_line("add_list dhcp.vtunlan.ra_flags='none'");
+		/* DHCP on vtunlan started before the vxlan joined the bridge
+		 * and udhcpc may have given up, so ask again now. */
+		if (fork() == 0) {
+			char *ifup[] = { "ifup", "vtunlan", NULL };
+			int dn = open("/dev/null", O_RDWR);
+			if (dn >= 0) {
+				dup2(dn, 0); dup2(dn, 1); dup2(dn, 2);
+				if (dn > 2) close(dn);
+			}
+			execvp(ifup[0], ifup);
+			_exit(127);
+		}
 	}
 	mesh_log_info(ctx, "vxlan_if created");
 	/* non-blocking dnsmasq restart (v7) */
@@ -993,6 +1005,10 @@ static void vtunnel_uci_network(struct mesh_ctx *ctx, const char *vxname,
 	mesh_uci_batch_line(setl);
 	snprintf(setl, sizeof(setl), "set network.vtunlan.proto='%s'", proto);
 	mesh_uci_batch_line(setl);
+	if (!strcmp(proto, "dhcp"))
+		mesh_uci_batch_line("set network.vtunlan.defaultroute='0'");
+	else
+		mesh_uci_batch_line("delete network.vtunlan.defaultroute");
 	mesh_uci_batch_line("set network.vtunlan.ip6assign='64'");
 	snprintf(setl, sizeof(setl), "set network.vtunlan.ip6hint='%s'",
 		 ctx->ula_vxsubnet);
