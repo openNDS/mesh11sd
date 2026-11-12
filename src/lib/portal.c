@@ -507,9 +507,17 @@ void mesh_peer_stage_uci(struct mesh_ctx *ctx)
 
 	/* startup may have written vtunlan before the vxlan exists */
 	if (mesh_uci_get("network.vtunlan", cur, sizeof(cur)) == 0 && cur[0]) {
-		mesh_uci_batch_line("set network.vtunlan.proto='dhcp'");
-		/* the default route goes via lan, straight over the mesh */
-		mesh_uci_batch_line("set network.vtunlan.defaultroute='0'");
+		/* A peer's br-tun only bridges the vxlan to its APs, so it
+		 * needs no address. The trunk peer (portal_detect 5) keeps
+		 * dhcp until that mode has been tested. */
+		if (ctx->portal_detect == 5) {
+			mesh_uci_batch_line("set network.vtunlan.proto='dhcp'");
+			/* the default route goes via lan, straight over the mesh */
+			mesh_uci_batch_line("set network.vtunlan.defaultroute='0'");
+		} else {
+			mesh_uci_batch_line("set network.vtunlan.proto='none'");
+			mesh_uci_batch_line("delete network.vtunlan.defaultroute");
+		}
 		/* no prefix from this peer's own ULA on br-tun */
 		mesh_uci_batch_line("delete network.vtunlan.ip6assign");
 	}
