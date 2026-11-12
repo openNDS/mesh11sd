@@ -847,7 +847,7 @@ int mesh_refresh_bridgemac(struct mesh_ctx *ctx)
 	char status[16];
 	char out[1024];
 	char content[256];
-	char *argv[] = { "ip", "link", NULL };
+	char *argv[] = { "ip", "link", "show", "dev", device, NULL };
 
 	if (mesh_uci_get("network.lan.device", device, sizeof(device)) != 0 || !device[0]) {
 		char key[96];
