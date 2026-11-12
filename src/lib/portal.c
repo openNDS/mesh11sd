@@ -455,93 +455,134 @@ int mesh_restore_ipv4(struct mesh_ctx *ctx)
 	return 0;
 }
 
-static void peer_handoff(struct mesh_ctx *ctx)
+/*
+ * Peer values in network and dhcp, staged uncommitted. Used by the peer
+ * handoff and, when the last role was peer, before the startup network
+ * restart so the handoff finds nothing to reload.
+ */
+void mesh_peer_stage_uci(struct mesh_ctx *ctx)
 {
+	const char *net = ctx->auto_mesh_network;
 	char setl[192];
-	char path[128];
-	FILE *f;
+	char cur[64] = "";
 
-	mesh_log_debug(ctx, "This meshnode is NOT a portal");
-	snprintf(path, sizeof(path), "/var/run/udhcpc-%s.pid", ctx->device);
-	if ((f = fopen(path, "r"))) {
-		int pid = 0;
-		if (fscanf(f, "%d", &pid) == 1 && pid > 0)
-			kill(pid, SIGTERM);
-		fclose(f);
-	}
-	{
-		char *argv[] = { "ip", "route", "flush", "default", NULL };
-		mesh_run_capture(argv, NULL, 0);
-	}
+	/* startup may have written vtunlan before the vxlan exists */
+	if (mesh_uci_get("network.vtunlan", cur, sizeof(cur)) == 0 && cur[0])
+		mesh_uci_batch_line("set network.vtunlan.proto='dhcp'");
 
-	/* v7: if vxlan is up, mark vtunlan for dhcp and tear it down on peer flip */
-	{
-		char vxname[32], out[128];
-		char *show[] = { "ip", "link", "show", vxname, NULL };
-		snprintf(vxname, sizeof(vxname), "vxlan%s",
-			 ctx->tun_id[0] ? ctx->tun_id : "69");
-		show[3] = vxname;
-		if (mesh_run_capture(show, out, sizeof(out)) != 0) {
-			/* vxlan not up yet, but startup may have written vtunlan */
-			char cur[64] = "";
-			if (mesh_uci_get("network.vtunlan", cur, sizeof(cur)) == 0 && cur[0])
-				mesh_uci_batch_line("set network.vtunlan.proto='dhcp'");
-		} else {
-			mesh_uci_batch_line("set network.vtunlan.proto='dhcp'");
-			{
-				char *d[] = { "ip", "link", "set", vxname, "down", NULL };
-				mesh_run_capture(d, NULL, 0);
-			}
-			{
-				char *d[] = { "ip", "link", "del", vxname, NULL };
-				mesh_run_capture(d, NULL, 0);
-			}
-		}
-	}
-
-	/* v7: proto dhcp — never none */
-	snprintf(setl, sizeof(setl), "set network.%s.proto='dhcp'", ctx->auto_mesh_network);
+	/* v7: proto dhcp, never none */
+	snprintf(setl, sizeof(setl), "set network.%s.proto='dhcp'", net);
 	mesh_uci_batch_line(setl);
-
-	if (!ctx->portal_ula[0])
-		mesh_get_portal_ula(ctx, "get");
 
 	mesh_uci_batch_line("set dhcp.@dnsmasq[0].authoritative='0'");
-	snprintf(setl, sizeof(setl), "set dhcp.%s.ignore='1'", ctx->auto_mesh_network);
+	snprintf(setl, sizeof(setl), "set dhcp.%s.ignore='1'", net);
 	mesh_uci_batch_line(setl);
-	snprintf(setl, sizeof(setl), "set dhcp.%s.force='0'", ctx->auto_mesh_network);
+	snprintf(setl, sizeof(setl), "set dhcp.%s.force='0'", net);
 	mesh_uci_batch_line(setl);
-	snprintf(setl, sizeof(setl), "set dhcp.%s.ra_default='2'", ctx->auto_mesh_network);
+	snprintf(setl, sizeof(setl), "set dhcp.%s.ra_default='2'", net);
 	mesh_uci_batch_line(setl);
-	snprintf(setl, sizeof(setl), "set dhcp.%s.dhcpv6='disabled'", ctx->auto_mesh_network);
+	snprintf(setl, sizeof(setl), "set dhcp.%s.dhcpv6='disabled'", net);
 	mesh_uci_batch_line(setl);
-	snprintf(setl, sizeof(setl), "set dhcp.%s.dhcpv4='disabled'", ctx->auto_mesh_network);
+	snprintf(setl, sizeof(setl), "set dhcp.%s.dhcpv4='disabled'", net);
 	mesh_uci_batch_line(setl);
-	snprintf(setl, sizeof(setl), "set dhcp.%s.ra='disabled'", ctx->auto_mesh_network);
+	snprintf(setl, sizeof(setl), "set dhcp.%s.ra='disabled'", net);
 	mesh_uci_batch_line(setl);
-	snprintf(setl, sizeof(setl),
-		 "del_list dhcp.%s.ra_flags='managed-config'", ctx->auto_mesh_network);
+	snprintf(setl, sizeof(setl), "del_list dhcp.%s.ra_flags='managed-config'", net);
 	mesh_uci_batch_line(setl);
-	snprintf(setl, sizeof(setl),
-		 "del_list dhcp.%s.ra_flags='other-config'", ctx->auto_mesh_network);
+	snprintf(setl, sizeof(setl), "del_list dhcp.%s.ra_flags='other-config'", net);
 	mesh_uci_batch_line(setl);
-	snprintf(setl, sizeof(setl), "add_list dhcp.%s.ra_flags='none'", ctx->auto_mesh_network);
+	/* del first so a second staging does not add it twice */
+	snprintf(setl, sizeof(setl), "del_list dhcp.%s.ra_flags='none'", net);
+	mesh_uci_batch_line(setl);
+	snprintf(setl, sizeof(setl), "add_list dhcp.%s.ra_flags='none'", net);
 	mesh_uci_batch_line(setl);
 	mesh_uci_batch_line("set dhcp.@dnsmasq[0].rebind_protection='0'");
 
 	mesh_set_ula_prefix(ctx, "revert");
 	/* v7 disables RA; also drop ip6assign so netifd/odhcpd stop holding
 	 * and advertising the old portal prefix after reload. */
-	snprintf(setl, sizeof(setl), "del network.%s.ip6assign", ctx->auto_mesh_network);
+	snprintf(setl, sizeof(setl), "del network.%s.ip6assign", net);
 	mesh_uci_batch_line(setl);
+}
+
+/*
+ * Remember the role across reboots (portal_detect 1 and 4 only), so the
+ * next boot can stage it before the startup restart. Committed only when
+ * it changes; unset means portal, so a portal never writes it.
+ */
+static void note_role(struct mesh_ctx *ctx, const char *role)
+{
+	const char *was = ctx->last_role[0] ? ctx->last_role : "portal";
+
+	if (ctx->portal_detect != 1 && ctx->portal_detect != 4)
+		return;
+	if (!strcmp(was, role))
+		return;
+	if (mesh_uci_commit_option("mesh11sd", "mesh11sd.setup.last_role", role) == 0) {
+		snprintf(ctx->last_role, sizeof(ctx->last_role), "%s", role);
+		mesh_log_notice(ctx, "Role [ %s ] saved for the next boot", role);
+	}
+}
+
+int mesh_predicted_peer(struct mesh_ctx *ctx)
+{
+	return (ctx->portal_detect == 1 || ctx->portal_detect == 4) &&
+	       !ctx->commit_all && !strcmp(ctx->last_role, "peer");
+}
+
+static void peer_handoff(struct mesh_ctx *ctx)
+{
+	char key[96], proto[32] = "";
+	char path[128];
+	FILE *f;
+	int staged;
+
+	mesh_log_debug(ctx, "This meshnode is NOT a portal");
+
+	/* Already up as a peer from boot (last_role): leave netifd's dhcp
+	 * client, the default route and the vxlan alone. */
+	snprintf(key, sizeof(key), "network.%s.proto", ctx->auto_mesh_network);
+	mesh_uci_get(key, proto, sizeof(proto));
+	staged = !strcmp(proto, "dhcp") && mesh_predicted_peer(ctx);
+
+	if (!staged) {
+		snprintf(path, sizeof(path), "/var/run/udhcpc-%s.pid", ctx->device);
+		if ((f = fopen(path, "r"))) {
+			int pid = 0;
+			if (fscanf(f, "%d", &pid) == 1 && pid > 0)
+				kill(pid, SIGTERM);
+			fclose(f);
+		}
+		{
+			char *argv[] = { "ip", "route", "flush", "default", NULL };
+			mesh_run_capture(argv, NULL, 0);
+		}
+		/* v7: if vxlan is up, tear it down on peer flip */
+		{
+			char vxname[32], out[128];
+			char *show[] = { "ip", "link", "show", vxname, NULL };
+			snprintf(vxname, sizeof(vxname), "vxlan%s",
+				 ctx->tun_id[0] ? ctx->tun_id : "69");
+			if (mesh_run_capture(show, out, sizeof(out)) == 0) {
+				char *d[] = { "ip", "link", "set", vxname, "down", NULL };
+				char *x[] = { "ip", "link", "del", vxname, NULL };
+				mesh_run_capture(d, NULL, 0);
+				mesh_run_capture(x, NULL, 0);
+			}
+		}
+	}
+
+	mesh_peer_stage_uci(ctx);
+
+	if (!ctx->portal_ula[0])
+		mesh_get_portal_ula(ctx, "get");
+
 	/* Forget our own portal ULA so the next get discovers the real portal
 	 * instead of pinging a leftover ::1 on this node. */
 	unlink(MESH11SD_TMPDIR "/active_portal");
 	ctx->portal_ula[0] = '\0';
 	ctx->link_to_portal = 1;
-	mesh_log_debug(ctx, "peer handoff: network reload");
-	service_cmd("network", "reload");
-	mesh_log_debug(ctx, "peer handoff: network reload returned");
+	mesh_network_reload_if_changed(ctx, "peer handoff");
 	service_cmd("dnsmasq", "restart");
 	service_cmd("odhcpd", "restart");
 	service_cmd("system", "restart");
@@ -554,6 +595,7 @@ static void peer_handoff(struct mesh_ctx *ctx)
 	mesh_get_mesh_iflist(ctx);
 	ctx->failcount = 0;
 	ctx->network_restart = 0;
+	note_role(ctx, "peer");
 }
 
 static void portal_handoff(struct mesh_ctx *ctx)
@@ -685,6 +727,7 @@ static void portal_handoff(struct mesh_ctx *ctx)
 	}
 	if (ctx->daemon_startup)
 		ctx->daemon_startup = 0;
+	note_role(ctx, "portal");
 }
 
 

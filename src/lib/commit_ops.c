@@ -15,6 +15,7 @@ static const char *const COMMIT_PKGS[] = {
 int mesh_cli_commit_changes(struct mesh_ctx *ctx, int argc, char **argv)
 {
 	char changes[4096] = "";
+	char others[4096];
 	int do_commit = (argc >= 3 && !strcmp(argv[2], "commit"));
 	char debuglevel_change[256] = "";
 	char rssi_change[256] = "";
@@ -34,6 +35,7 @@ int mesh_cli_commit_changes(struct mesh_ctx *ctx, int argc, char **argv)
 	}
 
 	mesh_uci_changes("mesh11sd", changes, sizeof(changes));
+	snprintf(others, sizeof(others), "%s", changes);
 	p = changes;
 	while ((line = strsep(&p, "\n")) != NULL) {
 		if (!line[0])
@@ -82,6 +84,15 @@ int mesh_cli_commit_changes(struct mesh_ctx *ctx, int argc, char **argv)
 		puts("Mesh node mobility level change committed");
 	}
 	mesh_uci_commit("mesh11sd");
+	/* v7: stage the other pending changes again (all but txpower,
+	 * mesh_rssi_threshold and mesh_gate_only) */
+	p = others;
+	while ((line = strsep(&p, "\n")) != NULL) {
+		if (!line[0] || strstr(line, "txpower") ||
+		    strstr(line, "mesh_rssi_threshold") || strstr(line, "mesh_gate_only"))
+			continue;
+		mesh_uci_restage_change(line);
+	}
 	puts("===========================================================================");
 	puts("");
 	(void)ctx;

@@ -74,6 +74,7 @@ struct mesh_ctx {
 	/* portal/peer runtime (tmpdir/is_portal etc.) */
 	char detected_state[16];	/* portal|peer */
 	char last_state[16];	/* initial|portal|peer */
+	char last_role[16];	/* mesh11sd.setup.last_role: role at last boot */
 	char is_portal[32];
 	char portal_ula[64];
 	char ula_prefix[48];
@@ -151,6 +152,8 @@ int mesh_uci_add(const char *tuple); /* uci add ... */
 int mesh_uci_commit(const char *package);
 int mesh_uci_revert(const char *package);
 int mesh_uci_changes(const char *package, char *buf, size_t buflen);
+void mesh_uci_restage_change(const char *line);
+int mesh_uci_commit_option(const char *package, const char *tuple, const char *value);
 void mesh_network_mark_applied(void);
 int mesh_network_reload_if_changed(struct mesh_ctx *ctx, const char *who);
 int mesh_uci_batch_line(const char *line); /* "set foo.bar='baz'" */
@@ -212,6 +215,8 @@ int mesh_check_portal(struct mesh_ctx *ctx);
 int mesh_ensure_portal_dhcp_force(struct mesh_ctx *ctx);
 int mesh_portal_watchdog(struct mesh_ctx *ctx);
 void mesh_peer_reapply(struct mesh_ctx *ctx);   /* peer overlay again */
+void mesh_peer_stage_uci(struct mesh_ctx *ctx);  /* peer network/dhcp values */
+int mesh_predicted_peer(struct mesh_ctx *ctx);   /* last_role peer, mode 1/4 */
 void mesh_portal_reapply(struct mesh_ctx *ctx); /* portal runtime again */
 int mesh_set_ula_prefix(struct mesh_ctx *ctx, const char *mode);
 int mesh_get_portal_ula(struct mesh_ctx *ctx, const char *mode);

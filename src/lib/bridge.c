@@ -1032,7 +1032,8 @@ int mesh_network_preconfigure(struct mesh_ctx *ctx)
 
 	if (ctx->commit_all)
 		return 0;
-	if (ctx->portal_detect != 3 && ctx->portal_detect != 5)
+	if (ctx->portal_detect != 3 && ctx->portal_detect != 5 &&
+	    !mesh_predicted_peer(ctx))
 		mesh_set_ula_prefix(ctx, "set");
 
 	if (ctx->auto_config && !(swconfig_bridge() && ctx->swconfig_mac_skip)) {
@@ -1048,7 +1049,13 @@ int mesh_network_preconfigure(struct mesh_ctx *ctx)
 			}
 		}
 	}
-	return mesh_vtunnel_preconfigure(ctx);
+	mesh_vtunnel_preconfigure(ctx);
+	/* Peer last time: come up as a peer, so the handoff has no reload */
+	if (mesh_predicted_peer(ctx)) {
+		mesh_log_notice(ctx, "Last role was peer - starting with peer settings");
+		mesh_peer_stage_uci(ctx);
+	}
+	return 0;
 }
 
 int mesh_check_vtunnel(struct mesh_ctx *ctx)

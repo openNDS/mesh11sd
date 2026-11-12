@@ -139,6 +139,10 @@ int mesh_ctx_load_setup(struct mesh_ctx *ctx)
 		ctx->debuglevel = parse_int_default(buf, 3);
 	else
 		ctx->debuglevel = 3;
+	if (mesh_uci_get("mesh11sd.setup.last_role", buf, sizeof(buf)) == 0)
+		snprintf(ctx->last_role, sizeof(ctx->last_role), "%s", buf);
+	else
+		ctx->last_role[0] = '\0';
 	if (ctx->debuglevel < 0)
 		ctx->debuglevel = 0;
 	if (ctx->debuglevel > 3)

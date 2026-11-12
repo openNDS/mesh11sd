@@ -223,12 +223,43 @@ static int portal_copies_present(void)
 	return 1;
 }
 
+/* Next line that is not last_role (mesh11sd's own role note). */
+static char *next_config_line(char *buf, int len, FILE *f)
+{
+	while (fgets(buf, len, f))
+		if (!strstr(buf, "option last_role"))
+			return buf;
+	return NULL;
+}
+
 static int mesh11sd_config_changed(void)
 {
-	char path[128];
+	char path[128], la[512], lb[512];
+	FILE *fa, *fb;
+	char *a, *b;
+	int changed = 0;
 
 	portal_copy_path("mesh11sd", path, sizeof(path));
-	return !files_equal("/etc/config/mesh11sd", path);
+	fa = fopen("/etc/config/mesh11sd", "r");
+	fb = fopen(path, "r");
+	if (!fa || !fb) {
+		if (fa)
+			fclose(fa);
+		if (fb)
+			fclose(fb);
+		return 1;
+	}
+	do {
+		a = next_config_line(la, sizeof(la), fa);
+		b = next_config_line(lb, sizeof(lb), fb);
+		if (!a != !b || (a && strcmp(a, b))) {
+			changed = 1;
+			break;
+		}
+	} while (a);
+	fclose(fa);
+	fclose(fb);
+	return changed;
 }
 
 /* ---- which options mesh11sd owns (docs/UCI-OWNERSHIP.md) ---- */

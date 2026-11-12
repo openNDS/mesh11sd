@@ -140,7 +140,8 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 			mesh_network_mark_applied();
 		}
 		/* v7 restore_ipv4: ensure calculated portal address is on the bridge */
-		if (ctx->portal_detect != 5 && ctx->portal_use_default_ipv4 == 0)
+		if (ctx->portal_detect != 5 && ctx->portal_use_default_ipv4 == 0 &&
+		    !mesh_predicted_peer(ctx))
 			mesh_restore_ipv4(ctx);
 		mesh_move_ethernet_to_vxlan_bridge(ctx);
 		mesh_set_bridge_mac_addresses(ctx);
