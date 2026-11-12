@@ -844,6 +844,44 @@ int mesh_ensure_portal_dhcp_force(struct mesh_ctx *ctx)
 	return changed;
 }
 
+/* Restart dnsmasq once on a portal, after vtunlan has its IPv4 address
+ * and the vxlan has joined the tunnel bridge.
+ *
+ * If dnsmasq starts at boot before vtunlan is up, OpenWrt's init script
+ * leaves the vtunlan dhcp-range out.  Later reloads only send SIGHUP,
+ * which does not add a new range to a running dnsmasq, so tunnel clients
+ * get no lease.  One restart at this point fixes that and writes nothing
+ * to flash. */
+int mesh_ensure_portal_vtun_dnsmasq(struct mesh_ctx *ctx)
+{
+	static int done;
+	const char *id = ctx->tun_id[0] ? ctx->tun_id : "69";
+	char brname[32];
+	char path[96];
+	char out[256];
+	char *show[] = { "ip", "-4", "-o", "addr", "show", "dev", brname, NULL };
+
+	if (!ctx->vtun_enable || strcmp(ctx->detected_state, "portal") != 0) {
+		done = 0;
+		return 0;
+	}
+	if (done)
+		return 0;
+
+	snprintf(brname, sizeof(brname), "br-tun%s", id);
+	snprintf(path, sizeof(path), "/sys/class/net/%s/brif/vxlan%s", brname, id);
+	if (access(path, F_OK) != 0)
+		return 0;
+	out[0] = '\0';
+	if (mesh_run_capture(show, out, sizeof(out)) != 0 || !strstr(out, "inet "))
+		return 0;
+
+	mesh_log_notice(ctx, "vtunlan is up on %s, restarting dnsmasq once", brname);
+	service_cmd_bg("dnsmasq", "restart");
+	done = 1;
+	return 1;
+}
+
 int mesh_check_portal(struct mesh_ctx *ctx)
 {
 	mesh_log_debug(ctx, "Checking portal status");
