@@ -102,6 +102,7 @@ struct mesh_ctx {
 	int leechmode;
 	int reboot_on_error;
 	int stop_on_error;
+	int manage_opennds_startup;
 	int swconfig_mac_skip;
 
 	char mesh_backhaul_led[64];
@@ -167,6 +168,7 @@ int mesh_uci_show_filter(const char *package, const char *grep_pat,
 void mesh_ctx_init(struct mesh_ctx *ctx, int is_daemon);
 int mesh_ctx_load_setup(struct mesh_ctx *ctx);
 int mesh_check_config_params(struct mesh_ctx *ctx);
+void mesh_manage_opennds(struct mesh_ctx *ctx, const char *action);
 
 void mesh_write_to_syslog(struct mesh_ctx *ctx, const char *debugtype, const char *msg);
 void mesh_write_log(struct mesh_ctx *ctx, const char *debugtype, const char *msg);

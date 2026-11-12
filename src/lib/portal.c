@@ -56,6 +56,36 @@ static void service_cmd_bg(const char *svc, const char *action)
 	}
 }
 
+/*
+ * v7 manage_opennds. With manage_opennds_startup on (the default) and
+ * opennds installed: "stop" disables its autostart and stops it (a peer),
+ * "start" or "restart" restarts it (a portal or a CPE).
+ */
+void mesh_manage_opennds(struct mesh_ctx *ctx, const char *action)
+{
+	char *enabled[] = { "/etc/init.d/opennds", "enabled", NULL };
+	char *running[] = { "/etc/init.d/opennds", "running", NULL };
+
+	if (!ctx->manage_opennds_startup || !action)
+		return;
+	if (access("/etc/init.d/opennds", X_OK) != 0)
+		return;
+	if (!strcmp(action, "stop")) {
+		if (mesh_run_capture(enabled, NULL, 0) == 0) {
+			mesh_log_debug(ctx, "Disabling auto-startup of opennds");
+			service_cmd("opennds", "disable");
+		}
+		if (mesh_run_capture(running, NULL, 0) == 0) {
+			mesh_log_debug(ctx, "The opennds daemon is running, stopping it");
+			service_cmd("opennds", "stop");
+		}
+		return;
+	}
+	mesh_log_debug(ctx, "Restarting the opennds daemon");
+	service_cmd_bg("opennds", "restart");
+}
+
+
 /* Split a portal ULA (fdxx:xxxx:xxxx:subnet::1 or the same with /64)
  * into the /48 base and the 4th hextet. Keeps the hextet text as-is so
  * leading zeros are not dropped. */
@@ -653,6 +683,8 @@ static void peer_handoff(struct mesh_ctx *ctx)
 	mesh_get_mesh_iflist(ctx);
 	ctx->failcount = 0;
 	ctx->network_restart = 0;
+	/* Just become a peer, so stop opennds */
+	mesh_manage_opennds(ctx, "stop");
 	note_role(ctx, "peer");
 }
 
@@ -788,6 +820,9 @@ static void portal_handoff(struct mesh_ctx *ctx)
 	}
 	if (ctx->daemon_startup)
 		ctx->daemon_startup = 0;
+	/* Just become a portal, so start opennds */
+	if (ctx->portal_detect != 4)
+		mesh_manage_opennds(ctx, "start");
 	note_role(ctx, "portal");
 }
 

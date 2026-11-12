@@ -644,6 +644,8 @@ int mesh_cli_status(struct mesh_ctx *ctx)
 	mesh_json_field_int("    ", "ssid_suffix_enable", ctx->ssid_suffix_enable, 0);
 	/* apmond_* intentionally omitted from Stage 1 port */
 	mesh_json_field_int("    ", "odhcpd_log_level", ctx->odhcpd_log_level, 0);
+	if (access("/etc/init.d/opennds", X_OK) == 0)
+		mesh_json_field_int("    ", "manage_opennds_startup", ctx->manage_opennds_startup, 0);
 	if (ctx->portal_detect == 3)
 		mesh_json_field("    ", "cpe_mode", ctx->cpe_mode, 0);
 	mesh_json_field_int("    ", "debuglevel", ctx->debuglevel, 1);

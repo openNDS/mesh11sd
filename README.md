@@ -34,7 +34,7 @@ If the image uses **ath10k-ct**, switch to non-ct ath10k packages; otherwise the
 3. **Auto detect (`portal_detect=1`)** — WAN up → MRP; WAN down → Mesh Peer (MPE)
 4. **Mesh Bridge Portal (MBP)** — bridged to the existing LAN/ISP (no IPv4 NAT); WAN is the vxlan trunk
 5. **Trunk Peer (TPN)** — WAN is a vxlan trunk endpoint (VLANs); LAN is the mesh (no VLANs)
-6. **CPE** — mesh is the WAN; LAN is a private NAT network (IPv4 + NAT66 / PD / relay)
+6. **CPE** — mesh is the WAN; LAN is a private NAT network (IPv4 + NAT66 or PD)
 7. **OWE** on mesh gates by default (optional WPA2/WPA3)
 8. **Guest / vxtunnel** SSIDs over VXLAN without configuring 802.1Q on the mesh
 9. **apmond** — AP and Ethernet client stats collected on the portal (`mesh11sd show_ap_data`)
@@ -51,7 +51,7 @@ If the image uses **ath10k-ct**, switch to non-ct ath10k packages; otherwise the
 | --- | --- | --- |
 | **1** (default) | MRP / MPE | Auto: WAN link → routed portal (DHCP/RA into the mesh). No WAN → layer-2 peer (DHCP client). |
 | **0** | MRP | Always routed portal. |
-| **3** | CPE | Mesh is upstream WAN. LAN is a NAT subnet (`cpe_mode`: `nat66` default, `prefix_delegation`, `relay`). |
+| **3** | CPE | Mesh is upstream WAN. LAN is a NAT subnet (`cpe_mode`: `nat66` default, or `prefix_delegation`). |
 | **4** | MBP | Bridged portal. **LAN** to ISP/existing LAN. **WAN** is vxlan trunk (`br-tun$tun_id`). |
 | **5** | TPN | Peer. **LAN** = mesh (no VLANs). **WAN** = vxlan trunk (VLANs OK). Works with portal 0, 1, or 4. |
 | **2** | — | Unused (use 5). |
@@ -303,13 +303,13 @@ MBP/TPN: WAN is added to `br-tun$tun_id`. MRP portal may serve DHCPv4/RA on vtun
 | `apmond_cgi_dir` | `/www/cgi-bin/` | |
 | `apmon_verbose_debug_enable` | 0 | |
 | `mesh_backhaul_led` | `auto` | `none` to disable; or `color:function` from `/sys/class/leds`. |
-| `manage_opennds_startup` | 1 | If opennds is installed. |
+| `manage_opennds_startup` | 1 | If opennds is installed: started on a portal or CPE, stopped (and autostart disabled) on a peer. 0 leaves opennds alone. |
 | `log_mountpoint` | `/tmp` | Not on system flash for long-term logs. Subdir `mesh11sd` holds the log only. Runtime state stays in `/tmp/mesh11sd`. |
 | `max_log_entries` | 500 | `mesh11sd read_log`. |
 | `use_default_beacon_interval` | 0 | 1 forces beacon interval 100. ath11k, mt76_wmac, and a multi-band wiphy force 100 even when this is 0. |
 | `mesh_dtim_period` | 2 | Overridden by mobility level unless the driver ignores it. |
 | `mesh_node_mobility_level` | **2** | 0–6; see CLI. |
-| `cpe_mode` | `nat66` | CPE only: `nat66`, `prefix_delegation`, `relay`. |
+| `cpe_mode` | `nat66` | CPE only: `nat66` or `prefix_delegation`. |
 | `odhcpd_log_level` | 3 | 0–7. |
 | `wpad_debuglevel` | 2 | 0–5; rewrites wpad init flags. |
 | `connect_show_all` | 1 | `connect` with no args lists island meshes too. |
@@ -523,7 +523,7 @@ config mesh11sd 'setup'
 	#  	A nat routed ipv4 lan is created with its own ipv4 subnet.
 	#  	By default a nat66 routed ipv6 lan is created with its own ipv6 subnet.
 	#
-	#   	Depending on the upstream ISP, possible optional modes are prefix_delegation, relay and nat66, settable using the cpe_mode option (see below)
+	#   	Depending on the upstream ISP, possible modes are nat66 and prefix_delegation, settable using the cpe_mode option (see below)
 	#
 	#  4  - Mesh Bridge Portal (MBP) node. Force Bridge vxlan trunk portal node
 	#	This mode should be used if a bridged connection to the upstream ISP router is required (ie bridged/no-nat ipv4/ipv6 ).
@@ -1165,13 +1165,13 @@ config mesh11sd 'setup'
 	# Sets the cpe ipv6 mode
 	# Applicable only when portal_detect is set to 3
 	#
-	# Possible modes are prefix_delegation, relay and nat66
+	# Possible modes are nat66 and prefix_delegation
 	#
 	# Prefix Delegation works with all client devices, including Android,
 	#	but the ISP needs to provide a prefix large enough to delegate a /64 subnet to every cpe mesh node.
 	#	Exhausting available delegations is a danger.
 	#
-	# Relay does not require any prefix delegation, but some versions of Android devices will detect the relay and turn off the device's interface within ~60 seconds - because - Google.
+	# Relay is not supported. Some Android versions detect a relay and turn off their IPv6 interface within ~60 seconds.
 	#
 	# NAT66 will work with all types of client devices, including Android, so is used as the default.
 	# Default: nat66

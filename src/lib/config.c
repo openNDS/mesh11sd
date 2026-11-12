@@ -554,6 +554,12 @@ int mesh_ctx_load_setup(struct mesh_ctx *ctx)
 	snprintf(ctx->cpe_mode, sizeof(ctx->cpe_mode), "%s", buf);
 	if (ctx->portal_detect == 3)
 		mesh_log_info(ctx, "option cpe_mode [ %s ]", ctx->cpe_mode);
+	/* v7: start opennds on a portal or CPE, stop it on a peer */
+	if (mesh_uci_get("mesh11sd.setup.manage_opennds_startup", buf, sizeof(buf)) == 0 && buf[0])
+		ctx->manage_opennds_startup = parse_int_default(buf, 1) ? 1 : 0;
+	else
+		ctx->manage_opennds_startup = 1;
+	mesh_log_info(ctx, "option manage_opennds_startup [ %d ]", ctx->manage_opennds_startup);
 	if (!ctx->mesh_backhaul_led[0])
 		snprintf(ctx->mesh_backhaul_led, sizeof(ctx->mesh_backhaul_led), "auto");
 	ctx->mesh_driver[0] = '\0';
