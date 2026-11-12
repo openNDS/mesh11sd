@@ -660,6 +660,25 @@ int mesh_set_root_bridge_priority(struct mesh_ctx *ctx)
 	return 0;
 }
 
+/* First link-local address on dev, without the prefix length. */
+static void underlay_linklocal(const char *dev, char *ll, size_t len)
+{
+	char out[1024];
+	char *a[] = { "ip", "-6", "addr", "show", "dev", (char *)dev, "scope", "link", NULL };
+	char *p, *sl;
+
+	ll[0] = '\0';
+	if (mesh_run_capture(a, out, sizeof(out)) != 0)
+		return;
+	p = strstr(out, "inet6 ");
+	if (!p)
+		return;
+	snprintf(ll, len, "%.*s", (int)strcspn(p + 6, " \n"), p + 6);
+	sl = strchr(ll, '/');
+	if (sl)
+		*sl = '\0';
+}
+
 int mesh_create_vxlan_if(struct mesh_ctx *ctx)
 {
 	/* v7 create_vxlan_if: ip-full `ip -6 link add ... type vxlan` (NOT netifd
@@ -729,21 +748,7 @@ int mesh_create_vxlan_if(struct mesh_ctx *ctx)
 		snprintf(group, sizeof(group), "ff02::%s", subnet);
 
 	/* link-local on underlay bridge — required by ip -6 vxlan */
-	{
-		char *a[] = { "ip", "-6", "addr", "show", "dev", device, "scope", "link", NULL };
-		if (mesh_run_capture(a, out, sizeof(out)) == 0) {
-			char *p = strstr(out, "inet6 ");
-			if (p) {
-				p += 6;
-				sscanf(p, "%63s", linklocal);
-				{
-					char *sl = strchr(linklocal, '/');
-					if (sl)
-						*sl = '\0';
-				}
-			}
-		}
-	}
+	underlay_linklocal(device, linklocal, sizeof(linklocal));
 	if (!linklocal[0]) {
 		mesh_log_err(ctx, "create_vxlan_if: no link-local on %s", device);
 		return 1;
@@ -1182,6 +1187,7 @@ int mesh_update_vxlan_for_active_portal(struct mesh_ctx *ctx)
 {
 	/* v7 update_vxlan_for_active_portal: group ff02::$portal_ula_subnet */
 	char vxname[32], new_group[64], cur_group[64] = "";
+	char cur_ll[64] = "", cur_dev[32] = "";
 	char out[512];
 	char *show[] = { "ip", "link", "show", vxname, NULL };
 
@@ -1214,11 +1220,30 @@ int mesh_update_vxlan_for_active_portal(struct mesh_ctx *ctx)
 		char line[320];
 		if (f && fgets(line, sizeof(line), f)) {
 			char *g = strstr(line, "group=\"");
+			char *l = strstr(line, "link_local=\"");
+			char *d = strstr(line, "device=\"");
 			if (g)
 				sscanf(g + 7, "%63[^\"]", cur_group);
+			if (l)
+				sscanf(l + 12, "%63[^\"]", cur_ll);
+			if (d)
+				sscanf(d + 8, "%31[^\"]", cur_dev);
 		}
 		if (f)
 			fclose(f);
+	}
+	/* The vxlan sends from the underlay's link-local address. A MAC
+	 * change on the underlay bridge (as at a portal handoff) changes that
+	 * address, and the old tunnel then carries nothing, so remake it. */
+	if (cur_ll[0] && cur_dev[0]) {
+		char now_ll[64];
+
+		underlay_linklocal(cur_dev, now_ll, sizeof(now_ll));
+		if (now_ll[0] && strcmp(now_ll, cur_ll) != 0) {
+			mesh_log_info(ctx, "VXLAN source %s is no longer on %s (now %s), remaking %s",
+				      cur_ll, cur_dev, now_ll, vxname);
+			cur_group[0] = '\0';
+		}
 	}
 	if (!cur_group[0] && mesh_run_capture(show, out, sizeof(out)) == 0) {
 		/* fall through — parse not critical */
@@ -1229,8 +1254,9 @@ int mesh_update_vxlan_for_active_portal(struct mesh_ctx *ctx)
 		return 0;
 	}
 
-	mesh_log_info(ctx, "Portal change detected - switching VXLAN to group %s (portal %s)",
-		      new_group, ctx->portal_ula);
+	if (cur_group[0])
+		mesh_log_info(ctx, "Portal change detected - switching VXLAN to group %s (portal %s)",
+			      new_group, ctx->portal_ula);
 	if (mesh_run_capture(show, out, sizeof(out)) == 0) {
 		char *del[] = { "ip", "link", "del", vxname, NULL };
 		mesh_run_capture(del, NULL, 0);
