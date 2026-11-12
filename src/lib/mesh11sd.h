@@ -237,6 +237,7 @@ int mesh_get_indexed_mac(struct mesh_ctx *ctx, const char *devname, char *out, s
 int mesh_set_bridge_mac_addresses(struct mesh_ctx *ctx);
 int mesh_set_root_bridge_priority(struct mesh_ctx *ctx);
 int mesh_check_vtunnel(struct mesh_ctx *ctx);
+int mesh_vtunnel_preconfigure(struct mesh_ctx *ctx);
 int mesh_create_vxlan_if(struct mesh_ctx *ctx);
 int mesh_update_vxlan_for_active_portal(struct mesh_ctx *ctx);
 int mesh_block_bridge_loops(struct mesh_ctx *ctx);

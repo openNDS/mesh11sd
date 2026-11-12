@@ -835,11 +835,174 @@ int mesh_create_vxlan_if(struct mesh_ctx *ctx)
 	return 0;
 }
 
+/* UCI for the vtunlan dhcp and firewall sections (no service restarts). */
+static void vtunnel_uci_dhcp_firewall(struct mesh_ctx *ctx)
+{
+	char setl[192];
+
+	mesh_uci_batch_line("set dhcp.vtunlan=dhcp");
+	mesh_uci_batch_line("set dhcp.vtunlan.interface='vtunlan'");
+	mesh_uci_batch_line("set dhcp.vtunlan.start='100'");
+	mesh_uci_batch_line("set dhcp.vtunlan.limit='150'");
+	mesh_uci_batch_line("set dhcp.vtunlan.leasetime='12h'");
+	mesh_uci_batch_line("set dhcp.vtunlan.ra_slaac='1'");
+	mesh_uci_batch_line("del_list dhcp.vtunlan.ra_flags='managed-config'");
+	mesh_uci_batch_line("del_list dhcp.vtunlan.ra_flags='other-config'");
+	mesh_uci_batch_line("add_list dhcp.vtunlan.ra_flags='managed-config'");
+	mesh_uci_batch_line("add_list dhcp.vtunlan.ra_flags='other-config'");
+	mesh_uci_batch_line("set dhcp.vtunlan.ignore='1'");
+	mesh_uci_batch_line("set dhcp.vtunlan.ra_default='2'");
+
+	mesh_uci_batch_line("set firewall.vtunlan=zone");
+	mesh_uci_batch_line("set firewall.vtunlan.name='vtunlan'");
+	mesh_uci_batch_line("set firewall.vtunlan.network='vtunlan'");
+	mesh_uci_batch_line("set firewall.vtunlan.input='ACCEPT'");
+	mesh_uci_batch_line("set firewall.vtunlan.output='ACCEPT'");
+	mesh_uci_batch_line("set firewall.vtunlan.forward='ACCEPT'");
+
+	snprintf(setl, sizeof(setl), "set firewall.dhcptun%s=rule",
+		 ctx->tun_id[0] ? ctx->tun_id : "69");
+	mesh_uci_batch_line(setl);
+	snprintf(setl, sizeof(setl), "set firewall.dhcptun%s.name='VTUN-DHCP-Renew'",
+		 ctx->tun_id[0] ? ctx->tun_id : "69");
+	mesh_uci_batch_line(setl);
+	snprintf(setl, sizeof(setl), "set firewall.dhcptun%s.src='vtunlan'",
+		 ctx->tun_id[0] ? ctx->tun_id : "69");
+	mesh_uci_batch_line(setl);
+	snprintf(setl, sizeof(setl), "set firewall.dhcptun%s.proto='udp'",
+		 ctx->tun_id[0] ? ctx->tun_id : "69");
+	mesh_uci_batch_line(setl);
+	snprintf(setl, sizeof(setl), "set firewall.dhcptun%s.dest_port='67'",
+		 ctx->tun_id[0] ? ctx->tun_id : "69");
+	mesh_uci_batch_line(setl);
+	snprintf(setl, sizeof(setl), "set firewall.dhcptun%s.target='ACCEPT'",
+		 ctx->tun_id[0] ? ctx->tun_id : "69");
+	mesh_uci_batch_line(setl);
+	snprintf(setl, sizeof(setl), "set firewall.dhcptun%s.family='ipv4'",
+		 ctx->tun_id[0] ? ctx->tun_id : "69");
+	mesh_uci_batch_line(setl);
+
+	snprintf(setl, sizeof(setl), "set firewall.dnstun%s=rule",
+		 ctx->tun_id[0] ? ctx->tun_id : "69");
+	mesh_uci_batch_line(setl);
+	snprintf(setl, sizeof(setl), "set firewall.dnstun%s.name='VTUN-Allow-DNS'",
+		 ctx->tun_id[0] ? ctx->tun_id : "69");
+	mesh_uci_batch_line(setl);
+	snprintf(setl, sizeof(setl), "set firewall.dnstun%s.src='vtunlan'",
+		 ctx->tun_id[0] ? ctx->tun_id : "69");
+	mesh_uci_batch_line(setl);
+	snprintf(setl, sizeof(setl), "set firewall.dnstun%s.proto='udp tcp'",
+		 ctx->tun_id[0] ? ctx->tun_id : "69");
+	mesh_uci_batch_line(setl);
+	snprintf(setl, sizeof(setl), "set firewall.dnstun%s.dest_port='53'",
+		 ctx->tun_id[0] ? ctx->tun_id : "69");
+	mesh_uci_batch_line(setl);
+	snprintf(setl, sizeof(setl), "set firewall.dnstun%s.target='ACCEPT'",
+		 ctx->tun_id[0] ? ctx->tun_id : "69");
+	mesh_uci_batch_line(setl);
+	snprintf(setl, sizeof(setl), "set firewall.dnstun%s.family='ipv4'",
+		 ctx->tun_id[0] ? ctx->tun_id : "69");
+	mesh_uci_batch_line(setl);
+
+	mesh_uci_batch_line("set firewall.vxlan=rule");
+	mesh_uci_batch_line("set firewall.vxlan.name='Allow-vxlan'");
+	mesh_uci_batch_line("set firewall.vxlan.src='lan'");
+	mesh_uci_batch_line("set firewall.vxlan.proto='udp'");
+	mesh_uci_batch_line("set firewall.vxlan.dest_port='4789'");
+	mesh_uci_batch_line("set firewall.vxlan.target='ACCEPT'");
+	mesh_uci_batch_line("set firewall.vxlan_fwd=forwarding");
+	mesh_uci_batch_line("set firewall.vxlan_fwd.src='vtunlan'");
+	mesh_uci_batch_line("set firewall.vxlan_fwd.dest='wan'");
+	if (ctx->vtun_isolate == 0) {
+		mesh_uci_batch_line("set firewall.lan_tun=forwarding");
+		mesh_uci_batch_line("set firewall.lan_tun.src='vtunlan'");
+		mesh_uci_batch_line("set firewall.lan_tun.dest='lan'");
+	}
+}
+
+/* UCI for the vtunnel bridge and the vtunlan interface (no service restarts). */
+static void vtunnel_uci_network(struct mesh_ctx *ctx, const char *vxname,
+				const char *brname, const char *proto)
+{
+	char setl[192];
+
+	mesh_uci_batch_line("set network.vtunnel=device");
+	snprintf(setl, sizeof(setl), "set network.vtunnel.name='%s'", brname);
+	mesh_uci_batch_line(setl);
+	mesh_uci_batch_line("set network.vtunnel.type='bridge'");
+	mesh_uci_batch_line("set network.vtunnel.bridge_empty='1'");
+	/* Do NOT add vxlan as a netifd port permanently in a way that
+	 * fights ip-full — v7 still lists it so br comes up; attach
+	 * live via brctl after create. */
+	snprintf(setl, sizeof(setl), "del_list network.vtunnel.ports='%s'", vxname);
+	mesh_uci_batch_line(setl);
+	snprintf(setl, sizeof(setl), "add_list network.vtunnel.ports='%s'", vxname);
+	mesh_uci_batch_line(setl);
+	mesh_uci_batch_line("set network.vtunlan=interface");
+	snprintf(setl, sizeof(setl), "set network.vtunlan.device='%s'", brname);
+	mesh_uci_batch_line(setl);
+	if (ctx->vtun_ip[0] && strcmp(ctx->vtun_ip, "auto") != 0) {
+		snprintf(setl, sizeof(setl), "set network.vtunlan.ipaddr='%s'",
+			 ctx->vtun_ip);
+		mesh_uci_batch_line(setl);
+	}
+	snprintf(setl, sizeof(setl), "set network.vtunlan.netmask='%s'",
+		 ctx->vtun_mask[0] ? ctx->vtun_mask : "255.255.255.0");
+	mesh_uci_batch_line(setl);
+	snprintf(setl, sizeof(setl), "set network.vtunlan.proto='%s'", proto);
+	mesh_uci_batch_line(setl);
+	mesh_uci_batch_line("set network.vtunlan.ip6assign='64'");
+	snprintf(setl, sizeof(setl), "set network.vtunlan.ip6hint='%s'",
+		 ctx->ula_vxsubnet);
+	mesh_uci_batch_line(setl);
+	mesh_uci_batch_line("set network.vtunlan.ip6privacy='0'");
+	mesh_uci_batch_line("set dhcp.vtunlan.ra_lifetime='3600'");
+	mesh_uci_batch_line("set dhcp.vtunlan.ra_mininterval='20'");
+	mesh_uci_batch_line("set dhcp.vtunlan.ra_maxinterval='60'");
+}
+
+/*
+ * Write the vtunnel/vtunlan UCI before the startup network restart, so that
+ * one restart covers it and check_vtunnel only has to create the vxlan
+ * netdev. This UCI is uncommitted (commit_all=0), so it is gone after every
+ * reboot; without this, check_vtunnel did a second network restart per boot.
+ * proto is a first guess (portal_detect 1 is not known yet); the portal and
+ * peer handoffs set the right value and reload the network.
+ */
+int mesh_vtunnel_preconfigure(struct mesh_ctx *ctx)
+{
+	char vxname[32], brname[32], cur[64] = "";
+	const char *proto;
+
+	if (!ctx->vtun_enable || ctx->commit_all)
+		return 0;
+	if (mesh_uci_get("network.vtunlan", cur, sizeof(cur)) == 0 && cur[0])
+		return 0;
+
+	snprintf(vxname, sizeof(vxname), "vxlan%s",
+		 ctx->tun_id[0] ? ctx->tun_id : "69");
+	snprintf(brname, sizeof(brname), "br-tun%s",
+		 ctx->tun_id[0] ? ctx->tun_id : "69");
+	mesh_set_ula_prefix(ctx, "get");
+
+	cur[0] = '\0';
+	if (mesh_uci_get("dhcp.vtunlan", cur, sizeof(cur)) != 0 || !cur[0])
+		vtunnel_uci_dhcp_firewall(ctx);
+
+	if (ctx->portal_detect == 0 || ctx->portal_detect == 3 || ctx->portal_detect == 4)
+		proto = "static";
+	else
+		proto = "dhcp";
+	vtunnel_uci_network(ctx, vxname, brname, proto);
+	mesh_log_debug(ctx, "vtunnel configuration written before network restart");
+	return 0;
+}
+
 int mesh_check_vtunnel(struct mesh_ctx *ctx)
 {
 	/* v7 check_vtunnel: UCI vtunnel/vtunlan + firewall once, network restart,
 	 * then create_vxlan_if (ip-full). Recreate vxlan after netifd wipe. */
-	char vxname[32], brname[32], setl[192], out[256], vtun_uci[64] = "";
+	char vxname[32], brname[32], out[256], vtun_uci[64] = "";
 	int vxlan_missing, recreate = 0;
 	const char *proto = "dhcp";
 	char *show[] = { "ip", "link", "show", vxname, NULL };
@@ -886,84 +1049,7 @@ int mesh_check_vtunnel(struct mesh_ctx *ctx)
 	/* Ensure dhcp.vtunlan + firewall once */
 	if (mesh_uci_get("dhcp.vtunlan", vtun_uci, sizeof(vtun_uci)) != 0 || !vtun_uci[0]) {
 		mesh_log_debug(ctx, "vxtunnel configuration");
-		mesh_uci_batch_line("set dhcp.vtunlan=dhcp");
-		mesh_uci_batch_line("set dhcp.vtunlan.interface='vtunlan'");
-		mesh_uci_batch_line("set dhcp.vtunlan.start='100'");
-		mesh_uci_batch_line("set dhcp.vtunlan.limit='150'");
-		mesh_uci_batch_line("set dhcp.vtunlan.leasetime='12h'");
-		mesh_uci_batch_line("set dhcp.vtunlan.ra_slaac='1'");
-		mesh_uci_batch_line("del_list dhcp.vtunlan.ra_flags='managed-config'");
-		mesh_uci_batch_line("del_list dhcp.vtunlan.ra_flags='other-config'");
-		mesh_uci_batch_line("add_list dhcp.vtunlan.ra_flags='managed-config'");
-		mesh_uci_batch_line("add_list dhcp.vtunlan.ra_flags='other-config'");
-		mesh_uci_batch_line("set dhcp.vtunlan.ignore='1'");
-		mesh_uci_batch_line("set dhcp.vtunlan.ra_default='2'");
-
-		mesh_uci_batch_line("set firewall.vtunlan=zone");
-		mesh_uci_batch_line("set firewall.vtunlan.name='vtunlan'");
-		mesh_uci_batch_line("set firewall.vtunlan.network='vtunlan'");
-		mesh_uci_batch_line("set firewall.vtunlan.input='ACCEPT'");
-		mesh_uci_batch_line("set firewall.vtunlan.output='ACCEPT'");
-		mesh_uci_batch_line("set firewall.vtunlan.forward='ACCEPT'");
-
-		snprintf(setl, sizeof(setl), "set firewall.dhcptun%s=rule",
-			 ctx->tun_id[0] ? ctx->tun_id : "69");
-		mesh_uci_batch_line(setl);
-		snprintf(setl, sizeof(setl), "set firewall.dhcptun%s.name='VTUN-DHCP-Renew'",
-			 ctx->tun_id[0] ? ctx->tun_id : "69");
-		mesh_uci_batch_line(setl);
-		snprintf(setl, sizeof(setl), "set firewall.dhcptun%s.src='vtunlan'",
-			 ctx->tun_id[0] ? ctx->tun_id : "69");
-		mesh_uci_batch_line(setl);
-		snprintf(setl, sizeof(setl), "set firewall.dhcptun%s.proto='udp'",
-			 ctx->tun_id[0] ? ctx->tun_id : "69");
-		mesh_uci_batch_line(setl);
-		snprintf(setl, sizeof(setl), "set firewall.dhcptun%s.dest_port='67'",
-			 ctx->tun_id[0] ? ctx->tun_id : "69");
-		mesh_uci_batch_line(setl);
-		snprintf(setl, sizeof(setl), "set firewall.dhcptun%s.target='ACCEPT'",
-			 ctx->tun_id[0] ? ctx->tun_id : "69");
-		mesh_uci_batch_line(setl);
-		snprintf(setl, sizeof(setl), "set firewall.dhcptun%s.family='ipv4'",
-			 ctx->tun_id[0] ? ctx->tun_id : "69");
-		mesh_uci_batch_line(setl);
-
-		snprintf(setl, sizeof(setl), "set firewall.dnstun%s=rule",
-			 ctx->tun_id[0] ? ctx->tun_id : "69");
-		mesh_uci_batch_line(setl);
-		snprintf(setl, sizeof(setl), "set firewall.dnstun%s.name='VTUN-Allow-DNS'",
-			 ctx->tun_id[0] ? ctx->tun_id : "69");
-		mesh_uci_batch_line(setl);
-		snprintf(setl, sizeof(setl), "set firewall.dnstun%s.src='vtunlan'",
-			 ctx->tun_id[0] ? ctx->tun_id : "69");
-		mesh_uci_batch_line(setl);
-		snprintf(setl, sizeof(setl), "set firewall.dnstun%s.proto='udp tcp'",
-			 ctx->tun_id[0] ? ctx->tun_id : "69");
-		mesh_uci_batch_line(setl);
-		snprintf(setl, sizeof(setl), "set firewall.dnstun%s.dest_port='53'",
-			 ctx->tun_id[0] ? ctx->tun_id : "69");
-		mesh_uci_batch_line(setl);
-		snprintf(setl, sizeof(setl), "set firewall.dnstun%s.target='ACCEPT'",
-			 ctx->tun_id[0] ? ctx->tun_id : "69");
-		mesh_uci_batch_line(setl);
-		snprintf(setl, sizeof(setl), "set firewall.dnstun%s.family='ipv4'",
-			 ctx->tun_id[0] ? ctx->tun_id : "69");
-		mesh_uci_batch_line(setl);
-
-		mesh_uci_batch_line("set firewall.vxlan=rule");
-		mesh_uci_batch_line("set firewall.vxlan.name='Allow-vxlan'");
-		mesh_uci_batch_line("set firewall.vxlan.src='lan'");
-		mesh_uci_batch_line("set firewall.vxlan.proto='udp'");
-		mesh_uci_batch_line("set firewall.vxlan.dest_port='4789'");
-		mesh_uci_batch_line("set firewall.vxlan.target='ACCEPT'");
-		mesh_uci_batch_line("set firewall.vxlan_fwd=forwarding");
-		mesh_uci_batch_line("set firewall.vxlan_fwd.src='vtunlan'");
-		mesh_uci_batch_line("set firewall.vxlan_fwd.dest='wan'");
-		if (ctx->vtun_isolate == 0) {
-			mesh_uci_batch_line("set firewall.lan_tun=forwarding");
-			mesh_uci_batch_line("set firewall.lan_tun.src='vtunlan'");
-			mesh_uci_batch_line("set firewall.lan_tun.dest='lan'");
-		}
+		vtunnel_uci_dhcp_firewall(ctx);
 		{
 			char *fw[] = { "/sbin/service", "firewall", "restart", NULL };
 			mesh_run_capture(fw, NULL, 0);
@@ -989,39 +1075,7 @@ int mesh_check_vtunnel(struct mesh_ctx *ctx)
 		else
 			proto = "dhcp";
 
-		mesh_uci_batch_line("set network.vtunnel=device");
-		snprintf(setl, sizeof(setl), "set network.vtunnel.name='%s'", brname);
-		mesh_uci_batch_line(setl);
-		mesh_uci_batch_line("set network.vtunnel.type='bridge'");
-		mesh_uci_batch_line("set network.vtunnel.bridge_empty='1'");
-		/* Do NOT add vxlan as a netifd port permanently in a way that
-		 * fights ip-full — v7 still lists it so br comes up; attach
-		 * live via brctl after create. */
-		snprintf(setl, sizeof(setl), "del_list network.vtunnel.ports='%s'", vxname);
-		mesh_uci_batch_line(setl);
-		snprintf(setl, sizeof(setl), "add_list network.vtunnel.ports='%s'", vxname);
-		mesh_uci_batch_line(setl);
-		mesh_uci_batch_line("set network.vtunlan=interface");
-		snprintf(setl, sizeof(setl), "set network.vtunlan.device='%s'", brname);
-		mesh_uci_batch_line(setl);
-		if (ctx->vtun_ip[0] && strcmp(ctx->vtun_ip, "auto") != 0) {
-			snprintf(setl, sizeof(setl), "set network.vtunlan.ipaddr='%s'",
-				 ctx->vtun_ip);
-			mesh_uci_batch_line(setl);
-		}
-		snprintf(setl, sizeof(setl), "set network.vtunlan.netmask='%s'",
-			 ctx->vtun_mask[0] ? ctx->vtun_mask : "255.255.255.0");
-		mesh_uci_batch_line(setl);
-		snprintf(setl, sizeof(setl), "set network.vtunlan.proto='%s'", proto);
-		mesh_uci_batch_line(setl);
-		mesh_uci_batch_line("set network.vtunlan.ip6assign='64'");
-		snprintf(setl, sizeof(setl), "set network.vtunlan.ip6hint='%s'",
-			 ctx->ula_vxsubnet);
-		mesh_uci_batch_line(setl);
-		mesh_uci_batch_line("set network.vtunlan.ip6privacy='0'");
-		mesh_uci_batch_line("set dhcp.vtunlan.ra_lifetime='3600'");
-		mesh_uci_batch_line("set dhcp.vtunlan.ra_mininterval='20'");
-		mesh_uci_batch_line("set dhcp.vtunlan.ra_maxinterval='60'");
+		vtunnel_uci_network(ctx, vxname, brname, proto);
 
 		{
 			char *fw[] = { "/sbin/service", "firewall", "restart", NULL };

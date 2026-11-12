@@ -479,7 +479,12 @@ static void peer_handoff(struct mesh_ctx *ctx)
 		snprintf(vxname, sizeof(vxname), "vxlan%s",
 			 ctx->tun_id[0] ? ctx->tun_id : "69");
 		show[3] = vxname;
-		if (mesh_run_capture(show, out, sizeof(out)) == 0) {
+		if (mesh_run_capture(show, out, sizeof(out)) != 0) {
+			/* vxlan not up yet, but startup may have written vtunlan */
+			char cur[64] = "";
+			if (mesh_uci_get("network.vtunlan", cur, sizeof(cur)) == 0 && cur[0])
+				mesh_uci_batch_line("set network.vtunlan.proto='dhcp'");
+		} else {
 			mesh_uci_batch_line("set network.vtunlan.proto='dhcp'");
 			{
 				char *d[] = { "ip", "link", "set", vxname, "down", NULL };
@@ -576,7 +581,14 @@ static void portal_handoff(struct mesh_ctx *ctx)
 		vxlan_up = (mesh_run_capture(show, out, sizeof(out)) == 0);
 		vxlan_pending = !vxlan_up;
 	}
-	if (vxlan_up)
+	/* startup writes vtunlan before its network restart, so a missing
+	 * vxlan no longer means check_vtunnel will restart the network */
+	{
+		char cur[64] = "";
+		if (mesh_uci_get("network.vtunlan", cur, sizeof(cur)) == 0 && cur[0])
+			vxlan_pending = 0;
+	}
+	if (vxlan_up || !vxlan_pending)
 		mesh_uci_batch_line("set network.vtunlan.proto='static'");
 
 	snprintf(setl, sizeof(setl), "set network.%s.proto='static'", ctx->auto_mesh_network);

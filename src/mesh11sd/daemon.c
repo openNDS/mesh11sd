@@ -123,6 +123,8 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 				}
 			}
 		}
+		/* vtunnel UCI first, so this one restart covers it */
+		mesh_vtunnel_preconfigure(ctx);
 		/* v7 ~11100: network restart, bridge mac, dnsmasq, firewall, probe */
 		{
 			char *nr[] = { "/sbin/service", "network", "restart", NULL };
