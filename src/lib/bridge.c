@@ -974,6 +974,22 @@ static void vtunnel_uci_dhcp_firewall(struct mesh_ctx *ctx)
 	}
 }
 
+/* Both vtunlan sections exist. Checking only dhcp.vtunlan misses a
+ * firewall zone that was never written, for example when the dhcp
+ * section alone got committed. */
+static int vtunlan_sections_present(void)
+{
+	char cur[64] = "";
+
+	if (mesh_uci_get("dhcp.vtunlan", cur, sizeof(cur)) != 0 || !cur[0])
+		return 0;
+	cur[0] = '\0';
+	if (mesh_uci_get("firewall.vtunlan", cur, sizeof(cur)) != 0 || !cur[0])
+		return 0;
+	return 1;
+}
+
+
 /* UCI for the vtunnel bridge and the vtunlan interface (no service restarts). */
 static void vtunnel_uci_network(struct mesh_ctx *ctx, const char *vxname,
 				const char *brname, const char *proto)
@@ -1043,8 +1059,7 @@ int mesh_vtunnel_preconfigure(struct mesh_ctx *ctx)
 		 ctx->tun_id[0] ? ctx->tun_id : "69");
 	mesh_set_ula_prefix(ctx, "get");
 
-	cur[0] = '\0';
-	if (mesh_uci_get("dhcp.vtunlan", cur, sizeof(cur)) != 0 || !cur[0])
+	if (!vtunlan_sections_present())
 		vtunnel_uci_dhcp_firewall(ctx);
 
 	/* The committed config is the portal config, so start as a portal.
@@ -1145,7 +1160,7 @@ int mesh_check_vtunnel(struct mesh_ctx *ctx)
 	mesh_set_ula_prefix(ctx, "get");
 
 	/* Ensure dhcp.vtunlan + firewall once */
-	if (mesh_uci_get("dhcp.vtunlan", vtun_uci, sizeof(vtun_uci)) != 0 || !vtun_uci[0]) {
+	if (!vtunlan_sections_present()) {
 		mesh_log_debug(ctx, "vxtunnel configuration");
 		vtunnel_uci_dhcp_firewall(ctx);
 		{
