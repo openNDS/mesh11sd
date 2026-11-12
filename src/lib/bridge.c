@@ -989,13 +989,46 @@ int mesh_vtunnel_preconfigure(struct mesh_ctx *ctx)
 	if (mesh_uci_get("dhcp.vtunlan", cur, sizeof(cur)) != 0 || !cur[0])
 		vtunnel_uci_dhcp_firewall(ctx);
 
-	if (ctx->portal_detect == 0 || ctx->portal_detect == 3 || ctx->portal_detect == 4)
-		proto = "static";
-	else
-		proto = "dhcp";
+	/* The committed config is the portal config, so start as a portal.
+	 * The peer handoff switches proto to dhcp and reloads anyway. */
+	proto = (ctx->portal_detect == 5) ? "dhcp" : "static";
 	vtunnel_uci_network(ctx, vxname, brname, proto);
 	mesh_log_debug(ctx, "vtunnel configuration written before network restart");
 	return 0;
+}
+
+/*
+ * Write the portal-side network values before the startup network restart,
+ * so a node that turns out to be a portal needs no handoff reload:
+ * the mesh ULA prefix and ip6hint, the bridge MAC and the vtunnel.
+ * A node that turns out to be a peer reverts these in its handoff.
+ */
+int mesh_network_preconfigure(struct mesh_ctx *ctx)
+{
+	char mesh_bridge[64];
+	char want[32] = "";
+	char cur[32] = "";
+	char key[96];
+
+	if (ctx->commit_all)
+		return 0;
+	if (ctx->portal_detect != 3 && ctx->portal_detect != 5)
+		mesh_set_ula_prefix(ctx, "set");
+
+	if (ctx->auto_config && !(swconfig_bridge() && ctx->swconfig_mac_skip)) {
+		snprintf(mesh_bridge, sizeof(mesh_bridge), "br-%s", ctx->auto_mesh_network);
+		snprintf(key, sizeof(key), "network.%s.macaddr", ctx->auto_mesh_network);
+		if (mesh_get_indexed_mac(ctx, mesh_bridge, want, sizeof(want)) != -1 && want[0]) {
+			if (mesh_uci_get(key, cur, sizeof(cur)) != 0)
+				cur[0] = '\0';
+			if (!mac_equal(cur, want)) {
+				char setl[192];
+				snprintf(setl, sizeof(setl), "set %s='%s'", key, want);
+				mesh_uci_batch_line(setl);
+			}
+		}
+	}
+	return mesh_vtunnel_preconfigure(ctx);
 }
 
 int mesh_check_vtunnel(struct mesh_ctx *ctx)
