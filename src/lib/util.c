@@ -582,3 +582,41 @@ int mesh_sysfs_write_int_if_changed(const char *path, int want)
 	fclose(f);
 	return 1;
 }
+
+/* Hash of the network config netifd last loaded, so a reload with nothing
+ * new to apply can be skipped. uci show includes uncommitted changes. */
+static char network_applied_hash[72];
+
+static int network_config_hash(char *hash, size_t hashlen)
+{
+	static char out[32768];
+	char *argv[] = { "uci", "-q", "show", "network", NULL };
+
+	out[0] = '\0';
+	if (mesh_run_capture(argv, out, sizeof(out)) != 0 || !out[0])
+		return -1;
+	return mesh_sha256_hex(out, hash, hashlen);
+}
+
+void mesh_network_mark_applied(void)
+{
+	if (network_config_hash(network_applied_hash, sizeof(network_applied_hash)) != 0)
+		network_applied_hash[0] = '\0';
+}
+
+int mesh_network_reload_if_changed(struct mesh_ctx *ctx, const char *who)
+{
+	char hash[72];
+	char *argv[] = { "/sbin/service", "network", "reload", NULL };
+
+	if (network_applied_hash[0] &&
+	    network_config_hash(hash, sizeof(hash)) == 0 &&
+	    !strcmp(hash, network_applied_hash)) {
+		mesh_log_debug(ctx, "%s: network config unchanged, reload skipped", who);
+		return 0;
+	}
+	mesh_log_debug(ctx, "%s: network reload", who);
+	mesh_run_capture(argv, NULL, 0);
+	mesh_network_mark_applied();
+	return 1;
+}

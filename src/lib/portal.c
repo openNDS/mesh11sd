@@ -36,6 +36,8 @@ static void service_cmd(const char *svc, const char *action)
 {
 	char *argv[] = { "/sbin/service", (char *)svc, (char *)action, NULL };
 	mesh_run_capture(argv, NULL, 0);
+	if (!strcmp(svc, "network"))
+		mesh_network_mark_applied();
 }
 
 /* v7: dnsmasq restart must not block — with br-lan down it waits forever */
@@ -600,7 +602,7 @@ static void portal_handoff(struct mesh_ctx *ctx)
 		mesh_apply_portal_ipv4(ctx);
 	/* v7: if vxlan is about to be created, check_vtunnel will network restart */
 	if (!ctx->vtun_enable || !vxlan_pending)
-		service_cmd("network", "reload");
+		mesh_network_reload_if_changed(ctx, "portal handoff");
 
 	if (!ctx->portal_ula[0])
 		mesh_get_portal_ula(ctx, "get");

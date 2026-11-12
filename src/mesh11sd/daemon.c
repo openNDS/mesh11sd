@@ -129,6 +129,7 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 		{
 			char *nr[] = { "/sbin/service", "network", "restart", NULL };
 			mesh_run_capture(nr, NULL, 0);
+			mesh_network_mark_applied();
 		}
 		/* v7 restore_ipv4: ensure calculated portal address is on the bridge */
 		if (ctx->portal_detect != 5 && ctx->portal_use_default_ipv4 == 0)
@@ -212,6 +213,7 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 						char *dns[] = { "/sbin/service", "dnsmasq", "restart", NULL };
 						char *fw[] = { "/sbin/service", "firewall", "restart", NULL };
 						mesh_run_capture(nr, NULL, 0);
+						mesh_network_mark_applied();
 						mesh_move_ethernet_to_vxlan_bridge(ctx);
 						mesh_run_capture(dns, NULL, 0);
 						mesh_run_capture(fw, NULL, 0);

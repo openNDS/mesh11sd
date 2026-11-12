@@ -1082,6 +1082,7 @@ int mesh_check_vtunnel(struct mesh_ctx *ctx)
 			char *nr[] = { "/sbin/service", "network", "restart", NULL };
 			mesh_run_capture(fw, NULL, 0);
 			mesh_run_capture(nr, NULL, 0);
+			mesh_network_mark_applied();
 		}
 		{
 			char st[16];

@@ -494,6 +494,7 @@ static void reload_package(struct mesh_ctx *ctx, const char *pkg)
 	} else if (!strcmp(pkg, "network")) {
 		char *argv[] = { "/sbin/service", "network", "reload", NULL };
 		run_quiet(argv);
+		mesh_network_mark_applied();
 	} else if (!strcmp(pkg, "dhcp")) {
 		char *dns[] = { "/sbin/service", "dnsmasq", "reload", NULL };
 		char *odhcpd[] = { "/sbin/service", "odhcpd", "reload", NULL };
@@ -841,6 +842,7 @@ static void rebuild_portal(struct mesh_ctx *ctx, const char *reason,
 		char *fw[] = { "/sbin/service", "firewall", "reload", NULL };
 
 		run_quiet(nr);
+		mesh_network_mark_applied();
 		run_quiet(dns);
 		run_quiet(fw);
 	}

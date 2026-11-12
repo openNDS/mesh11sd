@@ -150,6 +150,8 @@ int mesh_uci_add(const char *tuple); /* uci add ... */
 int mesh_uci_commit(const char *package);
 int mesh_uci_revert(const char *package);
 int mesh_uci_changes(const char *package, char *buf, size_t buflen);
+void mesh_network_mark_applied(void);
+int mesh_network_reload_if_changed(struct mesh_ctx *ctx, const char *who);
 int mesh_uci_batch_line(const char *line); /* "set foo.bar='baz'" */
 int mesh_uci_show_filter(const char *package, const char *grep_pat,
 			 char *buf, size_t buflen);
