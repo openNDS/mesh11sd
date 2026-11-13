@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 int mesh_get_mesh_iflist(struct mesh_ctx *ctx)
@@ -621,6 +622,8 @@ int mesh_radiophy(const char *radio_or_section, char *phy_out, size_t phy_len)
 	char *slash;
 	int phy_count = 0;
 	char only[32] = "";
+	char first[32] = "";
+	char suffix[16] = "";
 
 	phy_out[0] = '\0';
 	if (!radio_or_section || !radio_or_section[0])
@@ -645,11 +648,13 @@ int mesh_radiophy(const char *radio_or_section, char *phy_out, size_t phy_len)
 			return -1;
 	}
 
-	/* strip +N */
+	/* strip +N, keeping N to pick the phy on a multi-phy device */
 	snprintf(base_path, sizeof(base_path), "%s", path);
 	slash = strchr(base_path, '+');
-	if (slash)
+	if (slash) {
 		*slash = '\0';
+		snprintf(suffix, sizeof(suffix), "%s", slash + 1);
+	}
 
 	if (!strncmp(base_path, "platform/", 9))
 		snprintf(fullpath, sizeof(fullpath), "/sys/devices/%s", base_path);
@@ -668,6 +673,8 @@ int mesh_radiophy(const char *radio_or_section, char *phy_out, size_t phy_len)
 			if (!strncmp(tok, "phy", 3)) {
 				phy_count++;
 				snprintf(only, sizeof(only), "%s", tok);
+				if (!first[0])
+					snprintf(first, sizeof(first), "%s", tok);
 			}
 		}
 	}
@@ -676,8 +683,22 @@ int mesh_radiophy(const char *radio_or_section, char *phy_out, size_t phy_len)
 		return 0;
 	}
 	if (phy_count > 1) {
-		/* take first phy for now (v7 has more complex multi-phy pick) */
-		snprintf(phy_out, phy_len, "%s", only);
+		/*
+		 * Several phys on one device (e.g. MT7986 wmac): the +N path
+		 * suffix names phyN. Otherwise use the first phy, as v7 does.
+		 */
+		char want[64], want_dir[640];
+		struct stat st;
+
+		if (suffix[0]) {
+			snprintf(want, sizeof(want), "phy%s", suffix);
+			snprintf(want_dir, sizeof(want_dir), "%s/%s", phy_dir, want);
+			if (stat(want_dir, &st) == 0) {
+				snprintf(phy_out, phy_len, "%s", want);
+				return 0;
+			}
+		}
+		snprintf(phy_out, phy_len, "%s", first);
 		return 0;
 	}
 	return -1;
