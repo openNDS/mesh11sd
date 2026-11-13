@@ -1889,6 +1889,88 @@ int mesh_pin_active_portal_arp(struct mesh_ctx *ctx)
 	return 0;
 }
 
+/*
+ * Modes 4 (MBP) and 5 (TPN): the wan port is the vxlan trunk. Disable the
+ * wan and wan6 interfaces and add the wan device to the vtunnel bridge, as
+ * uncommitted changes (v7 ensure_wan_on_vxlan_bridge). With do_reload, a
+ * changed network config is reloaded so netifd applies it.
+ */
+int mesh_ensure_wan_on_vxlan_bridge(struct mesh_ctx *ctx, int do_reload)
+{
+	char wanif[64], tunif[32], ports[512], val[16], setl[160];
+	char path[96], master[96];
+	int changed = 0;
+	ssize_t n;
+
+	if (ctx->portal_detect != 4 && ctx->portal_detect != 5)
+		return 0;
+	if (!ctx->vtun_enable || !ctx->tun_id[0] || !strcmp(ctx->tun_id, "0"))
+		return 0;
+
+	snprintf(tunif, sizeof(tunif), "br-tun%s", ctx->tun_id);
+	wanif[0] = '\0';
+	if (mesh_uci_get("network.wan.device", wanif, sizeof(wanif)) != 0 || !wanif[0])
+		mesh_uci_get("network.wan.ifname", wanif, sizeof(wanif));
+	wanif[strcspn(wanif, " \t\n")] = '\0';
+	if (!wanif[0])
+		snprintf(wanif, sizeof(wanif), "wan");
+
+	if (mesh_uci_get("network.wan.disabled", val, sizeof(val)) != 0 || strcmp(val, "1"))
+		changed = 1;
+	if (mesh_uci_get("network.wan6.disabled", val, sizeof(val)) != 0 || strcmp(val, "1"))
+		changed = 1;
+	ports[0] = '\0';
+	mesh_uci_get("network.vtunnel.ports", ports, sizeof(ports));
+	{
+		/* whole-word match of wanif in the ports list */
+		char *p = ports, *tok;
+		int found = 0;
+		while ((tok = strsep(&p, " \t\n")) != NULL)
+			if (!strcmp(tok, wanif))
+				found = 1;
+		if (!found)
+			changed = 1;
+	}
+
+	if (changed) {
+		mesh_uci_batch_line("set network.wan.disabled='1'");
+		mesh_uci_batch_line("set network.wan6.disabled='1'");
+		snprintf(setl, sizeof(setl), "del_list network.vtunnel.ports='%s'", wanif);
+		mesh_uci_batch_line(setl);
+		snprintf(setl, sizeof(setl), "add_list network.vtunnel.ports='%s'", wanif);
+		mesh_uci_batch_line(setl);
+		if (do_reload && !ctx->commit_all) {
+			mesh_log_notice(ctx, "Moving wan device [ %s ] onto [ %s ]", wanif, tunif);
+			mesh_network_reload_if_changed(ctx, "wan to trunk");
+		}
+	}
+
+	/* netifd may not have added it yet; make sure it is in the bridge now */
+	snprintf(path, sizeof(path), "/sys/class/net/%s", tunif);
+	if (access(path, F_OK) != 0)
+		return 0;
+	snprintf(path, sizeof(path), "/sys/class/net/%s/master", wanif);
+	n = readlink(path, master, sizeof(master) - 1);
+	if (n >= 0)
+		master[n] = '\0';
+	else
+		master[0] = '\0';
+	if (!strrchr(master, '/') || strcmp(strrchr(master, '/') + 1, tunif)) {
+		char *nm[] = { "ip", "link", "set", wanif, "nomaster", NULL };
+		char *ms[] = { "ip", "link", "set", wanif, "master", tunif, NULL };
+		snprintf(path, sizeof(path), "/sys/class/net/%s", wanif);
+		if (access(path, F_OK) != 0)
+			return 0;
+		mesh_run_capture(nm, NULL, 0);
+		mesh_run_capture(ms, NULL, 0);
+		mesh_log_notice(ctx, "Added wan device [ %s ] to [ %s ]", wanif, tunif);
+	}
+	{
+		char *up[] = { "ip", "link", "set", wanif, "up", NULL };
+		mesh_run_capture(up, NULL, 0);
+	}
+	return 0;
+}
 
 int mesh_move_ethernet_to_vxlan_bridge(struct mesh_ctx *ctx)
 {

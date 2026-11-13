@@ -140,6 +140,8 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 		}
 		/* portal-side network UCI first, so this one restart covers it */
 		mesh_network_preconfigure(ctx);
+		/* modes 4|5: wan joins the trunk in this same restart */
+		mesh_ensure_wan_on_vxlan_bridge(ctx, 0);
 		/* v7 ~11100: network restart, bridge mac, dnsmasq, firewall, probe */
 		{
 			char *nr[] = { "/sbin/service", "network", "restart", NULL };
@@ -344,8 +346,10 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 		mesh_ccpy_setup(ctx);
 
 		/* v7: manage_fallback_ula_route when portal_detect 4|5 every loop */
-		if (ctx->portal_detect == 4 || ctx->portal_detect == 5)
+		if (ctx->portal_detect == 4 || ctx->portal_detect == 5) {
 			mesh_manage_fallback_ula_route(ctx);
+			mesh_ensure_wan_on_vxlan_bridge(ctx, 1);
+		}
 
 		if (ctx->auto_config != 0 ||
 		    access(MESH11SD_TMPDIR "/auto_config_test", F_OK) == 0 ||
