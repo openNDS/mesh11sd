@@ -270,6 +270,7 @@ int mesh_pin_active_portal_arp(struct mesh_ctx *ctx); /* v7 ARP pin */
 int mesh_pin_active_portal_arp_clear(struct mesh_ctx *ctx);
 int mesh_move_ethernet_to_vxlan_bridge(struct mesh_ctx *ctx);
 int mesh_ensure_wan_on_vxlan_bridge(struct mesh_ctx *ctx, int do_reload); /* modes 4|5 */
+void mesh_check_accept_ra(struct mesh_ctx *ctx); /* v7 per-pass accept_ra */
 int mesh_probe_interface_mac(struct mesh_ctx *ctx);
 int mesh_set_iface_path_cost(struct mesh_ctx *ctx, int path_cost,
 			     const char *bridge, const char *iface);

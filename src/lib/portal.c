@@ -1672,3 +1672,43 @@ int mesh_manage_fallback_ula_route(struct mesh_ctx *ctx)
 
 	return got_portal || is_portal ? 0 : 1;
 }
+
+/*
+ * v7 per-pass accept_ra check on the mesh bridge. A netifd reload puts it
+ * back to the kernel default, which is 0 on a forwarding node, and then a
+ * peer gets no SLAAC addresses and cannot reach the portal ULA.
+ * Portal (not MBP): 0. MBP and peers: 2.
+ */
+void mesh_check_accept_ra(struct mesh_ctx *ctx)
+{
+	char sysf[160], cur[8] = "";
+	const char *want;
+	FILE *f;
+
+	if (!ctx->device[0])
+		return;
+	if (ctx->portal_detect == 4 || !strcmp(ctx->detected_state, "peer"))
+		want = "2";
+	else if (!strcmp(ctx->detected_state, "portal"))
+		want = "0";
+	else
+		return;
+
+	snprintf(sysf, sizeof(sysf), "/proc/sys/net/ipv6/conf/%s/accept_ra", ctx->device);
+	f = fopen(sysf, "r");
+	if (!f)
+		return;
+	if (!fgets(cur, sizeof(cur), f))
+		cur[0] = '\0';
+	fclose(f);
+	cur[strcspn(cur, "\n")] = '\0';
+	if (!strcmp(cur, want))
+		return;
+
+	f = fopen(sysf, "w");
+	if (!f)
+		return;
+	fprintf(f, "%s\n", want);
+	fclose(f);
+	mesh_log_debug(ctx, "accept_ra on [ %s ] set to [ %s ]", ctx->device, want);
+}

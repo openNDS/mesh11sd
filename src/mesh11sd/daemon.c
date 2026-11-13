@@ -350,6 +350,7 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 			mesh_manage_fallback_ula_route(ctx);
 			mesh_ensure_wan_on_vxlan_bridge(ctx, 1);
 		}
+		mesh_check_accept_ra(ctx);
 
 		if (ctx->auto_config != 0 ||
 		    access(MESH11SD_TMPDIR "/auto_config_test", F_OK) == 0 ||
