@@ -459,9 +459,9 @@ int mesh_ctx_load_setup(struct mesh_ctx *ctx)
 		ctx->mesh_node_mobility_level = 2;
 
 	if (mesh_uci_get("mesh11sd.setup.use_default_beacon_interval", buf, sizeof(buf)) == 0)
-		ctx->use_default_beacon_interval = parse_int_default(buf, 0) > 0 ? 1 : 0;
+		ctx->use_default_beacon_interval = parse_int_default(buf, 1) > 0 ? 1 : 0;
 	else
-		ctx->use_default_beacon_interval = 0;
+		ctx->use_default_beacon_interval = 1;
 
 	/* beacon from mobility level 2 default unless overridden later */
 	{

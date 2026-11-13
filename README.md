@@ -307,7 +307,7 @@ MBP/TPN: WAN is added to `br-tun$tun_id`. MRP portal may serve DHCPv4/RA on vtun
 | `manage_opennds_startup` | 1 | If opennds is installed: started on a portal or CPE, stopped (and autostart disabled) on a peer. 0 leaves opennds alone. |
 | `log_mountpoint` | `/tmp` | Not on system flash for long-term logs. Subdir `mesh11sd` holds the log only. Runtime state stays in `/tmp/mesh11sd`. |
 | `max_log_entries` | 500 | `mesh11sd read_log`. |
-| `use_default_beacon_interval` | 0 | 1 forces beacon interval 100. ath11k, mt76_wmac, and a multi-band wiphy force 100 even when this is 0. |
+| `use_default_beacon_interval` | 1 | 1 leaves the beacon interval at the driver default. 0 sets it from `mesh_node_mobility_level`, except on ath11k, mt76_wmac, and a multi-band wiphy, which keep 100. |
 | `mesh_dtim_period` | 2 | Overridden by mobility level unless the driver ignores it. |
 | `mesh_node_mobility_level` | **2** | 0–6; see CLI. |
 | `cpe_mode` | `nat66` | CPE only: `nat66` or `prefix_delegation`. |
@@ -457,7 +457,7 @@ Airtime link metric updates are driven mainly by **beacon interval** and HWMP PR
 | 3–5 | Faster movement, more overhead |
 | 6 | PTT / PA voice |
 
-ath11k, an mt76_wmac radio, and a multi-band wiphy keep beacon interval 100. Other drivers that break when the interval changes (for example IPQ6018) need `use_default_beacon_interval=1`.
+By default (`use_default_beacon_interval=1`) the beacon interval is left at the driver default, because many drivers misbehave when it changes. With `use_default_beacon_interval=0` it follows `mesh_node_mobility_level`, but ath11k, an mt76_wmac radio, and a multi-band wiphy still keep 100.
 
 ## 12. Default configuration file
 
@@ -1130,16 +1130,14 @@ config mesh11sd 'setup'
 	###########################################################################################
 	# use_default_beacon_interval (optional)
 	#
-	# When set, forces beacon interval 100 on the mesh phy.
-	# For most drivers, the beacon interval defaults to 100ms.
-	# mesh11sd otherwise sets the beacon interval from mesh_node_mobility_level.
-	# Some wireless drivers fail if the beacon interval is changed (eg Qualcomm Atheros IPQ6018).
-	# ath11k, an mt76_wmac radio, and a multi-band wiphy are forced to 100 even when this is unset.
-	# Default: 0 (disabled)
-	# Set to 1 to force
+	# When set (the default), mesh11sd leaves the beacon interval at the driver default (usually 100ms).
+	# Many wireless drivers misbehave if the beacon interval is changed (eg Qualcomm Atheros IPQ6018, MT7986).
+	# Set to 0 to let mesh11sd set the beacon interval from mesh_node_mobility_level.
+	# Even then, ath11k, an mt76_wmac radio, and a multi-band wiphy keep 100.
+	# Default: 1 (driver default beacon interval)
 	#
 	# Example:
-	#option use_default_beacon_interval '1'
+	#option use_default_beacon_interval '0'
 
 	###########################################################################################
 	# mesh_dtim_period (optional)

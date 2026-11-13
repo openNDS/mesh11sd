@@ -388,30 +388,26 @@ static int mobility_eval(struct mesh_ctx *ctx, struct mobility_eval *e, int log_
 	    ctx->portal_detect == 4)
 		e->rootmode = 4;
 
+	/*
+	 * Changing the beacon interval breaks some drivers, so by default
+	 * (use_default_beacon_interval=1) it stays at 100. The driver
+	 * overrides below only matter when the change is enabled.
+	 */
 	if (ctx->use_default_beacon_interval > 0) {
 		e->beacon_int = 100;
-		if (log_info)
-			mesh_log_info(ctx,
-				      "Default beacon interval requested [ %d ] Mesh mobility may be suboptimal.",
-				      e->beacon_int);
-	}
-
-	if (!strcmp(ctx->mesh_driver, "ath11k")) {
+	} else if (!strcmp(ctx->mesh_driver, "ath11k")) {
 		e->beacon_int = 100;
 		if (log_info)
 			mesh_log_info(ctx,
 				      "Qualcomm ath11k detected, beacon interval override to [ %d ms ] (workaround for ath11k bug). Mesh mobility may be suboptimal.",
 				      e->beacon_int);
-	}
-	if (!strcmp(ctx->mesh_driver, "mt76_wmac")) {
+	} else if (!strcmp(ctx->mesh_driver, "mt76_wmac")) {
 		e->beacon_int = 100;
 		if (log_info)
 			mesh_log_info(ctx,
 				      "MediaTek mt76_wmac detected, beacon interval override to [ %d ms ] (workaround for mt7603 beacon bug). Mesh mobility may be suboptimal.",
 				      e->beacon_int);
-	}
-
-	if (e->phy[0] && mesh_phy_is_multi_band(e->phy)) {
+	} else if (e->phy[0] && mesh_phy_is_multi_band(e->phy)) {
 		e->beacon_int = 100;
 		if (log_info)
 			mesh_log_info(ctx,
@@ -613,9 +609,12 @@ int mesh_mobility_settings(struct mesh_ctx *ctx, const char *mode)
 		if (e.radio[0]) {
 			snprintf(setl, sizeof(setl), "del wireless.%s.beacon_int", e.radio);
 			mesh_uci_batch_line(setl);
-			snprintf(setl, sizeof(setl), "set wireless.%s.beacon_int='%d'",
-				 e.radio, e.beacon_int);
-			mesh_uci_batch_line(setl);
+			/* default: leave beacon_int unset so the driver default applies */
+			if (!ctx->use_default_beacon_interval) {
+				snprintf(setl, sizeof(setl), "set wireless.%s.beacon_int='%d'",
+					 e.radio, e.beacon_int);
+				mesh_uci_batch_line(setl);
+			}
 		}
 		if (e.stanza[0]) {
 			snprintf(setl, sizeof(setl), "set %s.dtim_period='%d'",

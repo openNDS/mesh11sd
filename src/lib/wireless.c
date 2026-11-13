@@ -804,16 +804,17 @@ int mesh_get_wiphys(struct mesh_ctx *ctx)
 
 int mesh_get_valid_channels(char *out, size_t outlen)
 {
-	char raw[8192];
-	char *argv[] = { "iw", "list", NULL };
-	char *p, *line;
+	/* Stream `iw list`: it is several KB per phy, so a fixed buffer
+	 * would drop the later phys (and their bands) on multi-phy devices. */
+	FILE *f;
+	char line[512];
 	size_t used = 0;
 
 	out[0] = '\0';
-	if (mesh_run_capture(argv, raw, sizeof(raw)) != 0)
+	f = popen("iw list 2>/dev/null", "r");
+	if (!f)
 		return -1;
-	p = raw;
-	while ((line = strsep(&p, "\n")) != NULL) {
+	while (fgets(line, sizeof(line), f)) {
 		char *br;
 		int ch;
 		if (!strstr(line, "MHz [") || strstr(line, "disabled") ||
@@ -822,14 +823,16 @@ int mesh_get_valid_channels(char *out, size_t outlen)
 		br = strchr(line, '[');
 		if (!br)
 			continue;
-		if (sscanf(br, "[%d]", &ch) == 1) {
+		if (sscanf(br, "[%d]", &ch) == 1 && used < outlen) {
 			int n = snprintf(out + used, outlen - used, "%s%d",
 					 used ? " " : "", ch);
 			if (n < 0 || (size_t)n >= outlen - used)
-				break;
-			used += (size_t)n;
+				used = outlen; /* full: keep reading to drain the pipe */
+			else
+				used += (size_t)n;
 		}
 	}
+	pclose(f);
 	return 0;
 }
 
