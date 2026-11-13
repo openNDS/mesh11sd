@@ -2,6 +2,7 @@
 #include "mesh11sd.h"
 
 #include <ctype.h>
+#include <dirent.h>
 #include <fcntl.h>
 #include <sys/wait.h>
 #include <stdio.h>
@@ -704,41 +705,50 @@ int mesh_radiophy(const char *radio_or_section, char *phy_out, size_t phy_len)
 	return -1;
 }
 
+static int wiphy_index(const char *name)
+{
+	return atoi(name + 3);
+}
+
 int mesh_get_wiphys(struct mesh_ctx *ctx)
 {
-	char out[4096];
-	char *argv[] = { "iw", "list", NULL };
 	char show[8192];
 	char *p, *line;
-	int i;
+	DIR *d;
+	struct dirent *de;
+	int i, j;
 
 	ctx->wiphy_count = 0;
 	ctx->radio_count = 0;
 	mesh_mkdir_p(MESH11SD_TMPDIR "/wiphys");
 	mesh_mkdir_p(MESH11SD_TMPDIR "/radios");
 
-	if (mesh_run_capture(argv, out, sizeof(out)) == 0) {
-		p = out;
-		while ((line = strsep(&p, "\n")) != NULL) {
-			char *w;
-			if (!(w = strstr(line, "Wiphy ")))
+	/*
+	 * List phys from sysfs. `iw list` output is several KB per phy, so a
+	 * fixed buffer would only see the first one on multi-phy devices.
+	 */
+	d = opendir("/sys/class/ieee80211");
+	if (d) {
+		while ((de = readdir(d)) != NULL) {
+			if (strncmp(de->d_name, "phy", 3) != 0)
 				continue;
-			w += 6;
-			while (*w == ' ')
-				w++;
 			if (ctx->wiphy_count < MESH11SD_MAX_RADIOS) {
-				sscanf(w, "%15s", ctx->wiphys[ctx->wiphy_count]);
+				snprintf(ctx->wiphys[ctx->wiphy_count],
+					 sizeof(ctx->wiphys[0]), "%s", de->d_name);
 				ctx->wiphy_count++;
 			}
 		}
-		/* reverse order as v7 */
-		for (i = 0; i < ctx->wiphy_count / 2; i++) {
-			char tmp[16];
-			snprintf(tmp, sizeof(tmp), "%s", ctx->wiphys[i]);
-			snprintf(ctx->wiphys[i], sizeof(ctx->wiphys[0]), "%s",
-				 ctx->wiphys[ctx->wiphy_count - 1 - i]);
-			snprintf(ctx->wiphys[ctx->wiphy_count - 1 - i],
-				 sizeof(ctx->wiphys[0]), "%s", tmp);
+		closedir(d);
+	}
+	/* highest index first, as v7's reversed `iw list` order */
+	for (i = 0; i < ctx->wiphy_count; i++) {
+		for (j = i + 1; j < ctx->wiphy_count; j++) {
+			if (wiphy_index(ctx->wiphys[j]) > wiphy_index(ctx->wiphys[i])) {
+				char tmp[16];
+				snprintf(tmp, sizeof(tmp), "%s", ctx->wiphys[i]);
+				snprintf(ctx->wiphys[i], sizeof(ctx->wiphys[0]), "%s", ctx->wiphys[j]);
+				snprintf(ctx->wiphys[j], sizeof(ctx->wiphys[0]), "%s", tmp);
+			}
 		}
 	}
 
