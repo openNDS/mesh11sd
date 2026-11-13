@@ -161,11 +161,70 @@ int mesh_cli_commit_all(struct mesh_ctx *ctx, int argc, char **argv)
 	return 0;
 }
 
+/* yes/no prompt on stdin; 1 for "yes" */
+static int confirm_yes(void)
+{
+	char reply[32] = "";
+	size_t n;
+
+	fputs("    Do you want to continue? [yes/no] ", stdout);
+	fflush(stdout);
+	if (!fgets(reply, sizeof(reply), stdin))
+		reply[0] = '\0';
+	n = strlen(reply);
+	while (n && (reply[n - 1] == '\n' || reply[n - 1] == '\r'))
+		reply[--n] = '\0';
+	return !strcmp(reply, "yes");
+}
+
+/*
+ * Copy each <pkg>_mesh11sd_default backup back over /etc/config/<pkg> and
+ * forget the committed portal copies so they are rebuilt. With keep_own,
+ * /etc/config/mesh11sd itself is left as it is.
+ */
+static void restore_defaults_and_reboot(int keep_own)
+{
+	int i;
+
+	for (i = 0; COMMIT_PKGS[i]; i++) {
+		char src[128], dst[64];
+
+		if (!keep_own || strcmp(COMMIT_PKGS[i], "mesh11sd") != 0) {
+			snprintf(src, sizeof(src), "/etc/config/%s_mesh11sd_default",
+				 COMMIT_PKGS[i]);
+			snprintf(dst, sizeof(dst), "/etc/config/%s", COMMIT_PKGS[i]);
+			if (access(src, R_OK) == 0) {
+				char *argv_cp[] = { "cp", src, dst, NULL };
+				mesh_run_capture(argv_cp, NULL, 0);
+			}
+		}
+		/* Forget the committed portal config so it is rebuilt
+		 * from scratch rather than restored over the defaults. */
+		snprintf(src, sizeof(src), "/etc/config/%s_mesh11sd_portal",
+			 COMMIT_PKGS[i]);
+		unlink(src);
+	}
+	puts("Restore complete, auto configuration will rebuild - restarting......");
+	for (i = 0; i < 5; i++) {
+		sleep(1);
+		fputs("* ", stdout);
+		fflush(stdout);
+	}
+	puts("");
+	puts("==========================================================================================================");
+	puts("");
+	puts("Rebooting...");
+	{
+		char *sync_a[] = { "sync", NULL };
+		char *reb[] = { "reboot", NULL };
+		mesh_run_capture(sync_a, NULL, 0);
+		mesh_run_capture(reb, NULL, 0);
+	}
+}
+
 int mesh_cli_revert_all(struct mesh_ctx *ctx, int argc, char **argv)
 {
 	int do_revert = (argc >= 3 && !strcmp(argv[2], "revert"));
-	char reply[32] = "";
-	int i;
 
 	if (ctx->auto_config == 0) {
 		puts("Auto config is not enabled - aborting...");
@@ -183,50 +242,46 @@ int mesh_cli_revert_all(struct mesh_ctx *ctx, int argc, char **argv)
 		return 0;
 	}
 	puts("    Connection will be lost if you proceed as node will restart..... ");
-	fputs("    Do you want to continue? [yes/no] ", stdout);
-	fflush(stdout);
-	if (!fgets(reply, sizeof(reply), stdin))
-		reply[0] = '\0';
-	{
-		size_t n = strlen(reply);
-		while (n && (reply[n - 1] == '\n' || reply[n - 1] == '\r'))
-			reply[--n] = '\0';
-	}
-	if (!strcmp(reply, "yes")) {
-		for (i = 0; COMMIT_PKGS[i]; i++) {
-			char src[128], dst[64];
-			snprintf(src, sizeof(src), "/etc/config/%s_mesh11sd_default",
-				 COMMIT_PKGS[i]);
-			snprintf(dst, sizeof(dst), "/etc/config/%s", COMMIT_PKGS[i]);
-			if (access(src, R_OK) == 0) {
-				char *argv_cp[] = { "cp", src, dst, NULL };
-				mesh_run_capture(argv_cp, NULL, 0);
-			}
-			/* Forget the committed portal config so it is rebuilt
-			 * from scratch rather than restored over the defaults. */
-			snprintf(src, sizeof(src), "/etc/config/%s_mesh11sd_portal",
-				 COMMIT_PKGS[i]);
-			unlink(src);
-		}
-		puts("Revert complete, auto configuration will rebuild - restarting......");
-		for (i = 0; i < 5; i++) {
-			sleep(1);
-			fputs("* ", stdout);
-			fflush(stdout);
-		}
-		puts("");
+	if (confirm_yes())
+		restore_defaults_and_reboot(0);
+	else
+		puts("Aborting revert_all");
+	puts("==========================================================================================================");
+	puts("");
+	return 0;
+}
+
+/*
+ * restore_all: put wireless, dhcp, network, firewall and system back to how
+ * they were before mesh11sd first ran, keeping /etc/config/mesh11sd. For when
+ * something (e.g. a package install running a blanket uci commit) has written
+ * mesh11sd's staged changes to flash.
+ */
+int mesh_cli_restore_all(struct mesh_ctx *ctx, int argc, char **argv)
+{
+	int do_restore = (argc >= 3 && !strcmp(argv[2], "restore"));
+
+	(void)ctx;
+	puts("==========================================================================================================");
+	puts("Restore the system configs to how they were before mesh11sd first ran");
+	if (!do_restore) {
+		puts("    Usage: mesh11sd restore_all restore ");
+		puts("    Restores wireless, dhcp, network, firewall and system from the backups mesh11sd made ");
+		puts("    The mesh11sd config is kept ");
+		puts("    Connection will be lost if you proceed as node will restart..... ");
 		puts("==========================================================================================================");
 		puts("");
-		puts("Rebooting...");
-		{
-			char *sync_a[] = { "sync", NULL };
-			char *reb[] = { "reboot", NULL };
-			mesh_run_capture(sync_a, NULL, 0);
-			mesh_run_capture(reb, NULL, 0);
-		}
-	} else {
-		puts("Aborting revert_all");
+		return 0;
 	}
+	if (access("/etc/config/network_mesh11sd_default", R_OK) != 0) {
+		puts("No backups found - aborting...");
+		return 1;
+	}
+	puts("    Connection will be lost if you proceed as node will restart..... ");
+	if (confirm_yes())
+		restore_defaults_and_reboot(1);
+	else
+		puts("Aborting restore_all");
 	puts("==========================================================================================================");
 	puts("");
 	return 0;

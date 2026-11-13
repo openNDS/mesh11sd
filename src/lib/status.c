@@ -530,6 +530,7 @@ int mesh_cli_status(struct mesh_ctx *ctx)
 	mesh_json_field_int("    ", "auto_config", ctx->auto_config, 0);
 	mesh_json_field("    ", "auto_mesh_network", ctx->auto_mesh_network, 0);
 	mesh_json_field("    ", "auto_mesh_band", ctx->auto_mesh_band, 0);
+	mesh_json_field_int("    ", "channel_bandwidth_2g", ctx->channel_bandwidth_2g, 0);
 	if (!ctx->mesh_driver[0] && ctx->wiphy_count > 0) {
 		char path[160], dline[128];
 		FILE *df;
@@ -644,6 +645,8 @@ int mesh_cli_status(struct mesh_ctx *ctx)
 	mesh_json_field_int("    ", "ssid_suffix_enable", ctx->ssid_suffix_enable, 0);
 	/* apmond_* intentionally omitted from Stage 1 port */
 	mesh_json_field_int("    ", "odhcpd_log_level", ctx->odhcpd_log_level, 0);
+	if (access("/etc/init.d/opennds", X_OK) == 0)
+		mesh_json_field_int("    ", "manage_opennds_startup", ctx->manage_opennds_startup, 0);
 	if (ctx->portal_detect == 3)
 		mesh_json_field("    ", "cpe_mode", ctx->cpe_mode, 0);
 	mesh_json_field_int("    ", "debuglevel", ctx->debuglevel, 1);

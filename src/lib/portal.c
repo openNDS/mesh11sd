@@ -56,6 +56,36 @@ static void service_cmd_bg(const char *svc, const char *action)
 	}
 }
 
+/*
+ * v7 manage_opennds. With manage_opennds_startup on (the default) and
+ * opennds installed: "stop" disables its autostart and stops it (a peer),
+ * "start" or "restart" restarts it (a portal or a CPE).
+ */
+void mesh_manage_opennds(struct mesh_ctx *ctx, const char *action)
+{
+	char *enabled[] = { "/etc/init.d/opennds", "enabled", NULL };
+	char *running[] = { "/etc/init.d/opennds", "running", NULL };
+
+	if (!ctx->manage_opennds_startup || !action)
+		return;
+	if (access("/etc/init.d/opennds", X_OK) != 0)
+		return;
+	if (!strcmp(action, "stop")) {
+		if (mesh_run_capture(enabled, NULL, 0) == 0) {
+			mesh_log_debug(ctx, "Disabling auto-startup of opennds");
+			service_cmd("opennds", "disable");
+		}
+		if (mesh_run_capture(running, NULL, 0) == 0) {
+			mesh_log_debug(ctx, "The opennds daemon is running, stopping it");
+			service_cmd("opennds", "stop");
+		}
+		return;
+	}
+	mesh_log_debug(ctx, "Restarting the opennds daemon");
+	service_cmd_bg("opennds", "restart");
+}
+
+
 /* Split a portal ULA (fdxx:xxxx:xxxx:subnet::1 or the same with /64)
  * into the /48 base and the 4th hextet. Keeps the hextet text as-is so
  * leading zeros are not dropped. */
@@ -338,6 +368,12 @@ int mesh_get_portal_state(struct mesh_ctx *ctx)
 		return 0;
 	}
 	if (ctx->portal_detect == 3) {
+		/* v7 detect_cpe_upstream: default route via the mesh on br-wan */
+		if (mesh_detect_cpe_upstream(ctx) == 0) {
+			snprintf(ctx->is_portal, sizeof(ctx->is_portal), "detected");
+			mesh_log_debug(ctx, "Node has upstream gateway(s), zone [ %s ], [ %s ], [ %s ]",
+				       ctx->up_zone, ctx->default_ipv6_gw, ctx->default_ipv4_gw);
+		}
 		snprintf(ctx->detected_state, sizeof(ctx->detected_state), "peer");
 		mesh_log_debug(ctx, "CPE mode...");
 		write_is_portal(ctx);
@@ -647,6 +683,8 @@ static void peer_handoff(struct mesh_ctx *ctx)
 	mesh_get_mesh_iflist(ctx);
 	ctx->failcount = 0;
 	ctx->network_restart = 0;
+	/* Just become a peer, so stop opennds */
+	mesh_manage_opennds(ctx, "stop");
 	note_role(ctx, "peer");
 }
 
@@ -782,6 +820,9 @@ static void portal_handoff(struct mesh_ctx *ctx)
 	}
 	if (ctx->daemon_startup)
 		ctx->daemon_startup = 0;
+	/* Just become a portal, so start opennds */
+	if (ctx->portal_detect != 4)
+		mesh_manage_opennds(ctx, "start");
 	note_role(ctx, "portal");
 }
 
@@ -892,8 +933,13 @@ int mesh_check_portal(struct mesh_ctx *ctx)
 
 	mesh_get_portal_state(ctx);
 
-	if (ctx->portal_detect == 3 || ctx->portal_detect == 5) {
-		/* CPE/TPN special-cased earlier in v7; peer-like */
+	if (ctx->portal_detect == 3) {
+		/* CPE: always a peer; v7 runs the portal watchdog for it */
+		mesh_portal_watchdog(ctx);
+		return 0;
+	}
+	if (ctx->portal_detect == 5) {
+		/* TPN special-cased earlier in v7; peer-like */
 		return 0;
 	}
 	if (ctx->portal_detect == 4)
@@ -923,7 +969,7 @@ int mesh_check_portal(struct mesh_ctx *ctx)
 
 int mesh_portal_watchdog(struct mesh_ctx *ctx)
 {
-	int auto_detect = (ctx->portal_detect == 1);
+	int auto_detect = (ctx->portal_detect == 1 || ctx->portal_detect == 3);
 
 	if (strcmp(ctx->detected_state, "portal") != 0 && auto_detect) {
 		if (ctx->portal_detect_threshold > ctx->failcount) {
@@ -1625,4 +1671,44 @@ int mesh_manage_fallback_ula_route(struct mesh_ctx *ctx)
 	}
 
 	return got_portal || is_portal ? 0 : 1;
+}
+
+/*
+ * v7 per-pass accept_ra check on the mesh bridge. A netifd reload puts it
+ * back to the kernel default, which is 0 on a forwarding node, and then a
+ * peer gets no SLAAC addresses and cannot reach the portal ULA.
+ * Portal (not MBP): 0. MBP and peers: 2.
+ */
+void mesh_check_accept_ra(struct mesh_ctx *ctx)
+{
+	char sysf[160], cur[8] = "";
+	const char *want;
+	FILE *f;
+
+	if (!ctx->device[0])
+		return;
+	if (ctx->portal_detect == 4 || !strcmp(ctx->detected_state, "peer"))
+		want = "2";
+	else if (!strcmp(ctx->detected_state, "portal"))
+		want = "0";
+	else
+		return;
+
+	snprintf(sysf, sizeof(sysf), "/proc/sys/net/ipv6/conf/%s/accept_ra", ctx->device);
+	f = fopen(sysf, "r");
+	if (!f)
+		return;
+	if (!fgets(cur, sizeof(cur), f))
+		cur[0] = '\0';
+	fclose(f);
+	cur[strcspn(cur, "\n")] = '\0';
+	if (!strcmp(cur, want))
+		return;
+
+	f = fopen(sysf, "w");
+	if (!f)
+		return;
+	fprintf(f, "%s\n", want);
+	fclose(f);
+	mesh_log_debug(ctx, "accept_ra on [ %s ] set to [ %s ]", ctx->device, want);
 }

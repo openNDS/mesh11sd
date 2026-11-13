@@ -34,7 +34,7 @@ If the image uses **ath10k-ct**, switch to non-ct ath10k packages; otherwise the
 3. **Auto detect (`portal_detect=1`)** — WAN up → MRP; WAN down → Mesh Peer (MPE)
 4. **Mesh Bridge Portal (MBP)** — bridged to the existing LAN/ISP (no IPv4 NAT); WAN is the vxlan trunk
 5. **Trunk Peer (TPN)** — WAN is a vxlan trunk endpoint (VLANs); LAN is the mesh (no VLANs)
-6. **CPE** — mesh is the WAN; LAN is a private NAT network (IPv4 + NAT66 / PD / relay)
+6. **CPE** — mesh is the WAN; LAN is a private NAT network (IPv4 + NAT66 or PD)
 7. **OWE** on mesh gates by default (optional WPA2/WPA3)
 8. **Guest / vxtunnel** SSIDs over VXLAN without configuring 802.1Q on the mesh
 9. **apmond** — AP and Ethernet client stats collected on the portal (`mesh11sd show_ap_data`)
@@ -51,7 +51,7 @@ If the image uses **ath10k-ct**, switch to non-ct ath10k packages; otherwise the
 | --- | --- | --- |
 | **1** (default) | MRP / MPE | Auto: WAN link → routed portal (DHCP/RA into the mesh). No WAN → layer-2 peer (DHCP client). |
 | **0** | MRP | Always routed portal. |
-| **3** | CPE | Mesh is upstream WAN. LAN is a NAT subnet (`cpe_mode`: `nat66` default, `prefix_delegation`, `relay`). |
+| **3** | CPE | Mesh is upstream WAN. LAN is a NAT subnet (`cpe_mode`: `nat66` default, or `prefix_delegation`). |
 | **4** | MBP | Bridged portal. **LAN** to ISP/existing LAN. **WAN** is vxlan trunk (`br-tun$tun_id`). |
 | **5** | TPN | Peer. **LAN** = mesh (no VLANs). **WAN** = vxlan trunk (VLANs OK). Works with portal 0, 1, or 4. |
 | **2** | — | Unused (use 5). |
@@ -249,7 +249,8 @@ Values in the tables below are script defaults when the option is unset. Set wit
 | --- | --- | --- |
 | `auto_mesh_id` | `--__` | Seed hashed to mesh ID. **Same on every node.** |
 | `auto_mesh_key` | hashed | Extra seed for SAE key. Same on every node if set. |
-| `auto_mesh_band` | `2g40` | `2g`, `2g40`, `5g`, `6g`, `60g`. |
+| `auto_mesh_band` | `2g` | `2g`, `5g`, `6g`, `60g`. The old value `2g40` is read as `2g`. |
+| `channel_bandwidth_2g` | `40` | 2.4 GHz channel bandwidth in MHz, `20` or `40`. |
 | `mesh_phy_index` | unset | Force `phyN` for the mesh vif. |
 | `mesh_multi_interfaces` | disabled | Set `enabled` to allow more than one mesh vif. |
 | `country` | DFS-ETSI if unset | Overrides wireless country. |
@@ -303,13 +304,13 @@ MBP/TPN: WAN is added to `br-tun$tun_id`. MRP portal may serve DHCPv4/RA on vtun
 | `apmond_cgi_dir` | `/www/cgi-bin/` | |
 | `apmon_verbose_debug_enable` | 0 | |
 | `mesh_backhaul_led` | `auto` | `none` to disable; or `color:function` from `/sys/class/leds`. |
-| `manage_opennds_startup` | 1 | If opennds is installed. |
+| `manage_opennds_startup` | 1 | If opennds is installed: started on a portal or CPE, stopped (and autostart disabled) on a peer. 0 leaves opennds alone. |
 | `log_mountpoint` | `/tmp` | Not on system flash for long-term logs. Subdir `mesh11sd` holds the log only. Runtime state stays in `/tmp/mesh11sd`. |
 | `max_log_entries` | 500 | `mesh11sd read_log`. |
-| `use_default_beacon_interval` | 0 | 1 forces beacon interval 100. ath11k, mt76_wmac, and a multi-band wiphy force 100 even when this is 0. |
+| `use_default_beacon_interval` | 1 | 1 leaves the beacon interval at the driver default. 0 sets it from `mesh_node_mobility_level`, except on ath11k, mt76_wmac, and a multi-band wiphy, which keep 100. |
 | `mesh_dtim_period` | 2 | Overridden by mobility level unless the driver ignores it. |
 | `mesh_node_mobility_level` | **2** | 0–6; see CLI. |
-| `cpe_mode` | `nat66` | CPE only: `nat66`, `prefix_delegation`, `relay`. |
+| `cpe_mode` | `nat66` | CPE only: `nat66` or `prefix_delegation`. |
 | `odhcpd_log_level` | 3 | 0–7. |
 | `wpad_debuglevel` | 2 | 0–5; rewrites wpad init flags. |
 | `connect_show_all` | 1 | `connect` with no args lists island meshes too. |
@@ -411,6 +412,7 @@ The daemon runs as a service. CLI is for status, logs, and a few runtime knobs. 
 | `mesh11sd commit_changes commit` | Persist leechmode, txpower, rssi |
 | `mesh11sd commit_all commit` | Write auto_config result to files |
 | `mesh11sd revert_all revert` | Undo commit_all |
+| `mesh11sd restore_all restore` | Put wireless, dhcp, network, firewall and system back to their state before mesh11sd first ran, keeping the mesh11sd config, then reboot. Use it if something has committed mesh11sd's staged changes, such as a package install that runs a blanket `uci commit`. |
 | `mesh11sd dhcp4_renew [ifname]` | Force DHCPv4 (default: mesh network device) |
 | `mesh11sd set_ula_prefix get` / `set` / `revert` | Mesh ULA /48 |
 | `mesh11sd force_ipv4_download` | Force apk (wget) downloads over IPv4 |
@@ -455,7 +457,7 @@ Airtime link metric updates are driven mainly by **beacon interval** and HWMP PR
 | 3–5 | Faster movement, more overhead |
 | 6 | PTT / PA voice |
 
-ath11k, an mt76_wmac radio, and a multi-band wiphy keep beacon interval 100. Other drivers that break when the interval changes (for example IPQ6018) need `use_default_beacon_interval=1`.
+By default (`use_default_beacon_interval=1`) the beacon interval is left at the driver default, because many drivers misbehave when it changes. With `use_default_beacon_interval=0` it follows `mesh_node_mobility_level`, but ath11k, an mt76_wmac radio, and a multi-band wiphy still keep 100.
 
 ## 12. Default configuration file
 
@@ -523,7 +525,7 @@ config mesh11sd 'setup'
 	#  	A nat routed ipv4 lan is created with its own ipv4 subnet.
 	#  	By default a nat66 routed ipv6 lan is created with its own ipv6 subnet.
 	#
-	#   	Depending on the upstream ISP, possible optional modes are prefix_delegation, relay and nat66, settable using the cpe_mode option (see below)
+	#   	Depending on the upstream ISP, possible modes are nat66 and prefix_delegation, settable using the cpe_mode option (see below)
 	#
 	#  4  - Mesh Bridge Portal (MBP) node. Force Bridge vxlan trunk portal node
 	#	This mode should be used if a bridged connection to the upstream ISP router is required (ie bridged/no-nat ipv4/ipv6 ).
@@ -672,8 +674,9 @@ config mesh11sd 'setup'
 	# auto_mesh_band (optional)
 	#
 	# Configure the band to use for the mesh network
-	# Valid values: 2g, 2g40, 5g, 6g, 60g
-	# Default 2g40
+	# Valid values: 2g, 5g, 6g, 60g
+	# Default 2g
+	# The old value 2g40 is read as 2g (see channel_bandwidth_2g)
 	#
 	# If set, it must also be set to the same value on every mesh node
 	#
@@ -681,6 +684,15 @@ config mesh11sd 'setup'
 	# regardless of the configured auto_mesh_band
 	#
 	#option auto_mesh_band '5g'
+
+	###########################################################################################
+	# channel_bandwidth_2g (optional)
+	#
+	# Channel bandwidth in MHz for the 2.4 GHz radio
+	# Valid values: 20, 40
+	# Default 40
+	#
+	#option channel_bandwidth_2g '20'
 
 	###########################################################################################
 	# mesh_phy_index (optional)
@@ -1118,16 +1130,14 @@ config mesh11sd 'setup'
 	###########################################################################################
 	# use_default_beacon_interval (optional)
 	#
-	# When set, forces beacon interval 100 on the mesh phy.
-	# For most drivers, the beacon interval defaults to 100ms.
-	# mesh11sd otherwise sets the beacon interval from mesh_node_mobility_level.
-	# Some wireless drivers fail if the beacon interval is changed (eg Qualcomm Atheros IPQ6018).
-	# ath11k, an mt76_wmac radio, and a multi-band wiphy are forced to 100 even when this is unset.
-	# Default: 0 (disabled)
-	# Set to 1 to force
+	# When set (the default), mesh11sd leaves the beacon interval at the driver default (usually 100ms).
+	# Many wireless drivers misbehave if the beacon interval is changed (eg Qualcomm Atheros IPQ6018, MT7986).
+	# Set to 0 to let mesh11sd set the beacon interval from mesh_node_mobility_level.
+	# Even then, ath11k, an mt76_wmac radio, and a multi-band wiphy keep 100.
+	# Default: 1 (driver default beacon interval)
 	#
 	# Example:
-	#option use_default_beacon_interval '1'
+	#option use_default_beacon_interval '0'
 
 	###########################################################################################
 	# mesh_dtim_period (optional)
@@ -1165,13 +1175,13 @@ config mesh11sd 'setup'
 	# Sets the cpe ipv6 mode
 	# Applicable only when portal_detect is set to 3
 	#
-	# Possible modes are prefix_delegation, relay and nat66
+	# Possible modes are nat66 and prefix_delegation
 	#
 	# Prefix Delegation works with all client devices, including Android,
 	#	but the ISP needs to provide a prefix large enough to delegate a /64 subnet to every cpe mesh node.
 	#	Exhausting available delegations is a danger.
 	#
-	# Relay does not require any prefix delegation, but some versions of Android devices will detect the relay and turn off the device's interface within ~60 seconds - because - Google.
+	# Relay is not supported. Some Android versions detect a relay and turn off their IPv6 interface within ~60 seconds.
 	#
 	# NAT66 will work with all types of client devices, including Android, so is used as the default.
 	# Default: nat66

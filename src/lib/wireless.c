@@ -2,11 +2,13 @@
 #include "mesh11sd.h"
 
 #include <ctype.h>
+#include <dirent.h>
 #include <fcntl.h>
 #include <sys/wait.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 int mesh_get_mesh_iflist(struct mesh_ctx *ctx)
@@ -621,6 +623,8 @@ int mesh_radiophy(const char *radio_or_section, char *phy_out, size_t phy_len)
 	char *slash;
 	int phy_count = 0;
 	char only[32] = "";
+	char first[32] = "";
+	char suffix[16] = "";
 
 	phy_out[0] = '\0';
 	if (!radio_or_section || !radio_or_section[0])
@@ -645,11 +649,13 @@ int mesh_radiophy(const char *radio_or_section, char *phy_out, size_t phy_len)
 			return -1;
 	}
 
-	/* strip +N */
+	/* strip +N, keeping N to pick the phy on a multi-phy device */
 	snprintf(base_path, sizeof(base_path), "%s", path);
 	slash = strchr(base_path, '+');
-	if (slash)
+	if (slash) {
 		*slash = '\0';
+		snprintf(suffix, sizeof(suffix), "%s", slash + 1);
+	}
 
 	if (!strncmp(base_path, "platform/", 9))
 		snprintf(fullpath, sizeof(fullpath), "/sys/devices/%s", base_path);
@@ -668,6 +674,8 @@ int mesh_radiophy(const char *radio_or_section, char *phy_out, size_t phy_len)
 			if (!strncmp(tok, "phy", 3)) {
 				phy_count++;
 				snprintf(only, sizeof(only), "%s", tok);
+				if (!first[0])
+					snprintf(first, sizeof(first), "%s", tok);
 			}
 		}
 	}
@@ -676,48 +684,71 @@ int mesh_radiophy(const char *radio_or_section, char *phy_out, size_t phy_len)
 		return 0;
 	}
 	if (phy_count > 1) {
-		/* take first phy for now (v7 has more complex multi-phy pick) */
-		snprintf(phy_out, phy_len, "%s", only);
+		/*
+		 * Several phys on one device (e.g. MT7986 wmac): the +N path
+		 * suffix names phyN. Otherwise use the first phy, as v7 does.
+		 */
+		char want[64], want_dir[640];
+		struct stat st;
+
+		if (suffix[0]) {
+			snprintf(want, sizeof(want), "phy%s", suffix);
+			snprintf(want_dir, sizeof(want_dir), "%s/%s", phy_dir, want);
+			if (stat(want_dir, &st) == 0) {
+				snprintf(phy_out, phy_len, "%s", want);
+				return 0;
+			}
+		}
+		snprintf(phy_out, phy_len, "%s", first);
 		return 0;
 	}
 	return -1;
 }
 
+static int wiphy_index(const char *name)
+{
+	return atoi(name + 3);
+}
+
 int mesh_get_wiphys(struct mesh_ctx *ctx)
 {
-	char out[4096];
-	char *argv[] = { "iw", "list", NULL };
 	char show[8192];
 	char *p, *line;
-	int i;
+	DIR *d;
+	struct dirent *de;
+	int i, j;
 
 	ctx->wiphy_count = 0;
 	ctx->radio_count = 0;
 	mesh_mkdir_p(MESH11SD_TMPDIR "/wiphys");
 	mesh_mkdir_p(MESH11SD_TMPDIR "/radios");
 
-	if (mesh_run_capture(argv, out, sizeof(out)) == 0) {
-		p = out;
-		while ((line = strsep(&p, "\n")) != NULL) {
-			char *w;
-			if (!(w = strstr(line, "Wiphy ")))
+	/*
+	 * List phys from sysfs. `iw list` output is several KB per phy, so a
+	 * fixed buffer would only see the first one on multi-phy devices.
+	 */
+	d = opendir("/sys/class/ieee80211");
+	if (d) {
+		while ((de = readdir(d)) != NULL) {
+			if (strncmp(de->d_name, "phy", 3) != 0)
 				continue;
-			w += 6;
-			while (*w == ' ')
-				w++;
 			if (ctx->wiphy_count < MESH11SD_MAX_RADIOS) {
-				sscanf(w, "%15s", ctx->wiphys[ctx->wiphy_count]);
+				snprintf(ctx->wiphys[ctx->wiphy_count],
+					 sizeof(ctx->wiphys[0]), "%s", de->d_name);
 				ctx->wiphy_count++;
 			}
 		}
-		/* reverse order as v7 */
-		for (i = 0; i < ctx->wiphy_count / 2; i++) {
-			char tmp[16];
-			snprintf(tmp, sizeof(tmp), "%s", ctx->wiphys[i]);
-			snprintf(ctx->wiphys[i], sizeof(ctx->wiphys[0]), "%s",
-				 ctx->wiphys[ctx->wiphy_count - 1 - i]);
-			snprintf(ctx->wiphys[ctx->wiphy_count - 1 - i],
-				 sizeof(ctx->wiphys[0]), "%s", tmp);
+		closedir(d);
+	}
+	/* highest index first, as v7's reversed `iw list` order */
+	for (i = 0; i < ctx->wiphy_count; i++) {
+		for (j = i + 1; j < ctx->wiphy_count; j++) {
+			if (wiphy_index(ctx->wiphys[j]) > wiphy_index(ctx->wiphys[i])) {
+				char tmp[16];
+				snprintf(tmp, sizeof(tmp), "%s", ctx->wiphys[i]);
+				snprintf(ctx->wiphys[i], sizeof(ctx->wiphys[0]), "%s", ctx->wiphys[j]);
+				snprintf(ctx->wiphys[j], sizeof(ctx->wiphys[0]), "%s", tmp);
+			}
 		}
 	}
 
@@ -773,16 +804,17 @@ int mesh_get_wiphys(struct mesh_ctx *ctx)
 
 int mesh_get_valid_channels(char *out, size_t outlen)
 {
-	char raw[8192];
-	char *argv[] = { "iw", "list", NULL };
-	char *p, *line;
+	/* Stream `iw list`: it is several KB per phy, so a fixed buffer
+	 * would drop the later phys (and their bands) on multi-phy devices. */
+	FILE *f;
+	char line[512];
 	size_t used = 0;
 
 	out[0] = '\0';
-	if (mesh_run_capture(argv, raw, sizeof(raw)) != 0)
+	f = popen("iw list 2>/dev/null", "r");
+	if (!f)
 		return -1;
-	p = raw;
-	while ((line = strsep(&p, "\n")) != NULL) {
+	while (fgets(line, sizeof(line), f)) {
 		char *br;
 		int ch;
 		if (!strstr(line, "MHz [") || strstr(line, "disabled") ||
@@ -791,14 +823,16 @@ int mesh_get_valid_channels(char *out, size_t outlen)
 		br = strchr(line, '[');
 		if (!br)
 			continue;
-		if (sscanf(br, "[%d]", &ch) == 1) {
+		if (sscanf(br, "[%d]", &ch) == 1 && used < outlen) {
 			int n = snprintf(out + used, outlen - used, "%s%d",
 					 used ? " " : "", ch);
 			if (n < 0 || (size_t)n >= outlen - used)
-				break;
-			used += (size_t)n;
+				used = outlen; /* full: keep reading to drain the pipe */
+			else
+				used += (size_t)n;
 		}
 	}
+	pclose(f);
 	return 0;
 }
 
@@ -849,7 +883,13 @@ int mesh_refresh_bridgemac(struct mesh_ctx *ctx)
 	char content[256];
 	char *argv[] = { "ip", "link", "show", "dev", device, NULL };
 
-	if (mesh_uci_get("network.lan.device", device, sizeof(device)) != 0 || !device[0]) {
+	if (ctx->portal_detect == 3) {
+		/* CPE: the mesh bridge is the wan device, br-wan (v7) */
+		char key[96];
+		snprintf(key, sizeof(key), "network.%s.device", ctx->auto_mesh_network);
+		if (mesh_uci_get(key, device, sizeof(device)) != 0 || !device[0])
+			snprintf(device, sizeof(device), "br-wan");
+	} else if (mesh_uci_get("network.lan.device", device, sizeof(device)) != 0 || !device[0]) {
 		char key[96];
 		snprintf(key, sizeof(key), "network.%s.device", ctx->auto_mesh_network);
 		if (mesh_uci_get(key, device, sizeof(device)) != 0 || !device[0])

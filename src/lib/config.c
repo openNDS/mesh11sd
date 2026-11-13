@@ -35,7 +35,8 @@ void mesh_ctx_init(struct mesh_ctx *ctx, int is_daemon)
 	ctx->mute = is_daemon ? 0 : 1;
 	ctx->pid = getpid();
 	snprintf(ctx->log_mountpoint, sizeof(ctx->log_mountpoint), "/tmp");
-	snprintf(ctx->auto_mesh_band, sizeof(ctx->auto_mesh_band), "2g40");
+	snprintf(ctx->auto_mesh_band, sizeof(ctx->auto_mesh_band), "2g");
+	ctx->channel_bandwidth_2g = 40;
 	snprintf(ctx->auto_mesh_network, sizeof(ctx->auto_mesh_network), "lan");
 	snprintf(ctx->mesh_basename, sizeof(ctx->mesh_basename), "m-11s-");
 	snprintf(ctx->portal_channel, sizeof(ctx->portal_channel), "default");
@@ -261,7 +262,7 @@ int mesh_ctx_load_setup(struct mesh_ctx *ctx)
 	if (mesh_uci_get("mesh11sd.setup.auto_mesh_band", buf, sizeof(buf)) == 0 && buf[0])
 		snprintf(ctx->auto_mesh_band, sizeof(ctx->auto_mesh_band), "%s", buf);
 	else
-		snprintf(ctx->auto_mesh_band, sizeof(ctx->auto_mesh_band), "2g40");
+		snprintf(ctx->auto_mesh_band, sizeof(ctx->auto_mesh_band), "2g");
 	{
 		const char *ok[] = { "2g", "2g40", "5g", "6g", "60g", NULL };
 		int i, good = 0;
@@ -269,9 +270,24 @@ int mesh_ctx_load_setup(struct mesh_ctx *ctx)
 			if (!strcmp(ctx->auto_mesh_band, ok[i]))
 				good = 1;
 		if (!good)
-			snprintf(ctx->auto_mesh_band, sizeof(ctx->auto_mesh_band), "2g40");
+			snprintf(ctx->auto_mesh_band, sizeof(ctx->auto_mesh_band), "2g");
 	}
+
+	/* 2.4 GHz channel bandwidth, default 40 MHz. The old band value 2g40
+	 * is accepted as 2g, with 40 MHz unless channel_bandwidth_2g says otherwise. */
+	ctx->channel_bandwidth_2g = 40;
+	if (mesh_uci_get("mesh11sd.setup.channel_bandwidth_2g", buf, sizeof(buf)) == 0 && buf[0]) {
+		int bw = atoi(buf);
+
+		if (bw == 20 || bw == 40)
+			ctx->channel_bandwidth_2g = bw;
+		else
+			mesh_log_warn(ctx, "channel_bandwidth_2g [ %s ] is not 20 or 40, using 40", buf);
+	}
+	if (!strcmp(ctx->auto_mesh_band, "2g40"))
+		snprintf(ctx->auto_mesh_band, sizeof(ctx->auto_mesh_band), "2g");
 	mesh_log_info(ctx, "option auto_mesh_band [ %s ]", ctx->auto_mesh_band);
+	mesh_log_info(ctx, "option channel_bandwidth_2g [ %d ]", ctx->channel_bandwidth_2g);
 
 	if (mesh_uci_get("mesh11sd.setup.portal_channel", buf, sizeof(buf)) == 0 && buf[0])
 		snprintf(ctx->portal_channel, sizeof(ctx->portal_channel), "%s", buf);
@@ -443,9 +459,9 @@ int mesh_ctx_load_setup(struct mesh_ctx *ctx)
 		ctx->mesh_node_mobility_level = 2;
 
 	if (mesh_uci_get("mesh11sd.setup.use_default_beacon_interval", buf, sizeof(buf)) == 0)
-		ctx->use_default_beacon_interval = parse_int_default(buf, 0) > 0 ? 1 : 0;
+		ctx->use_default_beacon_interval = parse_int_default(buf, 1) > 0 ? 1 : 0;
 	else
-		ctx->use_default_beacon_interval = 0;
+		ctx->use_default_beacon_interval = 1;
 
 	/* beacon from mobility level 2 default unless overridden later */
 	{
@@ -540,10 +556,26 @@ int mesh_ctx_load_setup(struct mesh_ctx *ctx)
 		ctx->connect_show_all = v;
 	}
 	mesh_log_info(ctx, "option connect_show_all [ %d ]", ctx->connect_show_all);
-	if (mesh_uci_get("mesh11sd.setup.cpe_mode", buf, sizeof(buf)) == 0 && buf[0])
-		snprintf(ctx->cpe_mode, sizeof(ctx->cpe_mode), "%s", buf);
+	/* CPE IPv6: nat66 (default) or pd (prefix delegation). v7 relay mode
+	 * is not supported: Android drops IPv6 behind an RA/NDP relay. */
+	if (mesh_uci_get("mesh11sd.setup.cpe_mode", buf, sizeof(buf)) != 0 || !buf[0])
+		snprintf(buf, sizeof(buf), "nat66");
+	if (!strcmp(buf, "prefix_delegation"))
+		snprintf(buf, sizeof(buf), "pd");
+	if (strcmp(buf, "nat66") != 0 && strcmp(buf, "pd") != 0) {
+		if (ctx->portal_detect == 3)
+			mesh_log_warn(ctx, "option cpe_mode [ %s ] is not supported, using nat66", buf);
+		snprintf(buf, sizeof(buf), "nat66");
+	}
+	snprintf(ctx->cpe_mode, sizeof(ctx->cpe_mode), "%s", buf);
+	if (ctx->portal_detect == 3)
+		mesh_log_info(ctx, "option cpe_mode [ %s ]", ctx->cpe_mode);
+	/* v7: start opennds on a portal or CPE, stop it on a peer */
+	if (mesh_uci_get("mesh11sd.setup.manage_opennds_startup", buf, sizeof(buf)) == 0 && buf[0])
+		ctx->manage_opennds_startup = parse_int_default(buf, 1) ? 1 : 0;
 	else
-		snprintf(ctx->cpe_mode, sizeof(ctx->cpe_mode), "auto");
+		ctx->manage_opennds_startup = 1;
+	mesh_log_info(ctx, "option manage_opennds_startup [ %d ]", ctx->manage_opennds_startup);
 	if (!ctx->mesh_backhaul_led[0])
 		snprintf(ctx->mesh_backhaul_led, sizeof(ctx->mesh_backhaul_led), "auto");
 	ctx->mesh_driver[0] = '\0';

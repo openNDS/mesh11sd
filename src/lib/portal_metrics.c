@@ -98,6 +98,17 @@ int mesh_detect_mbp_upstream(struct mesh_ctx *ctx)
 	return mesh_detect_l3_upstream(ctx);
 }
 
+/* v7 detect_cpe_upstream: a CPE's upstream is the mesh, on br-wan */
+int mesh_detect_cpe_upstream(struct mesh_ctx *ctx)
+{
+	char zone[64] = "";
+
+	if (mesh_uci_get("network.wan.device", zone, sizeof(zone)) != 0 || !zone[0])
+		snprintf(zone, sizeof(zone), "br-wan");
+	snprintf(ctx->up_zone, sizeof(ctx->up_zone), "%s", zone);
+	return mesh_detect_l3_upstream(ctx);
+}
+
 int mesh_update_known_portals_from_ras(struct mesh_ctx *ctx)
 {
 	char out[4096];

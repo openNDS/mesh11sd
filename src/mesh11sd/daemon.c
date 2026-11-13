@@ -57,6 +57,7 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 {
 	char *nft_argv[] = { "nft", "destroy", "table", "bridge", "mesh11s", NULL };
 	struct sigaction sa;
+	int reqs_ok;
 
 	memset(&sa, 0, sizeof(sa));
 	sa.sa_handler = mesh_daemon_on_signal;
@@ -78,8 +79,14 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 	unlink(MESH11SD_TMPDIR "/active_mesh_ifname");
 
 	mesh_log_notice(ctx, "mesh11sd is in startup");
+
+	/* Check ip-full and a mesh-capable wpad first: a node missing them
+	 * must be left exactly as it is (no MACs, ULA or IPv4 staged). The
+	 * main loop keeps checking and logs what is missing. */
+	reqs_ok = mesh_check_requirements(ctx) == 0;
+
 	mesh_refresh_bridgemac(ctx);
-	{
+	if (reqs_ok) {
 		char *odhcpd[] = { "/sbin/service", "odhcpd", "stop", NULL };
 		mesh_run_capture(odhcpd, NULL, 0);
 	}
@@ -87,8 +94,8 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 	/* Backups for revert_all, taken on any start if missing */
 	mesh_backup_configs(ctx);
 
-	if (ctx->auto_config > 0 ||
-	    access(MESH11SD_TMPDIR "/auto_config_test", F_OK) == 0) {
+	if (reqs_ok && (ctx->auto_config > 0 ||
+	    access(MESH11SD_TMPDIR "/auto_config_test", F_OK) == 0)) {
 		/* v7 autostartup: revert+backup, dhcp defaults, then network apply */
 		mesh_backup_defaults(ctx);
 		/* v7 clean sheet: no committed MACs from an earlier run */
@@ -133,15 +140,21 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 		}
 		/* portal-side network UCI first, so this one restart covers it */
 		mesh_network_preconfigure(ctx);
+		/* modes 4|5: wan joins the trunk in this same restart */
+		mesh_ensure_wan_on_vxlan_bridge(ctx, 0);
 		/* v7 ~11100: network restart, bridge mac, dnsmasq, firewall, probe */
 		{
 			char *nr[] = { "/sbin/service", "network", "restart", NULL };
 			mesh_run_capture(nr, NULL, 0);
 			mesh_network_mark_applied();
 		}
-		/* v7 restore_ipv4: ensure calculated portal address is on the bridge */
-		if (ctx->portal_detect != 5 && ctx->portal_use_default_ipv4 == 0 &&
-		    !mesh_predicted_peer(ctx))
+		/* CPE: br-wan exists only after the restart; use it from now on */
+		if (ctx->portal_detect == 3)
+			mesh_refresh_bridgemac(ctx);
+		/* v7 restore_ipv4: ensure calculated portal address is on the bridge.
+		 * Not on a CPE: its mesh bridge is wan, which uses DHCP. */
+		if (ctx->portal_detect != 3 && ctx->portal_detect != 5 &&
+		    ctx->portal_use_default_ipv4 == 0 && !mesh_predicted_peer(ctx))
 			mesh_restore_ipv4(ctx);
 		mesh_move_ethernet_to_vxlan_bridge(ctx);
 		mesh_set_bridge_mac_addresses(ctx);
@@ -159,13 +172,17 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 	unlink(MESH11SD_TMPDIR "/mesh_rssi_threshold");
 
 	mesh_check_config_params(ctx);
-	mesh_sys_setup(ctx);
-	mesh_get_portal_ula(ctx, "discover");
+	if (reqs_ok) {
+		mesh_sys_setup(ctx);
+		mesh_get_portal_ula(ctx, "discover");
+	}
 	mesh_log_notice(ctx, "Starting daemon service...");
-	/* Wait for boot-netifd vifs before any phy-wide writes. */
-	mesh_wait_for_wifi_enabled(ctx);
-	/* v7 mobility_settings: phy-wide values with iw only, no wifi */
-	mesh_mobility_apply_phywide(ctx);
+	if (reqs_ok) {
+		/* Wait for boot-netifd vifs before any phy-wide writes. */
+		mesh_wait_for_wifi_enabled(ctx);
+		/* v7 mobility_settings: phy-wide values with iw only, no wifi */
+		mesh_mobility_apply_phywide(ctx);
+	}
 	mesh_set_led(ctx, "init");
 	/* v7: set_led on before peers; heartbeat once peers appear */
 	mesh_set_led(ctx, "on");
@@ -314,6 +331,10 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 			if (!ctx->firstloop)
 				mesh_check_portal(ctx);
 		}
+		if (ctx->portal_detect == 3 &&
+		    (ctx->auto_config != 0 ||
+		     access(MESH11SD_TMPDIR "/auto_config_test", F_OK) == 0))
+			mesh_cpe_conf(ctx);
 
 		if (ctx->vtun_enable) {
 			mesh_check_vtunnel(ctx);
@@ -325,8 +346,11 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 		mesh_ccpy_setup(ctx);
 
 		/* v7: manage_fallback_ula_route when portal_detect 4|5 every loop */
-		if (ctx->portal_detect == 4 || ctx->portal_detect == 5)
+		if (ctx->portal_detect == 4 || ctx->portal_detect == 5) {
 			mesh_manage_fallback_ula_route(ctx);
+			mesh_ensure_wan_on_vxlan_bridge(ctx, 1);
+		}
+		mesh_check_accept_ra(ctx);
 
 		if (ctx->auto_config != 0 ||
 		    access(MESH11SD_TMPDIR "/auto_config_test", F_OK) == 0 ||
@@ -379,6 +403,7 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 
 		mesh_block_bridge_loops(ctx);
 		mesh_pin_active_portal_arp(ctx);
+		mesh_cpe_discovery_rule(ctx);
 
 		mesh_rootmode(ctx);
 		mesh_mobility_apply_phywide(ctx);

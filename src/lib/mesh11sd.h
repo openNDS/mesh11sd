@@ -55,6 +55,7 @@ struct mesh_ctx {
 	char auto_mesh_id_raw[128];
 	char auto_mesh_key[80];		/* hashed key - never print */
 	char auto_mesh_band[16];
+	int channel_bandwidth_2g;	/* 20 or 40 MHz */
 	char auto_mesh_network[32];
 	char mesh_basename[32];
 	char portal_channel[32];
@@ -102,6 +103,7 @@ struct mesh_ctx {
 	int leechmode;
 	int reboot_on_error;
 	int stop_on_error;
+	int manage_opennds_startup;
 	int swconfig_mac_skip;
 
 	char mesh_backhaul_led[64];
@@ -167,6 +169,7 @@ int mesh_uci_show_filter(const char *package, const char *grep_pat,
 void mesh_ctx_init(struct mesh_ctx *ctx, int is_daemon);
 int mesh_ctx_load_setup(struct mesh_ctx *ctx);
 int mesh_check_config_params(struct mesh_ctx *ctx);
+void mesh_manage_opennds(struct mesh_ctx *ctx, const char *action);
 
 void mesh_write_to_syslog(struct mesh_ctx *ctx, const char *debugtype, const char *msg);
 void mesh_write_log(struct mesh_ctx *ctx, const char *debugtype, const char *msg);
@@ -237,6 +240,11 @@ int mesh_check_odhcpd(struct mesh_ctx *ctx);
 int mesh_ccpy_setup(struct mesh_ctx *ctx);
 int mesh_get_peers(struct mesh_ctx *ctx);
 int mesh_detect_mbp_upstream(struct mesh_ctx *ctx);
+int mesh_detect_cpe_upstream(struct mesh_ctx *ctx);
+/* cpe.c: portal_detect 3 */
+int mesh_cpe_stage_network(struct mesh_ctx *ctx);
+int mesh_cpe_conf(struct mesh_ctx *ctx);
+int mesh_cpe_discovery_rule(struct mesh_ctx *ctx);
 int mesh_detect_l3_upstream(struct mesh_ctx *ctx);
 int mesh_update_known_portals_from_ras(struct mesh_ctx *ctx);
 int mesh_calc_airtime_metric(struct mesh_ctx *ctx, const char *peer_mac,
@@ -261,6 +269,8 @@ int mesh_check_mesh_phantom(struct mesh_ctx *ctx); /* v7 phantom mpath del */
 int mesh_pin_active_portal_arp(struct mesh_ctx *ctx); /* v7 ARP pin */
 int mesh_pin_active_portal_arp_clear(struct mesh_ctx *ctx);
 int mesh_move_ethernet_to_vxlan_bridge(struct mesh_ctx *ctx);
+int mesh_ensure_wan_on_vxlan_bridge(struct mesh_ctx *ctx, int do_reload); /* modes 4|5 */
+void mesh_check_accept_ra(struct mesh_ctx *ctx); /* v7 per-pass accept_ra */
 int mesh_probe_interface_mac(struct mesh_ctx *ctx);
 int mesh_set_iface_path_cost(struct mesh_ctx *ctx, int path_cost,
 			     const char *bridge, const char *iface);
@@ -292,6 +302,7 @@ int mesh_cli_is_installed(struct mesh_ctx *ctx, const char *pkg);
 int mesh_cli_commit_changes(struct mesh_ctx *ctx, int argc, char **argv);
 int mesh_cli_commit_all(struct mesh_ctx *ctx, int argc, char **argv);
 int mesh_cli_revert_all(struct mesh_ctx *ctx, int argc, char **argv);
+int mesh_cli_restore_all(struct mesh_ctx *ctx, int argc, char **argv);
 int mesh_maybe_silent_commit_all(struct mesh_ctx *ctx);
 int mesh_commit_portal_config(struct mesh_ctx *ctx); /* auto_config=1, before detection */
 
