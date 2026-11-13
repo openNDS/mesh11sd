@@ -35,7 +35,8 @@ void mesh_ctx_init(struct mesh_ctx *ctx, int is_daemon)
 	ctx->mute = is_daemon ? 0 : 1;
 	ctx->pid = getpid();
 	snprintf(ctx->log_mountpoint, sizeof(ctx->log_mountpoint), "/tmp");
-	snprintf(ctx->auto_mesh_band, sizeof(ctx->auto_mesh_band), "2g40");
+	snprintf(ctx->auto_mesh_band, sizeof(ctx->auto_mesh_band), "2g");
+	ctx->channel_bandwidth_2g = 40;
 	snprintf(ctx->auto_mesh_network, sizeof(ctx->auto_mesh_network), "lan");
 	snprintf(ctx->mesh_basename, sizeof(ctx->mesh_basename), "m-11s-");
 	snprintf(ctx->portal_channel, sizeof(ctx->portal_channel), "default");
@@ -261,7 +262,7 @@ int mesh_ctx_load_setup(struct mesh_ctx *ctx)
 	if (mesh_uci_get("mesh11sd.setup.auto_mesh_band", buf, sizeof(buf)) == 0 && buf[0])
 		snprintf(ctx->auto_mesh_band, sizeof(ctx->auto_mesh_band), "%s", buf);
 	else
-		snprintf(ctx->auto_mesh_band, sizeof(ctx->auto_mesh_band), "2g40");
+		snprintf(ctx->auto_mesh_band, sizeof(ctx->auto_mesh_band), "2g");
 	{
 		const char *ok[] = { "2g", "2g40", "5g", "6g", "60g", NULL };
 		int i, good = 0;
@@ -269,9 +270,24 @@ int mesh_ctx_load_setup(struct mesh_ctx *ctx)
 			if (!strcmp(ctx->auto_mesh_band, ok[i]))
 				good = 1;
 		if (!good)
-			snprintf(ctx->auto_mesh_band, sizeof(ctx->auto_mesh_band), "2g40");
+			snprintf(ctx->auto_mesh_band, sizeof(ctx->auto_mesh_band), "2g");
 	}
+
+	/* 2.4 GHz channel bandwidth, default 40 MHz. The old band value 2g40
+	 * is accepted as 2g, with 40 MHz unless channel_bandwidth_2g says otherwise. */
+	ctx->channel_bandwidth_2g = 40;
+	if (mesh_uci_get("mesh11sd.setup.channel_bandwidth_2g", buf, sizeof(buf)) == 0 && buf[0]) {
+		int bw = atoi(buf);
+
+		if (bw == 20 || bw == 40)
+			ctx->channel_bandwidth_2g = bw;
+		else
+			mesh_log_warn(ctx, "channel_bandwidth_2g [ %s ] is not 20 or 40, using 40", buf);
+	}
+	if (!strcmp(ctx->auto_mesh_band, "2g40"))
+		snprintf(ctx->auto_mesh_band, sizeof(ctx->auto_mesh_band), "2g");
 	mesh_log_info(ctx, "option auto_mesh_band [ %s ]", ctx->auto_mesh_band);
+	mesh_log_info(ctx, "option channel_bandwidth_2g [ %d ]", ctx->channel_bandwidth_2g);
 
 	if (mesh_uci_get("mesh11sd.setup.portal_channel", buf, sizeof(buf)) == 0 && buf[0])
 		snprintf(ctx->portal_channel, sizeof(ctx->portal_channel), "%s", buf);

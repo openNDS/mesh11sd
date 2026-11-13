@@ -249,7 +249,8 @@ Values in the tables below are script defaults when the option is unset. Set wit
 | --- | --- | --- |
 | `auto_mesh_id` | `--__` | Seed hashed to mesh ID. **Same on every node.** |
 | `auto_mesh_key` | hashed | Extra seed for SAE key. Same on every node if set. |
-| `auto_mesh_band` | `2g40` | `2g`, `2g40`, `5g`, `6g`, `60g`. |
+| `auto_mesh_band` | `2g` | `2g`, `5g`, `6g`, `60g`. The old value `2g40` is read as `2g`. |
+| `channel_bandwidth_2g` | `40` | 2.4 GHz channel bandwidth in MHz, `20` or `40`. |
 | `mesh_phy_index` | unset | Force `phyN` for the mesh vif. |
 | `mesh_multi_interfaces` | disabled | Set `enabled` to allow more than one mesh vif. |
 | `country` | DFS-ETSI if unset | Overrides wireless country. |
@@ -411,6 +412,7 @@ The daemon runs as a service. CLI is for status, logs, and a few runtime knobs. 
 | `mesh11sd commit_changes commit` | Persist leechmode, txpower, rssi |
 | `mesh11sd commit_all commit` | Write auto_config result to files |
 | `mesh11sd revert_all revert` | Undo commit_all |
+| `mesh11sd restore_all restore` | Put wireless, dhcp, network, firewall and system back to their state before mesh11sd first ran, keeping the mesh11sd config, then reboot. Use it if something has committed mesh11sd's staged changes, such as a package install that runs a blanket `uci commit`. |
 | `mesh11sd dhcp4_renew [ifname]` | Force DHCPv4 (default: mesh network device) |
 | `mesh11sd set_ula_prefix get` / `set` / `revert` | Mesh ULA /48 |
 | `mesh11sd force_ipv4_download` | Force apk (wget) downloads over IPv4 |
@@ -672,8 +674,9 @@ config mesh11sd 'setup'
 	# auto_mesh_band (optional)
 	#
 	# Configure the band to use for the mesh network
-	# Valid values: 2g, 2g40, 5g, 6g, 60g
-	# Default 2g40
+	# Valid values: 2g, 5g, 6g, 60g
+	# Default 2g
+	# The old value 2g40 is read as 2g (see channel_bandwidth_2g)
 	#
 	# If set, it must also be set to the same value on every mesh node
 	#
@@ -681,6 +684,15 @@ config mesh11sd 'setup'
 	# regardless of the configured auto_mesh_band
 	#
 	#option auto_mesh_band '5g'
+
+	###########################################################################################
+	# channel_bandwidth_2g (optional)
+	#
+	# Channel bandwidth in MHz for the 2.4 GHz radio
+	# Valid values: 20, 40
+	# Default 40
+	#
+	#option channel_bandwidth_2g '20'
 
 	###########################################################################################
 	# mesh_phy_index (optional)

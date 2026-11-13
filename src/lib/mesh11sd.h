@@ -55,6 +55,7 @@ struct mesh_ctx {
 	char auto_mesh_id_raw[128];
 	char auto_mesh_key[80];		/* hashed key - never print */
 	char auto_mesh_band[16];
+	int channel_bandwidth_2g;	/* 20 or 40 MHz */
 	char auto_mesh_network[32];
 	char mesh_basename[32];
 	char portal_channel[32];
@@ -299,6 +300,7 @@ int mesh_cli_is_installed(struct mesh_ctx *ctx, const char *pkg);
 int mesh_cli_commit_changes(struct mesh_ctx *ctx, int argc, char **argv);
 int mesh_cli_commit_all(struct mesh_ctx *ctx, int argc, char **argv);
 int mesh_cli_revert_all(struct mesh_ctx *ctx, int argc, char **argv);
+int mesh_cli_restore_all(struct mesh_ctx *ctx, int argc, char **argv);
 int mesh_maybe_silent_commit_all(struct mesh_ctx *ctx);
 int mesh_commit_portal_config(struct mesh_ctx *ctx); /* auto_config=1, before detection */
 

@@ -530,6 +530,7 @@ int mesh_cli_status(struct mesh_ctx *ctx)
 	mesh_json_field_int("    ", "auto_config", ctx->auto_config, 0);
 	mesh_json_field("    ", "auto_mesh_network", ctx->auto_mesh_network, 0);
 	mesh_json_field("    ", "auto_mesh_band", ctx->auto_mesh_band, 0);
+	mesh_json_field_int("    ", "channel_bandwidth_2g", ctx->channel_bandwidth_2g, 0);
 	if (!ctx->mesh_driver[0] && ctx->wiphy_count > 0) {
 		char path[160], dline[128];
 		FILE *df;

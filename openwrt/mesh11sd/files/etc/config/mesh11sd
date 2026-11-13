@@ -212,8 +212,9 @@ config mesh11sd 'setup'
 	# auto_mesh_band (optional)
 	#
 	# Configure the band to use for the mesh network
-	# Valid values: 2g, 2g40, 5g, 6g, 60g
-	# Default 2g40
+	# Valid values: 2g, 5g, 6g, 60g
+	# Default 2g
+	# The old value 2g40 is read as 2g (see channel_bandwidth_2g)
 	#
 	# If set, it must also be set to the same value on every mesh node
 	#
@@ -221,6 +222,15 @@ config mesh11sd 'setup'
 	# regardless of the configured auto_mesh_band
 	#
 	#option auto_mesh_band '5g'
+
+	###########################################################################################
+	# channel_bandwidth_2g (optional)
+	#
+	# Channel bandwidth in MHz for the 2.4 GHz radio
+	# Valid values: 20, 40
+	# Default 40
+	#
+	#option channel_bandwidth_2g '20'
 
 	###########################################################################################
 	# mesh_phy_index (optional)

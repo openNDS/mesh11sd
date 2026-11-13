@@ -57,6 +57,7 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 {
 	char *nft_argv[] = { "nft", "destroy", "table", "bridge", "mesh11s", NULL };
 	struct sigaction sa;
+	int reqs_ok;
 
 	memset(&sa, 0, sizeof(sa));
 	sa.sa_handler = mesh_daemon_on_signal;
@@ -78,8 +79,14 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 	unlink(MESH11SD_TMPDIR "/active_mesh_ifname");
 
 	mesh_log_notice(ctx, "mesh11sd is in startup");
+
+	/* Check ip-full and a mesh-capable wpad first: a node missing them
+	 * must be left exactly as it is (no MACs, ULA or IPv4 staged). The
+	 * main loop keeps checking and logs what is missing. */
+	reqs_ok = mesh_check_requirements(ctx) == 0;
+
 	mesh_refresh_bridgemac(ctx);
-	{
+	if (reqs_ok) {
 		char *odhcpd[] = { "/sbin/service", "odhcpd", "stop", NULL };
 		mesh_run_capture(odhcpd, NULL, 0);
 	}
@@ -87,8 +94,8 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 	/* Backups for revert_all, taken on any start if missing */
 	mesh_backup_configs(ctx);
 
-	if (ctx->auto_config > 0 ||
-	    access(MESH11SD_TMPDIR "/auto_config_test", F_OK) == 0) {
+	if (reqs_ok && (ctx->auto_config > 0 ||
+	    access(MESH11SD_TMPDIR "/auto_config_test", F_OK) == 0)) {
 		/* v7 autostartup: revert+backup, dhcp defaults, then network apply */
 		mesh_backup_defaults(ctx);
 		/* v7 clean sheet: no committed MACs from an earlier run */
@@ -163,13 +170,17 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 	unlink(MESH11SD_TMPDIR "/mesh_rssi_threshold");
 
 	mesh_check_config_params(ctx);
-	mesh_sys_setup(ctx);
-	mesh_get_portal_ula(ctx, "discover");
+	if (reqs_ok) {
+		mesh_sys_setup(ctx);
+		mesh_get_portal_ula(ctx, "discover");
+	}
 	mesh_log_notice(ctx, "Starting daemon service...");
-	/* Wait for boot-netifd vifs before any phy-wide writes. */
-	mesh_wait_for_wifi_enabled(ctx);
-	/* v7 mobility_settings: phy-wide values with iw only, no wifi */
-	mesh_mobility_apply_phywide(ctx);
+	if (reqs_ok) {
+		/* Wait for boot-netifd vifs before any phy-wide writes. */
+		mesh_wait_for_wifi_enabled(ctx);
+		/* v7 mobility_settings: phy-wide values with iw only, no wifi */
+		mesh_mobility_apply_phywide(ctx);
+	}
 	mesh_set_led(ctx, "init");
 	/* v7: set_led on before peers; heartbeat once peers appear */
 	mesh_set_led(ctx, "on");

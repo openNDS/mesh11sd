@@ -610,10 +610,7 @@ int mesh_auto_config(struct mesh_ctx *ctx)
 			}
 			mesh_log_debug(ctx, "wireless.%s.band [ %s ]", ctx->radios[ri], band);
 
-			if (!strcmp(ctx->auto_mesh_band, "2g40"))
-				snprintf(mesh_band, sizeof(mesh_band), "2g");
-			else
-				snprintf(mesh_band, sizeof(mesh_band), "%s", ctx->auto_mesh_band);
+			snprintf(mesh_band, sizeof(mesh_band), "%s", ctx->auto_mesh_band);
 
 			if (!strcmp(band, mesh_band) && !meshifenabled) {
 				snprintf(setl, sizeof(setl), "set wireless.m11s%s.disabled='0'", radiohex);
@@ -635,20 +632,22 @@ int mesh_auto_config(struct mesh_ctx *ctx)
 				mesh_uci_batch_line(setl);
 			}
 
-			if (!strcmp(band, "2g") && !strcmp(ctx->auto_mesh_band, "2g40")) {
+			if (!strcmp(band, "2g")) {
 				char htmode[32], ht40[32];
+				int to40 = ctx->channel_bandwidth_2g == 40;
 				snprintf(setl, sizeof(setl), "wireless.%s.htmode", ctx->radios[ri]);
 				if (mesh_uci_get(setl, htmode, sizeof(htmode)) == 0) {
-					/* tr "20" "40" style: replace 20 with 40 in mode string */
+					/* e.g. HE20 <-> HE40, as channel_bandwidth_2g says */
 					char *h;
 					snprintf(ht40, sizeof(ht40), "%s", htmode);
-					h = strstr(ht40, "20");
+					h = strstr(ht40, to40 ? "20" : "40");
 					if (h) {
-						h[0] = '4';
+						h[0] = to40 ? '4' : '2';
 						h[1] = '0';
 					}
 					if (ctx->country[0]) {
-						snprintf(setl, sizeof(setl), "set wireless.%s.noscan='1'", ctx->radios[ri]);
+						snprintf(setl, sizeof(setl), "set wireless.%s.noscan='%d'",
+							 ctx->radios[ri], to40);
 						mesh_uci_batch_line(setl);
 						snprintf(setl, sizeof(setl), "set wireless.%s.htmode='%s'",
 							 ctx->radios[ri], ht40);

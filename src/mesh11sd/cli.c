@@ -66,6 +66,11 @@ static void print_help(void)
 "  Usage: mesh11sd write_log [string to log] [debuglevel (debug, info, warn, notice, err or emerg)]\n"
 "\n"
 "####\n"
+"  Option: restore_all\n"
+"  Usage: mesh11sd restore_all restore\n"
+"  Restores wireless, dhcp, network, firewall and system to how they were before mesh11sd first ran, keeping the mesh11sd config, then reboots\n"
+"\n"
+"####\n"
 "  Option: read_log\n"
 "  Usage: mesh11sd read_log [ -f ]\n"
 "\n"
@@ -94,8 +99,10 @@ int mesh_cli_dispatch(struct mesh_ctx *ctx, int argc, char **argv)
 		return 0;
 	}
 
-	/* Commands below need setup (as v7 calls get_current_setup). */
-	mesh_ctx_load_setup(ctx);
+	/* Commands below need setup (as v7 calls get_current_setup).
+	 * The daemon reads it itself at startup, so skip it here. */
+	if (strcmp(cmd, "daemon") != 0)
+		mesh_ctx_load_setup(ctx);
 
 	if (!strcmp(cmd, "debuglevel")) {
 		if (argc < 3 || !argv[2][0]) {
@@ -239,6 +246,8 @@ int mesh_cli_dispatch(struct mesh_ctx *ctx, int argc, char **argv)
 		return mesh_cli_commit_all(ctx, argc, argv);
 	if (!strcmp(cmd, "revert_all"))
 		return mesh_cli_revert_all(ctx, argc, argv);
+	if (!strcmp(cmd, "restore_all"))
+		return mesh_cli_restore_all(ctx, argc, argv);
 
 	if (!strcmp(cmd, "daemon"))
 		return mesh_daemon_run(ctx);
