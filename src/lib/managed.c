@@ -781,7 +781,10 @@ void mesh_apply_autostartup_uci(struct mesh_ctx *ctx)
 
 	if (ctx->portal_detect == 0 || ctx->portal_detect == 4)
 		mesh_set_ula_prefix(ctx, "set");
-	if (ctx->portal_detect == 5) {
+	if (ctx->portal_detect == 4) {
+		/* MBP: dhcp client on the router's lan, serves no DHCP */
+		mesh_mbp_stage_lan(ctx);
+	} else if (ctx->portal_detect == 5) {
 		snprintf(setl, sizeof(setl),
 			 "set dhcp.%s.dhcpv4='disabled'", ctx->auto_mesh_network);
 		mesh_uci_batch_line(setl);
@@ -815,8 +818,9 @@ void mesh_apply_autostartup_uci(struct mesh_ctx *ctx)
 		mesh_uci_batch_line(setl);
 	}
 	/* v7 ~10925: deterministic lan IPv4 when portal_use_default_ipv4=0.
-	 * All nodes calculate it; portals (proto=static) apply/use it. */
-	if (ctx->portal_detect != 5)
+	 * All nodes calculate it; portals (proto=static) apply/use it.
+	 * Not an MBP: its lan address comes from the router. */
+	if (ctx->portal_detect != 4 && ctx->portal_detect != 5)
 		mesh_apply_portal_ipv4(ctx);
 	if (ctx->portal_detect != 3) {
 		snprintf(setl, sizeof(setl),

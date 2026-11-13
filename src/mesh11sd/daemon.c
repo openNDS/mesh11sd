@@ -152,8 +152,10 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 		if (ctx->portal_detect == 3)
 			mesh_refresh_bridgemac(ctx);
 		/* v7 restore_ipv4: ensure calculated portal address is on the bridge.
-		 * Not on a CPE: its mesh bridge is wan, which uses DHCP. */
-		if (ctx->portal_detect != 3 && ctx->portal_detect != 5 &&
+		 * Not on a CPE: its mesh bridge is wan, which uses DHCP. Not on
+		 * an MBP: its lan is a DHCP client of the router. */
+		if (ctx->portal_detect != 3 && ctx->portal_detect != 4 &&
+		    ctx->portal_detect != 5 &&
 		    ctx->portal_use_default_ipv4 == 0 && !mesh_predicted_peer(ctx))
 			mesh_restore_ipv4(ctx);
 		mesh_move_ethernet_to_vxlan_bridge(ctx);
@@ -232,7 +234,8 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 					auto_config_done = 1;
 					/* Re-assert portal IPv4 after auto_config (covers test-mode
 					 * path where startup skipped the autostartup block). */
-					if (ctx->portal_detect != 5)
+					if (ctx->portal_detect != 4 &&
+					    ctx->portal_detect != 5)
 						mesh_apply_portal_ipv4(ctx);
 					/* ensure netifd/dnsmasq/firewall see new wireless (v7 apply sites) */
 					{
@@ -349,6 +352,7 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 		if (ctx->portal_detect == 4 || ctx->portal_detect == 5) {
 			mesh_manage_fallback_ula_route(ctx);
 			mesh_ensure_wan_on_vxlan_bridge(ctx, 1);
+			mesh_mbp_vtunlan(ctx, 1);
 		}
 		mesh_check_accept_ra(ctx);
 
@@ -365,9 +369,12 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 		if (!strcmp(ctx->detected_state, "portal")) {
 			mesh_manage_fallback_ula_route(ctx);
 			/* Heal: force=1 so dnsmasq init keeps lan/vtun ranges when
-			 * another portal answers dhcp_check (see portal_handoff). */
-			mesh_ensure_portal_dhcp_force(ctx);
-			mesh_ensure_portal_vtun_dnsmasq(ctx);
+			 * another portal answers dhcp_check (see portal_handoff).
+			 * Not an MBP: it serves no DHCP on lan or the trunk. */
+			if (ctx->portal_detect != 4) {
+				mesh_ensure_portal_dhcp_force(ctx);
+				mesh_ensure_portal_vtun_dnsmasq(ctx);
+			}
 		}
 
 		/* v7 ~11457: mesh_mac_forced_forwarding + gateway_proxy_arp each loop */
