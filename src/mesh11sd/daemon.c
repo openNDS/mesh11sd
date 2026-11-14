@@ -355,6 +355,7 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 			mesh_mbp_vtunlan(ctx, 1);
 		}
 		mesh_check_accept_ra(ctx);
+		mesh_check_mtu(ctx);
 
 		if (ctx->auto_config != 0 ||
 		    access(MESH11SD_TMPDIR "/auto_config_test", F_OK) == 0 ||

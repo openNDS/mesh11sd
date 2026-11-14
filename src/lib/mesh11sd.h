@@ -274,6 +274,7 @@ int mesh_move_ethernet_to_vxlan_bridge(struct mesh_ctx *ctx);
 int mesh_ensure_wan_on_vxlan_bridge(struct mesh_ctx *ctx, int do_reload); /* modes 4|5 */
 int mesh_mbp_vtunlan(struct mesh_ctx *ctx, int do_reload); /* mode 4 L2 trunk vtunlan */
 void mesh_check_accept_ra(struct mesh_ctx *ctx); /* v7 per-pass accept_ra */
+void mesh_check_mtu(struct mesh_ctx *ctx); /* per-pass baby-jumbo mtu */
 int mesh_probe_interface_mac(struct mesh_ctx *ctx);
 int mesh_set_iface_path_cost(struct mesh_ctx *ctx, int path_cost,
 			     const char *bridge, const char *iface);

@@ -679,6 +679,81 @@ static void underlay_linklocal(const char *dev, char *ll, size_t len)
 		*sl = '\0';
 }
 
+/* Read an interface MTU from sysfs, 0 if it does not exist. */
+static int read_mtu(const char *ifname)
+{
+	char path[128], buf[16] = "";
+	FILE *f;
+
+	snprintf(path, sizeof(path), "/sys/class/net/%s/mtu", ifname);
+	f = fopen(path, "r");
+	if (!f)
+		return 0;
+	if (!fgets(buf, sizeof(buf), f))
+		buf[0] = '\0';
+	fclose(f);
+	return atoi(buf);
+}
+
+static void ensure_mtu(struct mesh_ctx *ctx, const char *ifname, int want)
+{
+	char mtu_s[8];
+	int cur;
+
+	if (!ifname[0])
+		return;
+	cur = read_mtu(ifname);
+	if (cur == 0 || cur == want)
+		return;
+	snprintf(mtu_s, sizeof(mtu_s), "%d", want);
+	{
+		char *m[] = { "ip", "link", "set", (char *)ifname, "mtu", mtu_s, NULL };
+		mesh_run_capture(m, NULL, 0);
+	}
+	mesh_log_notice(ctx, "mtu on [ %s ] was [ %d ], set to [ %d ]", ifname, cur, want);
+}
+
+/*
+ * Per-pass baby-jumbo check. The mesh vif and the underlay bridge must
+ * carry a full 1500 byte vxlan frame plus its header, so both are 1600
+ * and the vxlan itself is 1500. A netifd reload or a wifi restart can
+ * put them back to 1500 after the vxlan was made, and then large frames
+ * are lost. The underlay is br-wan in mode 3, otherwise the mesh bridge.
+ */
+void mesh_check_mtu(struct mesh_ctx *ctx)
+{
+	char vxname[32], device[64];
+
+	if (!ctx->vtun_enable)
+		return;
+	snprintf(vxname, sizeof(vxname), "vxlan%s",
+		 ctx->tun_id[0] ? ctx->tun_id : "69");
+	if (read_mtu(vxname) == 0)
+		return; /* no tunnel yet */
+
+	if (ctx->portal_detect == 3)
+		snprintf(device, sizeof(device), "br-wan");
+	else
+		snprintf(device, sizeof(device), "br-%s",
+			 ctx->auto_mesh_network[0] ? ctx->auto_mesh_network : "lan");
+
+	if (!ctx->active_mesh_ifname[0]) {
+		FILE *f = fopen(MESH11SD_TMPDIR "/active_mesh_ifname", "r");
+		char line[128];
+
+		if (f && fgets(line, sizeof(line), f)) {
+			char *q = strstr(line, "active_mesh_ifname=\"");
+			if (q)
+				sscanf(q + 20, "%63[^\"]", ctx->active_mesh_ifname);
+		}
+		if (f)
+			fclose(f);
+	}
+	ensure_mtu(ctx, ctx->active_mesh_ifname, 1600);
+	ensure_mtu(ctx, device, 1600);
+	ensure_mtu(ctx, vxname, 1500);
+}
+
 int mesh_create_vxlan_if(struct mesh_ctx *ctx)
 {
 	/* v7 create_vxlan_if: ip-full `ip -6 link add ... type vxlan` (NOT netifd
