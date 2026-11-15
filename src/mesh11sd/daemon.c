@@ -437,6 +437,7 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 		}
 		mesh_log_info(ctx, "Checkinterval [%d]", loop_interval);
 		mesh_watchdog_log(ctx);
+		mesh_watchdog_log_warning(ctx);
 		sleep((unsigned)loop_interval);
 		if (mesh_daemon_stop) {
 			mesh_log_notice(ctx, "Mesh11sd is shutting down");

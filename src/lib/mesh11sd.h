@@ -181,6 +181,7 @@ void mesh_log_notice(struct mesh_ctx *ctx, const char *fmt, ...);
 void mesh_log_warn(struct mesh_ctx *ctx, const char *fmt, ...);
 void mesh_log_err(struct mesh_ctx *ctx, const char *fmt, ...);
 void mesh_watchdog_log(struct mesh_ctx *ctx); /* last message to flash, if enabled */
+void mesh_watchdog_log_warning(struct mesh_ctx *ctx);
 
 int mesh_is_hex(const char *s);
 int mesh_str_to_hex(const char *in, char *out, size_t outlen);

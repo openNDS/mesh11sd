@@ -179,7 +179,8 @@ void mesh_write_to_syslog(struct mesh_ctx *ctx, const char *debugtype, const cha
 	if (ctx->debuglevel < debugnum)
 		return;
 
-	if (!strcmp(dtype, "emerg") || !strcmp(dtype, "err") || !strcmp(dtype, "notice")) {
+	if (!strcmp(dtype, "emerg") || !strcmp(dtype, "err") ||
+	    !strcmp(dtype, "notice") || !strcmp(dtype, "warn")) {
 		snprintf(cmd, sizeof(cmd),
 			 "logger -p 'daemon.%s' %s -t 'mesh11sd[%d]' '%s'",
 			 dtype, stderr_flag, (int)ctx->pid, prefixed);
@@ -322,4 +323,20 @@ void mesh_watchdog_log(struct mesh_ctx *ctx)
 		return;
 	fprintf(f, "%s %lu %s\n", date, uptime, ctx->last_logmsg);
 	fclose(f);
+}
+
+/*
+ * While watchdog_nonvolatile_log is on, warn every 3rd checkinterval so
+ * the warning stays visible in logread and is not forgotten.
+ */
+void mesh_watchdog_log_warning(struct mesh_ctx *ctx)
+{
+	static unsigned int loops;
+
+	if (!ctx || ctx->watchdog_nonvolatile_log <= 0)
+		return;
+	if (loops++ % 3 != 0)
+		return;
+	mesh_log_warn(ctx, "******WARNING******: Irrepairable flash wear will occur and storage space will be used up. Please disable watchdog nonvolatile logging as soon as possible.");
+	mesh_log_warn(ctx, "******WARNING******: Irrepairable flash wear will occur and storage space will be used up by watchdog debug log at " WATCHDOG_LOG_FILE);
 }
