@@ -9,7 +9,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
-#include <time.h>
 #include <unistd.h>
 
 #define WIFIDETECT_FILE MESH11SD_TMPDIR "/wifidetect"
@@ -602,47 +601,3 @@ int mesh_wifi_chipset_detect(struct mesh_ctx *ctx)
 	return 0;
 }
 
-/*
- * When apmond is installed, put the wifidetect json into this node's
- * apmond reports as the "wifidetect" extension block. apmond keeps
- * blocks in RAM only, so it is set again every few minutes with a ttl
- * of three refreshes; if mesh11sd stops, the block expires by itself.
- */
-#define APMOND_REFRESH_S 300
-#define APMOND_BLOCK_MAX 16384
-
-void mesh_wifidetect_to_apmond(struct mesh_ctx *ctx)
-{
-	static time_t last;
-	static char data[APMOND_BLOCK_MAX + 1];
-	static char arg[APMOND_BLOCK_MAX + 128];
-	char *argv[] = { "ubus", "call", "apmond", "add_block", arg, NULL };
-	time_t now = time(NULL);
-	size_t n;
-	FILE *f;
-
-	if (last && now - last < APMOND_REFRESH_S)
-		return;
-	if (access("/usr/sbin/apmond", X_OK) != 0)
-		return;
-	last = now;
-
-	if (access(WIFIDETECT_FILE, R_OK) != 0 && mesh_wifi_chipset_detect(ctx) != 0)
-		return;
-	f = fopen(WIFIDETECT_FILE, "r");
-	if (!f)
-		return;
-	n = fread(data, 1, sizeof(data), f);
-	fclose(f);
-	if (n == 0 || n > APMOND_BLOCK_MAX) {
-		mesh_log_info(ctx, "wifidetect is [ %zu ] bytes, not sent to apmond", n);
-		return;
-	}
-	data[n] = '\0';
-	snprintf(arg, sizeof(arg), "{\"name\":\"wifidetect\",\"data\":%s,\"ttl\":%d}",
-		 data, 3 * APMOND_REFRESH_S);
-	if (mesh_run_capture(argv, NULL, 0) == 0)
-		mesh_log_debug(ctx, "wifidetect block sent to apmond");
-	else
-		mesh_log_debug(ctx, "apmond did not take the wifidetect block");
-}

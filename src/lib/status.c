@@ -7,6 +7,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 int mesh_get_node_type_code(struct mesh_ctx *ctx, char *out, size_t outlen)
@@ -772,4 +774,114 @@ int mesh_cli_status(struct mesh_ctx *ctx)
 	emit_layer2(ctx);
 	puts("}");
 	return 0;
+}
+
+/*
+ * When apmond is installed, send the status "mesh_interfaces" object to
+ * it as this node's "mesh" extension block, so the collector sees each
+ * node's mesh links. apmond keeps blocks in RAM until their ttl runs
+ * out, so the block is set again every apmond report interval with a
+ * ttl of three intervals; if mesh11sd stops, the block expires.
+ */
+#define APMOND_REFRESH_S 30
+#define APMOND_BLOCK_MAX 16384
+
+/* Run mesh_cli_status in a child and capture what it prints. */
+static int capture_status(struct mesh_ctx *ctx, char *out, size_t outlen)
+{
+	int pipefd[2], status;
+	size_t total = 0;
+	ssize_t n;
+	pid_t pid;
+
+	if (pipe(pipefd) < 0)
+		return -1;
+	pid = fork();
+	if (pid < 0) {
+		close(pipefd[0]);
+		close(pipefd[1]);
+		return -1;
+	}
+	if (pid == 0) {
+		close(pipefd[0]);
+		if (dup2(pipefd[1], STDOUT_FILENO) < 0)
+			_exit(1);
+		close(pipefd[1]);
+		mesh_cli_status(ctx);
+		fflush(stdout);
+		_exit(0);
+	}
+	close(pipefd[1]);
+	while ((n = read(pipefd[0], out + total, outlen - 1 - total)) > 0) {
+		total += (size_t)n;
+		if (total >= outlen - 1)
+			break;
+	}
+	close(pipefd[0]);
+	waitpid(pid, &status, 0);
+	out[total] = '\0';
+	return total >= outlen - 1 ? -1 : 0;
+}
+
+/* Cut out the object that follows "key": in json text, braces matched. */
+static const char *json_object_after(const char *text, const char *key, size_t *len)
+{
+	const char *s = strstr(text, key);
+	const char *p;
+	int depth = 0, in_str = 0;
+
+	if (!s)
+		return NULL;
+	s = strchr(s + strlen(key), '{');
+	if (!s)
+		return NULL;
+	for (p = s; *p; p++) {
+		if (in_str) {
+			if (*p == '\\' && p[1])
+				p++;
+			else if (*p == '"')
+				in_str = 0;
+			continue;
+		}
+		if (*p == '"')
+			in_str = 1;
+		else if (*p == '{')
+			depth++;
+		else if (*p == '}' && --depth == 0) {
+			*len = (size_t)(p - s + 1);
+			return s;
+		}
+	}
+	return NULL;
+}
+
+void mesh_status_to_apmond(struct mesh_ctx *ctx)
+{
+	static time_t last;
+	static char text[65536];
+	static char arg[APMOND_BLOCK_MAX + 128];
+	char *argv[] = { "ubus", "call", "apmond", "add_block", arg, NULL };
+	time_t now = time(NULL);
+	const char *obj;
+	size_t len = 0;
+
+	if (last && now - last < APMOND_REFRESH_S)
+		return;
+	if (access("/usr/sbin/apmond", X_OK) != 0)
+		return;
+	last = now;
+
+	if (capture_status(ctx, text, sizeof(text)) != 0)
+		return;
+	obj = json_object_after(text, "\"mesh_interfaces\":", &len);
+	if (!obj)
+		return;
+	if (len > APMOND_BLOCK_MAX) {
+		mesh_log_info(ctx, "mesh_interfaces is [ %zu ] bytes, not sent to apmond", len);
+		return;
+	}
+	snprintf(arg, sizeof(arg), "{\"name\":\"mesh\",\"data\":%.*s,\"ttl\":%d}",
+		 (int)len, obj, 3 * APMOND_REFRESH_S);
+	if (mesh_run_capture(argv, NULL, 0) != 0)
+		mesh_log_debug(ctx, "apmond did not take the mesh block");
 }
