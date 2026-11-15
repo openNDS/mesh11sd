@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <time.h>
 #include <unistd.h>
 
 #define WIFIDETECT_FILE MESH11SD_TMPDIR "/wifidetect"
@@ -438,6 +439,52 @@ static void release_field(const char *key, char *out, size_t outlen)
 	fclose(f);
 }
 
+/*
+ * Theoretical maximum PHY rate in Mbit/s, the figure manufacturers
+ * quote. v7 rates per spatial stream at 40 MHz, scaled by channel width.
+ */
+static int theoretical_mbps(const struct phy_caps *p)
+{
+	int base, mult;	/* mult is relative to 40 MHz, times 100 */
+	int streams = p->nss ? p->nss : 1;
+
+	if (p->std_be)
+		base = 360;
+	else if (p->std_ax)
+		base = 300;
+	else if (p->std_ac)
+		base = 217;
+	else if (p->std_n)
+		base = 150;
+	else
+		return 0;
+
+	switch (p->max_width) {
+	case 320: mult = 800; break;
+	case 240: mult = 600; break;
+	case 160: mult = 400; break;
+	case 80:  mult = 200; break;
+	case 20:  mult = 50;  break;
+	default:  mult = 100; break;
+	}
+	return base * streams * mult / 100;
+}
+
+/* Wi-Fi 7 MLO: sum of each band at its widest (2.4 at 40, 5 at 160, 6 at 320). */
+static int aggregated_mlo_mbps(const struct phy_caps *p)
+{
+	int streams = p->nss ? p->nss : 1;
+	int total = 0;
+
+	if (p->band_24)
+		total += 360 * streams;
+	if (p->band_5)
+		total += 1440 * streams;
+	if (p->band_6)
+		total += 2880 * streams;
+	return total;
+}
+
 static int cmp_names(const void *a, const void *b)
 {
 	return strcmp((const char *)a, (const char *)b);
@@ -526,6 +573,22 @@ int mesh_wifi_chipset_detect(struct mesh_ctx *ctx)
 			fprintf(f, "        \"Antennas\": \"%dx%d\",\n", p.nss, p.nss);
 		else
 			fputs("        \"Antennas\": \"unknown\",\n", f);
+		{
+			int mbps = theoretical_mbps(&p);
+
+			if (mbps)
+				fprintf(f, "        \"TheoreticalMaxMbps\": \"%d\",\n", mbps);
+			else
+				fputs("        \"TheoreticalMaxMbps\": \"unknown\",\n", f);
+			if (p.std_be) {
+				int agg = aggregated_mlo_mbps(&p);
+
+				if (agg)
+					fprintf(f, "        \"Aggregated_MLO_MaxMbps\": \"%d\",\n", agg);
+				else
+					fputs("        \"Aggregated_MLO_MaxMbps\": \"unknown\",\n", f);
+			}
+		}
 		fprintf(f, "        \"TXQS\": %s,\n", p.txqs ? "true" : "false");
 		fprintf(f, "        \"AIRTIME_FAIRNESS\": %s,\n", p.atf ? "true" : "false");
 		fprintf(f, "        \"AQL_Extended\": %s,\n", p.aql ? "true" : "false");
@@ -537,4 +600,49 @@ int mesh_wifi_chipset_detect(struct mesh_ctx *ctx)
 	fputs("    }\n  }\n}\n", f);
 	fclose(f);
 	return 0;
+}
+
+/*
+ * When apmond is installed, put the wifidetect json into this node's
+ * apmond reports as the "wifidetect" extension block. apmond keeps
+ * blocks in RAM only, so it is set again every few minutes with a ttl
+ * of three refreshes; if mesh11sd stops, the block expires by itself.
+ */
+#define APMOND_REFRESH_S 300
+#define APMOND_BLOCK_MAX 16384
+
+void mesh_wifidetect_to_apmond(struct mesh_ctx *ctx)
+{
+	static time_t last;
+	static char data[APMOND_BLOCK_MAX + 1];
+	static char arg[APMOND_BLOCK_MAX + 128];
+	char *argv[] = { "ubus", "call", "apmond", "add_block", arg, NULL };
+	time_t now = time(NULL);
+	size_t n;
+	FILE *f;
+
+	if (last && now - last < APMOND_REFRESH_S)
+		return;
+	if (access("/usr/sbin/apmond", X_OK) != 0)
+		return;
+	last = now;
+
+	if (access(WIFIDETECT_FILE, R_OK) != 0 && mesh_wifi_chipset_detect(ctx) != 0)
+		return;
+	f = fopen(WIFIDETECT_FILE, "r");
+	if (!f)
+		return;
+	n = fread(data, 1, sizeof(data), f);
+	fclose(f);
+	if (n == 0 || n > APMOND_BLOCK_MAX) {
+		mesh_log_info(ctx, "wifidetect is [ %zu ] bytes, not sent to apmond", n);
+		return;
+	}
+	data[n] = '\0';
+	snprintf(arg, sizeof(arg), "{\"name\":\"wifidetect\",\"data\":%s,\"ttl\":%d}",
+		 data, 3 * APMOND_REFRESH_S);
+	if (mesh_run_capture(argv, NULL, 0) == 0)
+		mesh_log_debug(ctx, "wifidetect block sent to apmond");
+	else
+		mesh_log_debug(ctx, "apmond did not take the wifidetect block");
 }
