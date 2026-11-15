@@ -222,13 +222,13 @@ static void emit_peers(struct mesh_ctx *ctx, const char *iface)
 
 static void emit_stations(struct mesh_ctx *ctx, const char *iface, const char *devicemac)
 {
-	char out[8192];
+	static char out[16384];
 	char *mpp[] = { "iw", "dev", (char *)iface, "mpp", "dump", NULL };
 	char entries[128][96];
 	int n = 0, i;
 	char *p, *line;
 	char *iwdev[] = { "iw", "dev", NULL };
-	char iwout[4096];
+	static char iwout[16384];
 
 	(void)ctx;
 	/* AP stations + mpp dump */
@@ -237,7 +237,8 @@ static void emit_stations(struct mesh_ctx *ctx, const char *iface, const char *d
 		char cur_if[64] = "";
 		int is_ap = 0;
 		while ((line = strsep(&save, "\n")) != NULL) {
-			if (sscanf(line, "Interface %63s", cur_if) == 1) {
+			/* iw dev indents its lines, so skip leading whitespace */
+			if (sscanf(line, " Interface %63s", cur_if) == 1) {
 				is_ap = 0;
 				continue;
 			}
@@ -245,7 +246,7 @@ static void emit_stations(struct mesh_ctx *ctx, const char *iface, const char *d
 				is_ap = 1;
 			if (is_ap && cur_if[0]) {
 				char *st[] = { "iw", "dev", cur_if, "station", "dump", NULL };
-				char st_out[4096];
+				static char st_out[65536];
 				if (mesh_run_capture(st, st_out, sizeof(st_out)) == 0) {
 					char *sp = st_out, *sl;
 					while ((sl = strsep(&sp, "\n")) != NULL) {

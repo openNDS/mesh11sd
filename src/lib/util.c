@@ -46,6 +46,12 @@ int mesh_run_capture(char *const argv[], char *out, size_t outlen)
 		       (n = read(pipefd[0], out + total, outlen - 1 - total)) > 0)
 			total += (size_t)n;
 		out[total] = '\0';
+		/* drain anything left so the child can exit */
+		{
+			char sink[256];
+			while (read(pipefd[0], sink, sizeof(sink)) > 0)
+				;
+		}
 		while (total > 0 && (out[total - 1] == '\n' || out[total - 1] == '\r'))
 			out[--total] = '\0';
 	} else {
