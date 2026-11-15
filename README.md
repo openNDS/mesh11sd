@@ -1274,7 +1274,24 @@ config mesh11sd 'mesh_params'
 	# The command: "mesh11sd status" gives a full list of supported parameters.
 ```
 
-## 13. Acronyms
+## 13. Known issues
+
+These are problems in OpenWrt or in particular hardware, not in mesh11sd, that can look like mesh11sd faults.
+
+### 13.1 Packet loss on some 2.5G ports at 1 Gbit/s (RTL8221B on MT7987)
+
+On some MT7987 boards whose 2.5G port uses a Realtek RTL8221B-VB-CG PHY (for example the GL.iNet GL-MT3600BE wan port), OpenWrt 25.12.5 and 25.12.6 can lose 40-60% of packets when the link runs at 1 Gbit/s or 100 Mbit/s and the device at the other end advertises Energy Efficient Ethernet (EEE). A 2.5 Gbit/s link is not affected.
+
+Symptoms: heavy ping loss and very slow transfers through that port, for example on a mode 5 trunk port or a CPE wan, while the mesh and VXLAN links are healthy.
+
+Workarounds, until the upstream fix reaches a release:
+
+- Turn EEE off on the router port (needs the `ethtool` package): `ethtool --set-eee eth0 eee off tx-lpi off`. Both parts are needed on kernel 6.12.
+- Or turn EEE off on the connected device, or use a 2.5 Gbit/s link partner.
+
+Upstream: [openwrt/openwrt#20967](https://github.com/openwrt/openwrt/issues/20967) and the fix [openwrt/openwrt#25996](https://github.com/openwrt/openwrt/pull/25996).
+
+## 14. Acronyms
 
 **STA** station · **PREQ** path request · **HWMP** Hybrid Wireless Mesh Protocol · **RANN** root announcement · **RSSI** signal · **ULA** unique local IPv6 · **3dRV** three-dimensional relative velocity · **MBP** Mesh Bridge Portal · **MRP** Mesh Routed Portal · **MPE** Mesh Peer · **CPE** Client Premises Equipment · **TPN** Trunk Peer Node · **OWE** Opportunistic Wireless Encryption
 

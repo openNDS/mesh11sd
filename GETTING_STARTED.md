@@ -178,6 +178,7 @@ Once at least one mesh peer is up, the power or status LED on most hardware show
 - Portal IPv4 is not `192.168.1.1`; use link-local IPv6 or `mesh11sd connect` from another node.
 - LuCI is disabled while auto-config is running unless `auto_config=2`.
 - After changing `portal_detect`, restart the daemon (`service mesh11sd restart`) and wait a few `checkinterval`s (default 10s).
+- Heavy packet loss on a 2.5G port linked at 1 Gbit/s may be a known OpenWrt PHY issue; see Known issues in [README.md](README.md).
 - Watchdog: if a peer cannot see a portal, it may DHCP-renew, restart the network, then reboot (`reboot_on_error=1`). Set `portal_detect_threshold=0` to disable the watchdog.
 
 Next: [README.md](README.md) for the full option list, CLI, HWMP flags, and firmware-selector detail.

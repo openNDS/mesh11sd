@@ -56,6 +56,31 @@ static void service_cmd_bg(const char *svc, const char *action)
 	}
 }
 
+/* Stage one uci line with one %s argument (as cpe.c) */
+static void stage(const char *fmt, const char *arg)
+{
+	char line[256];
+
+	snprintf(line, sizeof(line), fmt, arg);
+	mesh_uci_batch_line(line);
+}
+
+/* SIGTERM the udhcpc netifd runs on the mesh bridge, if any */
+static void stop_bridge_udhcpc(struct mesh_ctx *ctx)
+{
+	char path[128];
+	FILE *f;
+	int pid = 0;
+
+	snprintf(path, sizeof(path), "/var/run/udhcpc-%s.pid", ctx->device);
+	f = fopen(path, "r");
+	if (!f)
+		return;
+	if (fscanf(f, "%d", &pid) == 1 && pid > 0)
+		kill(pid, SIGTERM);
+	fclose(f);
+}
+
 /*
  * v7 manage_opennds. With manage_opennds_startup on (the default) and
  * opennds installed: "stop" disables its autostart and stops it (a peer),
@@ -380,16 +405,18 @@ int mesh_get_portal_state(struct mesh_ctx *ctx)
 		return 0;
 	}
 	if (ctx->portal_detect == 4) {
-		/* MBP: ethernet upstream via detect_mbp_upstream (v7) */
+		/* MBP: always the portal (v7). The upstream router check only
+		 * sets is_portal; an IPv4-only router often has no route on
+		 * lan yet, and a half portal, half peer node hides the
+		 * portal ULA from the mode 5 peers. */
 		if (mesh_detect_mbp_upstream(ctx) == 0) {
 			snprintf(ctx->is_portal, sizeof(ctx->is_portal), "detected");
-			snprintf(ctx->detected_state, sizeof(ctx->detected_state), "portal");
 			mesh_log_debug(ctx, "Node has upstream gateway(s), zone [ %s ], [ %s ], [ %s ]",
 				       ctx->up_zone, ctx->default_ipv6_gw, ctx->default_ipv4_gw);
 		} else {
-			ctx->is_portal[0] = '\0';
-			snprintf(ctx->detected_state, sizeof(ctx->detected_state), "peer");
+			snprintf(ctx->is_portal, sizeof(ctx->is_portal), "forced");
 		}
+		snprintf(ctx->detected_state, sizeof(ctx->detected_state), "portal");
 		write_is_portal(ctx);
 		return 0;
 	}
@@ -594,15 +621,16 @@ void mesh_peer_stage_uci(struct mesh_ctx *ctx)
 }
 
 /*
- * Remember the role across reboots (portal_detect 1 and 4 only), so the
- * next boot can stage it before the startup restart. Committed only when
- * it changes; unset means portal, so a portal never writes it.
+ * Remember the role across reboots (portal_detect 1 only), so the next
+ * boot can stage it before the startup restart. Committed only when it
+ * changes; unset means portal, so a portal never writes it. Mode 4 is
+ * always the portal, so a last_role left by mode 1 is ignored there.
  */
 static void note_role(struct mesh_ctx *ctx, const char *role)
 {
 	const char *was = ctx->last_role[0] ? ctx->last_role : "portal";
 
-	if (ctx->portal_detect != 1 && ctx->portal_detect != 4)
+	if (ctx->portal_detect != 1)
 		return;
 	if (!strcmp(was, role))
 		return;
@@ -614,7 +642,7 @@ static void note_role(struct mesh_ctx *ctx, const char *role)
 
 int mesh_predicted_peer(struct mesh_ctx *ctx)
 {
-	return (ctx->portal_detect == 1 || ctx->portal_detect == 4) &&
+	return ctx->portal_detect == 1 &&
 	       !ctx->commit_all && !strcmp(ctx->last_role, "peer");
 }
 
@@ -923,6 +951,96 @@ int mesh_ensure_portal_vtun_dnsmasq(struct mesh_ctx *ctx)
 	return 1;
 }
 
+/*
+ * v7 mbp_dhcp_lan_defaults, staged. An MBP (portal_detect 4) is a DHCP
+ * client on the existing router's lan and serves nothing there except a
+ * low preference RA for the mesh ULA /64, so the peers can find it. The
+ * router stays the default gateway.
+ */
+void mesh_mbp_stage_lan(struct mesh_ctx *ctx)
+{
+	const char *net = ctx->auto_mesh_network;
+	char setl[192];
+
+	if (ctx->portal_detect != 4)
+		return;
+	mesh_set_ula_prefix(ctx, "set");
+
+	stage("set dhcp.%s.dhcpv4='disabled'", net);
+	stage("set dhcp.%s.dhcpv6='disabled'", net);
+	stage("set dhcp.%s.ignore='1'", net);
+	stage("set dhcp.%s.force='0'", net);
+	stage("set dhcp.%s.ra='server'", net);
+	/* not a default router */
+	stage("set dhcp.%s.ra_default='0'", net);
+	stage("set dhcp.%s.ra_preference='low'", net);
+	stage("set dhcp.%s.ra_slaac='1'", net);
+	if (ctx->ula_base[0] && ctx->ula_subnet[0]) {
+		snprintf(setl, sizeof(setl),
+			 "set dhcp.%s.prefix_filter='%s:%s::/64'",
+			 net, ctx->ula_base, ctx->ula_subnet);
+		mesh_uci_batch_line(setl);
+	}
+	/* stateless SLAAC only */
+	stage("del_list dhcp.%s.ra_flags='managed-config'", net);
+	stage("del_list dhcp.%s.ra_flags='other-config'", net);
+	stage("del_list dhcp.%s.ra_flags='none'", net);
+	stage("add_list dhcp.%s.ra_flags='other-config'", net);
+
+	stage("set network.%s.proto='dhcp'", net);
+	stage("set network.%s.defaultroute='1'", net);
+	stage("set network.%s.peerdns='1'", net);
+}
+
+/* v7 forced portal block for an MBP, once per run (v7 ~10439). */
+int mesh_mbp_conf(struct mesh_ctx *ctx)
+{
+	static int done;
+	char key[96], proto[32] = "";
+
+	if (ctx->portal_detect != 4 || ctx->commit_all || done)
+		return 0;
+
+	mesh_log_notice(ctx, "Portal detection is disabled, forcing portal mode (MBP)");
+	mesh_uci_set("mesh11sd.mesh_params.mesh_connected_to_as", "1");
+
+	/* v7 stops udhcpc on the mesh bridge. With lan on proto dhcp that
+	 * udhcpc is netifd's client on the router, so only stop a leftover. */
+	snprintf(key, sizeof(key), "network.%s.proto", ctx->auto_mesh_network);
+	mesh_uci_get(key, proto, sizeof(proto));
+	if (strcmp(proto, "dhcp") != 0)
+		stop_bridge_udhcpc(ctx);
+
+	mesh_mbp_stage_lan(ctx);
+	mesh_uci_batch_line("set dhcp.@dnsmasq[0].authoritative='1'");
+	mesh_uci_batch_line("set dhcp.@dnsmasq[0].logfacility='-'");
+	mesh_uci_batch_line("set dhcp.@dnsmasq[0].quietdhcp='1'");
+
+	/* the trunk is L2: no DHCP or RA from this node on vtunlan */
+	{
+		char cur[64] = "";
+		if (mesh_uci_get("dhcp.vtunlan", cur, sizeof(cur)) == 0 && cur[0]) {
+			mesh_uci_batch_line("set dhcp.vtunlan.dhcpv4='disabled'");
+			mesh_uci_batch_line("set dhcp.vtunlan.dhcpv6='disabled'");
+			mesh_uci_batch_line("set dhcp.vtunlan.ra='disabled'");
+			mesh_uci_batch_line("set dhcp.vtunlan.ignore='1'");
+			mesh_uci_batch_line("set dhcp.vtunlan.force='0'");
+			mesh_uci_batch_line("del_list dhcp.vtunlan.ra_flags='managed-config'");
+			mesh_uci_batch_line("del_list dhcp.vtunlan.ra_flags='other-config'");
+			mesh_uci_batch_line("del_list dhcp.vtunlan.ra_flags='none'");
+			mesh_uci_batch_line("add_list dhcp.vtunlan.ra_flags='none'");
+			mesh_uci_batch_line("delete dhcp.vtunlan.ra_dns");
+			mesh_uci_batch_line("set dhcp.@dnsmasq[0].rebind_protection='0'");
+		}
+	}
+
+	mesh_network_reload_if_changed(ctx, "MBP");
+	service_cmd_bg("dnsmasq", "restart");
+	service_cmd_bg("odhcpd", "restart");
+	done = 1;
+	return 1;
+}
+
 int mesh_check_portal(struct mesh_ctx *ctx)
 {
 	mesh_log_debug(ctx, "Checking portal status");
@@ -942,8 +1060,10 @@ int mesh_check_portal(struct mesh_ctx *ctx)
 		/* TPN special-cased earlier in v7; peer-like */
 		return 0;
 	}
-	if (ctx->portal_detect == 4)
+	if (ctx->portal_detect == 4) {
+		mesh_mbp_conf(ctx);
 		return 0;
+	}
 
 	if (strcmp(ctx->detected_state, "portal") != 0) {
 		mesh_log_debug(ctx, "This IS NOT a layer 3 mesh portal");

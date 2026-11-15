@@ -679,6 +679,81 @@ static void underlay_linklocal(const char *dev, char *ll, size_t len)
 		*sl = '\0';
 }
 
+/* Read an interface MTU from sysfs, 0 if it does not exist. */
+static int read_mtu(const char *ifname)
+{
+	char path[128], buf[16] = "";
+	FILE *f;
+
+	snprintf(path, sizeof(path), "/sys/class/net/%s/mtu", ifname);
+	f = fopen(path, "r");
+	if (!f)
+		return 0;
+	if (!fgets(buf, sizeof(buf), f))
+		buf[0] = '\0';
+	fclose(f);
+	return atoi(buf);
+}
+
+static void ensure_mtu(struct mesh_ctx *ctx, const char *ifname, int want)
+{
+	char mtu_s[8];
+	int cur;
+
+	if (!ifname[0])
+		return;
+	cur = read_mtu(ifname);
+	if (cur == 0 || cur == want)
+		return;
+	snprintf(mtu_s, sizeof(mtu_s), "%d", want);
+	{
+		char *m[] = { "ip", "link", "set", (char *)ifname, "mtu", mtu_s, NULL };
+		mesh_run_capture(m, NULL, 0);
+	}
+	mesh_log_notice(ctx, "mtu on [ %s ] was [ %d ], set to [ %d ]", ifname, cur, want);
+}
+
+/*
+ * Per-pass baby-jumbo check. The mesh vif and the underlay bridge must
+ * carry a full 1500 byte vxlan frame plus its header, so both are 1600
+ * and the vxlan itself is 1500. A netifd reload or a wifi restart can
+ * put them back to 1500 after the vxlan was made, and then large frames
+ * are lost. The underlay is br-wan in mode 3, otherwise the mesh bridge.
+ */
+void mesh_check_mtu(struct mesh_ctx *ctx)
+{
+	char vxname[32], device[64];
+
+	if (!ctx->vtun_enable)
+		return;
+	snprintf(vxname, sizeof(vxname), "vxlan%s",
+		 ctx->tun_id[0] ? ctx->tun_id : "69");
+	if (read_mtu(vxname) == 0)
+		return; /* no tunnel yet */
+
+	if (ctx->portal_detect == 3)
+		snprintf(device, sizeof(device), "br-wan");
+	else
+		snprintf(device, sizeof(device), "br-%s",
+			 ctx->auto_mesh_network[0] ? ctx->auto_mesh_network : "lan");
+
+	if (!ctx->active_mesh_ifname[0]) {
+		FILE *f = fopen(MESH11SD_TMPDIR "/active_mesh_ifname", "r");
+		char line[128];
+
+		if (f && fgets(line, sizeof(line), f)) {
+			char *q = strstr(line, "active_mesh_ifname=\"");
+			if (q)
+				sscanf(q + 20, "%63[^\"]", ctx->active_mesh_ifname);
+		}
+		if (f)
+			fclose(f);
+	}
+	ensure_mtu(ctx, ctx->active_mesh_ifname, 1600);
+	ensure_mtu(ctx, device, 1600);
+	ensure_mtu(ctx, vxname, 1500);
+}
+
 int mesh_create_vxlan_if(struct mesh_ctx *ctx)
 {
 	/* v7 create_vxlan_if: ip-full `ip -6 link add ... type vxlan` (NOT netifd
@@ -835,10 +910,10 @@ int mesh_create_vxlan_if(struct mesh_ctx *ctx)
 		sleep(1);
 	}
 
-	/* dhcp.vtunlan portal vs peer (v7) */
-	if (!strcmp(ctx->detected_state, "portal") ||
-	    ctx->portal_detect == 0 ||
-	    (ctx->portal_detect == 1 && !strcmp(ctx->detected_state, "portal"))) {
+	/* dhcp.vtunlan portal vs peer (v7). An MBP (mode 4) is a portal
+	 * but its trunk is L2: the router serves it, not this node. */
+	if (ctx->portal_detect == 0 ||
+	    (!strcmp(ctx->detected_state, "portal") && ctx->portal_detect != 4)) {
 		mesh_uci_batch_line("set dhcp.vtunlan.dhcpv4='server'");
 		mesh_uci_batch_line("set dhcp.vtunlan.dhcpv6='server'");
 		mesh_uci_batch_line("set dhcp.vtunlan.ra='server'");
@@ -1029,6 +1104,11 @@ static void vtunnel_uci_network(struct mesh_ctx *ctx, const char *vxname,
 		/* peer: br-tun is only a bridge, with no address */
 		mesh_uci_batch_line("delete network.vtunlan.defaultroute");
 		mesh_uci_batch_line("delete network.vtunlan.ip6assign");
+	} else if (ctx->portal_detect == 4) {
+		/* MBP: static, no gateway, no default route, no prefix
+		 * (mesh_mbp_vtunlan does the rest) */
+		mesh_uci_batch_line("set network.vtunlan.defaultroute='0'");
+		mesh_uci_batch_line("delete network.vtunlan.ip6assign");
 	} else {
 		mesh_uci_batch_line("delete network.vtunlan.defaultroute");
 		mesh_uci_batch_line("set network.vtunlan.ip6assign='64'");
@@ -1065,6 +1145,8 @@ int mesh_vtunnel_preconfigure(struct mesh_ctx *ctx)
 			mesh_uci_batch_line("delete network.vtunlan.defaultroute");
 			mesh_uci_batch_line("delete network.vtunlan.ip6assign");
 		}
+		/* An MBP's trunk is L2, whatever an earlier role committed */
+		mesh_mbp_vtunlan(ctx, 0);
 		return 0;
 	}
 
@@ -1899,7 +1981,7 @@ int mesh_ensure_wan_on_vxlan_bridge(struct mesh_ctx *ctx, int do_reload)
 {
 	char wanif[64], tunif[32], ports[512], val[16], setl[160];
 	char path[96], master[96];
-	int changed = 0;
+	int changed = 0, has_wan, has_wan6;
 	ssize_t n;
 
 	if (ctx->portal_detect != 4 && ctx->portal_detect != 5)
@@ -1915,9 +1997,14 @@ int mesh_ensure_wan_on_vxlan_bridge(struct mesh_ctx *ctx, int do_reload)
 	if (!wanif[0])
 		snprintf(wanif, sizeof(wanif), "wan");
 
-	if (mesh_uci_get("network.wan.disabled", val, sizeof(val)) != 0 || strcmp(val, "1"))
+	/* only disable wan/wan6 sections that exist */
+	has_wan = mesh_uci_get("network.wan", val, sizeof(val)) == 0 && val[0];
+	has_wan6 = mesh_uci_get("network.wan6", val, sizeof(val)) == 0 && val[0];
+	if (has_wan && (mesh_uci_get("network.wan.disabled", val, sizeof(val)) != 0 ||
+			strcmp(val, "1")))
 		changed = 1;
-	if (mesh_uci_get("network.wan6.disabled", val, sizeof(val)) != 0 || strcmp(val, "1"))
+	if (has_wan6 && (mesh_uci_get("network.wan6.disabled", val, sizeof(val)) != 0 ||
+			 strcmp(val, "1")))
 		changed = 1;
 	ports[0] = '\0';
 	mesh_uci_get("network.vtunnel.ports", ports, sizeof(ports));
@@ -1933,8 +2020,10 @@ int mesh_ensure_wan_on_vxlan_bridge(struct mesh_ctx *ctx, int do_reload)
 	}
 
 	if (changed) {
-		mesh_uci_batch_line("set network.wan.disabled='1'");
-		mesh_uci_batch_line("set network.wan6.disabled='1'");
+		if (has_wan)
+			mesh_uci_batch_line("set network.wan.disabled='1'");
+		if (has_wan6)
+			mesh_uci_batch_line("set network.wan6.disabled='1'");
 		snprintf(setl, sizeof(setl), "del_list network.vtunnel.ports='%s'", wanif);
 		mesh_uci_batch_line(setl);
 		snprintf(setl, sizeof(setl), "add_list network.vtunnel.ports='%s'", wanif);
@@ -1970,6 +2059,122 @@ int mesh_ensure_wan_on_vxlan_bridge(struct mesh_ctx *ctx, int do_reload)
 		mesh_run_capture(up, NULL, 0);
 	}
 	return 0;
+}
+
+/* Delete every default route on dev for one family ("-4" or "-6"). */
+static void drop_default_routes(const char *family, const char *dev)
+{
+	char out[1024], via[64];
+	char *show[] = { "ip", (char *)family, "route", "show", "default",
+			 "dev", (char *)dev, NULL };
+	char *del[] = { "ip", (char *)family, "route", "del", "default",
+			"via", via, "dev", (char *)dev, NULL };
+	int i;
+
+	/* bounded: one route per pass, at most 8 */
+	for (i = 0; i < 8; i++) {
+		const char *p;
+
+		out[0] = '\0';
+		if (mesh_run_capture(show, out, sizeof(out)) != 0)
+			return;
+		p = strstr(out, "via ");
+		if (!p || sscanf(p + 4, "%63s", via) != 1)
+			return;
+		if (mesh_run_capture(del, NULL, 0) != 0)
+			return;
+	}
+}
+
+/* No RA and no default route on the MBP trunk bridge */
+static void mbp_trunk_no_defaults(const char *tunif)
+{
+	char path[128];
+
+	snprintf(path, sizeof(path), "/proc/sys/net/ipv6/conf/%s/accept_ra", tunif);
+	mesh_sysfs_write_int_if_changed(path, 0);
+	drop_default_routes("-4", tunif);
+	drop_default_routes("-6", tunif);
+}
+
+/* Stage "set network.vtunlan.<opt>='<want>'" only when it differs */
+static int vtunlan_set(const char *opt, const char *want)
+{
+	char key[64], cur[64] = "", setl[160];
+
+	snprintf(key, sizeof(key), "network.vtunlan.%s", opt);
+	if (mesh_uci_get(key, cur, sizeof(cur)) == 0 && !strcmp(cur, want))
+		return 0;
+	snprintf(setl, sizeof(setl), "set %s='%s'", key, want);
+	mesh_uci_batch_line(setl);
+	return 1;
+}
+
+/* Stage "delete network.vtunlan.<opt>" only when it is set */
+static int vtunlan_del(const char *opt)
+{
+	char key[64], cur[64] = "", setl[160];
+
+	snprintf(key, sizeof(key), "network.vtunlan.%s", opt);
+	if (mesh_uci_get(key, cur, sizeof(cur)) != 0 || !cur[0])
+		return 0;
+	snprintf(setl, sizeof(setl), "delete %s", key);
+	mesh_uci_batch_line(setl);
+	return 1;
+}
+
+/*
+ * v7 configure_mbp_vtunlan, mode 4 only. The MBP trunk is L2: vtunlan is
+ * static with no gateway, no default route, no peer DNS and no prefix,
+ * and br-tun takes no RA. An IPv4 already on br-tun that is not vtun_ip
+ * is kept, so the MBP does not collide with an MRP at the shared vtun_ip.
+ * Changes are staged only when they differ; with do_reload a change is
+ * applied by a network reload.
+ */
+int mesh_mbp_vtunlan(struct mesh_ctx *ctx, int do_reload)
+{
+	char tunif[32], path[96], cur[64] = "", out[512], want_ip[64] = "";
+	char *show[] = { "ip", "-4", "-o", "addr", "show", "dev", tunif, NULL };
+	int changed = 0;
+
+	if (ctx->portal_detect != 4 || !ctx->vtun_enable)
+		return 0;
+	snprintf(tunif, sizeof(tunif), "br-tun%s", ctx->tun_id[0] ? ctx->tun_id : "69");
+	snprintf(path, sizeof(path), "/sys/class/net/%s", tunif);
+	if ((mesh_uci_get("network.vtunlan", cur, sizeof(cur)) != 0 || !cur[0]) &&
+	    access(path, F_OK) != 0)
+		return 0;
+
+	if (ctx->vtun_ip[0] && strcmp(ctx->vtun_ip, "auto") != 0)
+		snprintf(want_ip, sizeof(want_ip), "%s", ctx->vtun_ip);
+	out[0] = '\0';
+	if (mesh_run_capture(show, out, sizeof(out)) == 0) {
+		const char *p = strstr(out, "inet ");
+		char ip[64];
+
+		if (p && sscanf(p + 5, "%63[^/ ]", ip) == 1 && strcmp(ip, want_ip) != 0)
+			snprintf(want_ip, sizeof(want_ip), "%s", ip);
+	}
+
+	changed |= vtunlan_set("proto", "static");
+	if (want_ip[0])
+		changed |= vtunlan_set("ipaddr", want_ip);
+	changed |= vtunlan_set("netmask", ctx->vtun_mask[0] ? ctx->vtun_mask : "255.255.255.0");
+	changed |= vtunlan_set("defaultroute", "0");
+	changed |= vtunlan_set("peerdns", "0");
+	changed |= vtunlan_del("gateway");
+	changed |= vtunlan_del("ip6assign");
+
+	if (access(path, F_OK) == 0)
+		mbp_trunk_no_defaults(tunif);
+
+	if (do_reload && changed && !ctx->commit_all) {
+		mesh_log_notice(ctx, "MBP: vtunlan is static with no default route (trunk is not upstream)");
+		if (mesh_network_reload_if_changed(ctx, "MBP vtunlan") &&
+		    access(path, F_OK) == 0)
+			mbp_trunk_no_defaults(tunif);
+	}
+	return changed;
 }
 
 int mesh_move_ethernet_to_vxlan_bridge(struct mesh_ctx *ctx)

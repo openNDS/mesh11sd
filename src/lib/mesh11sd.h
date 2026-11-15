@@ -226,7 +226,9 @@ int mesh_ensure_portal_vtun_dnsmasq(struct mesh_ctx *ctx);
 int mesh_portal_watchdog(struct mesh_ctx *ctx);
 void mesh_peer_reapply(struct mesh_ctx *ctx);   /* peer overlay again */
 void mesh_peer_stage_uci(struct mesh_ctx *ctx);  /* peer network/dhcp values */
-int mesh_predicted_peer(struct mesh_ctx *ctx);   /* last_role peer, mode 1/4 */
+int mesh_predicted_peer(struct mesh_ctx *ctx);   /* last_role peer, mode 1 */
+void mesh_mbp_stage_lan(struct mesh_ctx *ctx);   /* mode 4 lan: dhcp client, ULA RA */
+int mesh_mbp_conf(struct mesh_ctx *ctx);         /* mode 4 one-shot forced portal */
 void mesh_portal_reapply(struct mesh_ctx *ctx); /* portal runtime again */
 int mesh_set_ula_prefix(struct mesh_ctx *ctx, const char *mode);
 int mesh_get_portal_ula(struct mesh_ctx *ctx, const char *mode);
@@ -270,7 +272,9 @@ int mesh_pin_active_portal_arp(struct mesh_ctx *ctx); /* v7 ARP pin */
 int mesh_pin_active_portal_arp_clear(struct mesh_ctx *ctx);
 int mesh_move_ethernet_to_vxlan_bridge(struct mesh_ctx *ctx);
 int mesh_ensure_wan_on_vxlan_bridge(struct mesh_ctx *ctx, int do_reload); /* modes 4|5 */
+int mesh_mbp_vtunlan(struct mesh_ctx *ctx, int do_reload); /* mode 4 L2 trunk vtunlan */
 void mesh_check_accept_ra(struct mesh_ctx *ctx); /* v7 per-pass accept_ra */
+void mesh_check_mtu(struct mesh_ctx *ctx); /* per-pass baby-jumbo mtu */
 int mesh_probe_interface_mac(struct mesh_ctx *ctx);
 int mesh_set_iface_path_cost(struct mesh_ctx *ctx, int path_cost,
 			     const char *bridge, const char *iface);
