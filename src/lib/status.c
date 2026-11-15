@@ -293,23 +293,25 @@ static void emit_stations(struct mesh_ctx *ctx, const char *iface, const char *d
 
 static void emit_layer2(struct mesh_ctx *ctx)
 {
-	char show[4096];
+	static char show[32768];
+	char *netshow[] = { "uci", "show", "network", NULL };
 	char *p, *line;
 	char bridges[32][64];
 	int nb = 0, bi;
 
 	(void)ctx;
 	fputs("  \"layer2_connections\": {\n", stdout);
-	if (mesh_uci_show_filter("network", "type='bridge'", show, sizeof(show)) == 0) {
+	/* network.<section>.type='bridge' lines name the bridge devices */
+	if (mesh_run_capture(netshow, show, sizeof(show)) == 0) {
 		p = show;
 		while ((line = strsep(&p, "\n")) != NULL) {
-			char sect[96], *eq, name[64], key[128];
-			eq = strchr(line, '=');
-			if (!eq)
+			char sect[96], name[64], key[128], *dot;
+
+			if (!strstr(line, ".type='bridge'"))
 				continue;
 			snprintf(sect, sizeof(sect), "%s", line);
-			sect[eq - line] = '\0';
-			/* network.deviceX=device */
+			dot = strstr(sect, ".type=");
+			*dot = '\0';
 			snprintf(key, sizeof(key), "%s.name", sect);
 			if (mesh_uci_get(key, name, sizeof(name)) != 0)
 				continue;
