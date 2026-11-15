@@ -326,16 +326,26 @@ void mesh_watchdog_log(struct mesh_ctx *ctx)
 }
 
 /*
- * While watchdog_nonvolatile_log is on, warn every 3rd checkinterval so
- * the warning stays visible in logread and is not forgotten.
+ * Every 3rd checkinterval, re-read watchdog_nonvolatile_log so that a
+ * plain "uci set" turns it on or off without a commit or restart (uci
+ * get sees staged changes), and while it is on, warn so the warning
+ * stays visible in logread and the option is not forgotten.
  */
-void mesh_watchdog_log_warning(struct mesh_ctx *ctx)
+void mesh_watchdog_log_check(struct mesh_ctx *ctx)
 {
 	static unsigned int loops;
+	char buf[16];
+	int want = 0;
 
-	if (!ctx || ctx->watchdog_nonvolatile_log <= 0)
+	if (!ctx || loops++ % 3 != 0)
 		return;
-	if (loops++ % 3 != 0)
+	if (mesh_uci_get("mesh11sd.setup.watchdog_nonvolatile_log", buf, sizeof(buf)) == 0)
+		want = atoi(buf);
+	if (want != ctx->watchdog_nonvolatile_log) {
+		ctx->watchdog_nonvolatile_log = want;
+		mesh_log_notice(ctx, "watchdog_nonvolatile_log is now [ %d ]", want);
+	}
+	if (ctx->watchdog_nonvolatile_log <= 0)
 		return;
 	mesh_log_warn(ctx, "******WARNING******: Irrepairable flash wear will occur and storage space will be used up. Please disable watchdog nonvolatile logging as soon as possible.");
 	mesh_log_warn(ctx, "******WARNING******: Irrepairable flash wear will occur and storage space will be used up by watchdog debug log at " WATCHDOG_LOG_FILE);
