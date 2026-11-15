@@ -713,6 +713,25 @@ static void ensure_mtu(struct mesh_ctx *ctx, const char *ifname, int want)
 	mesh_log_notice(ctx, "mtu on [ %s ] was [ %d ], set to [ %d ]", ifname, cur, want);
 }
 
+/* The daemon writes the active mesh interface to tmpdir. */
+static void load_active_mesh_ifname(struct mesh_ctx *ctx)
+{
+	FILE *f;
+	char line[128];
+
+	if (ctx->active_mesh_ifname[0])
+		return;
+	f = fopen(MESH11SD_TMPDIR "/active_mesh_ifname", "r");
+	if (!f)
+		return;
+	if (fgets(line, sizeof(line), f)) {
+		char *q = strstr(line, "active_mesh_ifname=\"");
+		if (q)
+			sscanf(q + 20, "%63[^\"]", ctx->active_mesh_ifname);
+	}
+	fclose(f);
+}
+
 /*
  * Per-pass baby-jumbo check. The mesh vif and the underlay bridge must
  * carry a full 1500 byte vxlan frame plus its header, so both are 1600
@@ -737,18 +756,7 @@ void mesh_check_mtu(struct mesh_ctx *ctx)
 		snprintf(device, sizeof(device), "br-%s",
 			 ctx->auto_mesh_network[0] ? ctx->auto_mesh_network : "lan");
 
-	if (!ctx->active_mesh_ifname[0]) {
-		FILE *f = fopen(MESH11SD_TMPDIR "/active_mesh_ifname", "r");
-		char line[128];
-
-		if (f && fgets(line, sizeof(line), f)) {
-			char *q = strstr(line, "active_mesh_ifname=\"");
-			if (q)
-				sscanf(q + 20, "%63[^\"]", ctx->active_mesh_ifname);
-		}
-		if (f)
-			fclose(f);
-	}
+	load_active_mesh_ifname(ctx);
 	ensure_mtu(ctx, ctx->active_mesh_ifname, 1600);
 	ensure_mtu(ctx, device, 1600);
 	ensure_mtu(ctx, vxname, 1500);
@@ -2275,4 +2283,45 @@ int mesh_probe_interface_mac(struct mesh_ctx *ctx)
 	}
 	mesh_log_debug(ctx, "dsa_mesh_maclist [ %s ]", list);
 	return 0;
+}
+
+/*
+ * Per-pass check of the mesh vif's bridge port flags. netifd turns on
+ * bpdu_filter, multicast_to_unicast and hairpin_mode for a port it sees
+ * as a wireless AP, and never turns bpdu_filter off again. On a mesh
+ * port, bpdu_filter stops STP converging and hairpin bounces broadcasts
+ * back over the mesh, so all three are kept off.
+ */
+void mesh_check_brport_flags(struct mesh_ctx *ctx)
+{
+	static const char *const flags[] = {
+		"bpdu_filter", "multicast_to_unicast", "hairpin_mode", NULL
+	};
+	char path[160], buf[8];
+	FILE *f;
+	int i;
+
+	load_active_mesh_ifname(ctx);
+	if (!ctx->active_mesh_ifname[0])
+		return;
+
+	for (i = 0; flags[i]; i++) {
+		snprintf(path, sizeof(path), "/sys/class/net/%s/brport/%s",
+			 ctx->active_mesh_ifname, flags[i]);
+		f = fopen(path, "r");
+		if (!f)
+			continue; /* not a bridge port, or flag not supported */
+		if (!fgets(buf, sizeof(buf), f))
+			buf[0] = '\0';
+		fclose(f);
+		if (atoi(buf) == 0)
+			continue;
+		f = fopen(path, "w");
+		if (!f)
+			continue;
+		fputs("0", f);
+		fclose(f);
+		mesh_log_notice(ctx, "%s on [ %s ] was on, turned off",
+				flags[i], ctx->active_mesh_ifname);
+	}
 }

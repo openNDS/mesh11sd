@@ -35,47 +35,215 @@ static void print_help(void)
 "  Returns: \"0\" and exit code 0 if successful, exit code 1 if was already disabled\n"
 "\n"
 "####\n"
-"  Option: status\n"
-"  Returns: the mesh status in json format (minimal in this alpha)\n"
+"  Option: auto_config\n"
+"  Configure auto config mode\n"
+"  Usage:\n"
+"    mesh11sd auto_config test | enable | disable\n"
+"      Takes immediate effect. Any current connection is likely to be lost and may require reconnection on a different IPv4 address.\n"
+"\n"
+"        test - turn on auto config test mode. A reboot will revert the auto configuration.\n"
+"        enable - enable auto config mode.\n"
+"        disable - disable auto config mode.\n"
 "\n"
 "####\n"
-"  Option: get_factory_mac\n"
-"  Returns: factory / label MAC address\n"
+"  Option: status\n"
+"  Returns: the mesh status in json format\n"
+"\n"
+"####\n"
+"  Option: connect\n"
+"  Connect a remote terminal session on a remote meshnode\n"
+"\n"
+"  Usage:\n"
+"    mesh11sd connect\n"
+"        Lists all reachable mesh nodes (including island meshes)\n"
+"\n"
+"    mesh11sd connect filter_list\n"
+"        Lists available mesh nodes in this contiguous mesh only\n"
+"\n"
+"    mesh11sd connect [Node ID]\n"
+"        Connects to the requested meshnode\n"
+"\n"
+"####\n"
+"  Option: copy\n"
+"  Copy a file to /tmp/mesh11sd/ on a remote meshnode\n"
+"\n"
+"  Usage:\n"
+"    mesh11sd copy\n"
+"        Lists all reachable mesh nodes (including island meshes)\n"
+"\n"
+"    mesh11sd copy filter_list\n"
+"        Lists available mesh nodes in this contiguous mesh only\n"
+"\n"
+"    mesh11sd copy [Node ID] [path_to_source_file]\n"
+"        Copies the file to /tmp/mesh11sd/ on the requested meshnode\n"
+"\n"
+"####\n"
+"  Option: txpower\n"
+"  Change the mesh transmit power\n"
+"  Usage: mesh11sd txpower [+|-]\n"
+"    where \"+\" increments by 3dBm and \"-\" decrements by 3dBm\n"
+"    Takes effect immediately\n"
+"\n"
+"####\n"
+"  Option: stations\n"
+"  List all mesh peer stations directly connected to this mesh peer station (one hop)\n"
+"  Usage: mesh11sd stations\n"
+"\n"
+"####\n"
+"  Option: mesh_rssi_threshold\n"
+"  Change the mesh rssi threshold\n"
+"  Usage: mesh11sd mesh_rssi_threshold [+|-] [force]\n"
+"    where \"+\" increments by 3dBm and \"-\" decrements by 3dBm\n"
+"    Takes effect immediately on NEW connections\n"
+"    The keyword \"force\" forces the new threshold on all connected peers\n"
+"    Warning - \"force\" will briefly remove this node from the mesh network, taking a few seconds to rejoin\n"
+"\n"
+"####\n"
+"  Option: mesh_leechmode\n"
+"  Usage: mesh11sd mesh_leechmode [enable/disable]\n"
+"  If enabled, the mesh node connects to the mesh backhaul but does not forward packets or contribute to the mesh.\n"
+"\n"
+"####\n"
+"  Option: mesh_node_mobility_level\n"
+"  Usage: mesh11sd mesh_node_mobility_level [level]\n"
+"  Sets the mesh node mobility level\n"
+"    where level can be 0, 1, 2, 3, 4, 5 and 6\n"
+"    Level 0 - not recommended for normal use - node must be stationary and carefully positioned\n"
+"    Level 1 - Enables mesh_hwmp_rts for on air collision avoidance, enables transmit queue and aql_threshold to minimise latency, enables rapid path convergence\n"
+"    Level 2 - supports inter node relative velocities up to 1.5 metres per second\n"
+"    Levels 3 to 5 - support progressively higher relative inter node velocities at the expense of a larger and larger backhaul overhead.\n"
+"    Level 6 - is a special configuration that is PA / voice optimised (push-to-talk announcement use-case).\n"
+"\n"
+"####\n"
+"  Option: commit_changes\n"
+"  Usage: mesh11sd commit_changes commit\n"
+"    Commits changes to debuglevel, mesh_leechmode, txpower, mesh_rssi_threshold and mesh_node_mobility_level\n"
+"    to non volatile configuration (make permanent). Other staged changes are kept but not committed\n"
+"\n"
+"####\n"
+"  Option: commit_all\n"
+"  Usage: mesh11sd commit_all commit\n"
+"    Writes all changes made by auto_config to configuration file\n"
+"    Active only when auto_config is enabled\n"
+"\n"
+"####\n"
+"  Option: revert_all\n"
+"  Usage: mesh11sd revert_all revert\n"
+"    Reverts all changes made by commit_all\n"
+"    Active only when auto_config is enabled\n"
+"\n"
+"####\n"
+"  Option: force_ipv4_download\n"
+"  Usage: mesh11sd force_ipv4_download\n"
+"    Forces apk (wget) to use ipv4 for its downloads\n"
+"\n"
+"####\n"
+"  Option: download_revert_to_default\n"
+"  Usage: mesh11sd download_revert_to_default\n"
+"    Reverts apk (wget) to default for its downloads\n"
+"\n"
+"####\n"
+"  Option: dhcp4_renew\n"
+"  Usage: mesh11sd dhcp4_renew\n"
+"    Renews the current dhcp4 lease\n"
+"\n"
+"####\n"
+"  Option: is_installed\n"
+"  Usage: mesh11sd is_installed [packagename]\n"
+"    Checks if \"packagename\" is installed\n"
+"    Returns the installation status of the package and exit code 0 if installed\n"
+"\n"
+"####\n"
+"  Option: get_portal_ula\n"
+"  Usage: mesh11sd get_portal_ula <mode>\n"
+"    where mode is:\n"
+"    1. get or not set - Gets the current portal unique local ipv6 address (ula)\n"
+"    2. discover - Selects the best portal unique local ipv6 address (ula)\n"
+"\n"
+"####\n"
+"  Option: set_ula_prefix\n"
+"  Usage: mesh11sd set_ula_prefix [get|set|revert]\n"
+"    get - gets the current ula prefix\n"
+"    set - sets the ula prefix for the mesh backhaul based on the mesh id\n"
+"    revert - reverts a previously set ula prefix\n"
 "\n"
 "####\n"
 "  Option: str_to_hex\n"
 "  Usage: mesh11sd str_to_hex [access_point_data_string]\n"
+"    Run length hex encodes access_point_data from apmond format\n"
 "\n"
 "####\n"
 "  Option: hex_to_str\n"
 "  Usage: mesh11sd hex_to_str [hex encoded_access_point_data_string]\n"
+"    Decode run length hex encoded access_point_data to apmond format\n"
 "\n"
 "####\n"
 "  Option: is_hex\n"
 "  Usage: mesh11sd is_hex [string]\n"
+"    Check if string contains only valid hex characters (0-9, a-f, A-F)\n"
+"    Return code 0 if string is valid hex, 1 otherwise.\n"
 "\n"
 "####\n"
 "  Option: is_ipv4addr_valid [string]\n"
+"    Check if string contains a single ipv4 address\n"
+"    Return code 0 if string is valid ipv4 address, 1 otherwise.\n"
+"\n"
+"####\n"
+"  Option: country\n"
+"  Usage: mesh11sd country [country_code]\n"
+"    Shows the regulatory domain and country code if the optional country code is not supplied.\n"
+"    Sets the regulatory domain for the country code if it is supplied.\n"
+"    A restart or reboot is required for changes to take effect.\n"
 "\n"
 "####\n"
 "  Option: write_to_syslog\n"
 "  Usage: mesh11sd write_to_syslog [string to log] [debuglevel (debug, info, warn, notice, err or emerg)]\n"
+"    Writes to the syslog at the specified debuglevel\n"
 "\n"
 "####\n"
 "  Option: write_log\n"
 "  Usage: mesh11sd write_log [string to log] [debuglevel (debug, info, warn, notice, err or emerg)]\n"
-"\n"
-"####\n"
-"  Option: restore_all\n"
-"  Usage: mesh11sd restore_all restore\n"
-"  Restores wireless, dhcp, network, firewall and system to how they were before mesh11sd first ran, keeping the mesh11sd config, then reboots\n"
+"    Writes to the mesh11sd log at the specified debuglevel\n"
 "\n"
 "####\n"
 "  Option: read_log\n"
 "  Usage: mesh11sd read_log [ -f ]\n"
+"    Displays the mesh11sd log\n"
+"      If -f is specified, the existing log will be deleted and all subsequent logs will be followed on the display\n"
+"\n"
+"####\n"
+"  Option: restore_all\n"
+"  Usage: mesh11sd restore_all restore\n"
+"    Restores wireless, dhcp, network, firewall and system to how they were before mesh11sd first ran,\n"
+"    keeping the mesh11sd config, then reboots\n"
+"\n"
+"####\n"
+"  Option: active_nodecount\n"
+"  Usage: mesh11sd active_nodecount\n"
+"    Returns the number of mesh paths currently known to this node\n"
+"\n"
+"####\n"
+"  Option: get_node_type_code\n"
+"  Usage: mesh11sd get_node_type_code\n"
+"    Returns the node type code (MRP, MPE, CPE, MBP, TPE or N/A)\n"
+"    Exit code 1 if the daemon has not yet determined the node state\n"
+"\n"
+"####\n"
+"  Option: wifi_chipset_detect\n"
+"  Usage: mesh11sd wifi_chipset_detect\n"
+"    Detects the capabilities of each wireless phy and returns them in json format\n"
+"    The result is also written to /tmp/mesh11sd/wifidetect\n"
+"\n"
+"####\n"
+"  Option: get_valid_channels\n"
+"  Usage: mesh11sd get_valid_channels\n"
+"    Returns a list of valid wireless channels for the current country code setting\n"
+"    Note: DFS channels are not suitable for use in a mesh backhaul so are excluded.\n"
 "\n"
 "####\n"
 "  For further documentation, see: https://github.com/openNDS/mesh11sd#readme\n"
+"\n"
+""
 );
 }
 
@@ -316,6 +484,70 @@ int mesh_cli_dispatch(struct mesh_ctx *ctx, int argc, char **argv)
 		for (int i = 0; i < ctx->radio_count; i++)
 			printf(" %s", ctx->radios[i]);
 		printf("\n");
+		return 0;
+	}
+
+	if (!strcmp(cmd, "get_node_type_code")) {
+		char code[16];
+		FILE *f = fopen(MESH11SD_TMPDIR "/is_portal", "r");
+		char line[256];
+
+		/* v7: no is_portal yet means no code and exit 1 */
+		if (!f)
+			return 1;
+		if (fgets(line, sizeof(line), f)) {
+			char *p = strstr(line, "detected_state=\"");
+			if (p)
+				sscanf(p + 16, "%15[^\"]", ctx->detected_state);
+		}
+		fclose(f);
+		mesh_get_node_type_code(ctx, code, sizeof(code));
+		fputs(code, stdout);
+		return 0;
+	}
+
+	if (!strcmp(cmd, "active_nodecount")) {
+		char ifname[64] = "";
+		static char dump[65536];
+		int lines = 0;
+		FILE *f = fopen(MESH11SD_TMPDIR "/active_mesh_ifname", "r");
+		char line[128];
+
+		if (f && fgets(line, sizeof(line), f)) {
+			char *q = strstr(line, "active_mesh_ifname=\"");
+			if (q)
+				sscanf(q + 20, "%63[^\"]", ifname);
+		}
+		if (f)
+			fclose(f);
+		if (ifname[0]) {
+			char *iw_argv[] = { "iw", "dev", ifname, "mpath", "dump", NULL };
+
+			mesh_run_capture(iw_argv, dump, sizeof(dump));
+			/* First line is the column header, as in v7 */
+			for (char *c = dump; *c; c++)
+				if (*c == '\n')
+					lines++;
+			if (dump[0] && dump[strlen(dump) - 1] != '\n')
+				lines++;
+			if (lines > 0)
+				lines--;
+		}
+		printf("%d", lines);
+		return 0;
+	}
+
+	if (!strcmp(cmd, "wifi_chipset_detect")) {
+		FILE *f;
+		char line[512];
+
+		if (mesh_wifi_chipset_detect(ctx) != 0)
+			return 1;
+		f = fopen(MESH11SD_TMPDIR "/wifidetect", "r");
+		while (f && fgets(line, sizeof(line), f))
+			fputs(line, stdout);
+		if (f)
+			fclose(f);
 		return 0;
 	}
 

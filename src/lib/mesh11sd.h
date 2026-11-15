@@ -275,6 +275,9 @@ int mesh_ensure_wan_on_vxlan_bridge(struct mesh_ctx *ctx, int do_reload); /* mod
 int mesh_mbp_vtunlan(struct mesh_ctx *ctx, int do_reload); /* mode 4 L2 trunk vtunlan */
 void mesh_check_accept_ra(struct mesh_ctx *ctx); /* v7 per-pass accept_ra */
 void mesh_check_mtu(struct mesh_ctx *ctx); /* per-pass baby-jumbo mtu */
+void mesh_check_brport_flags(struct mesh_ctx *ctx); /* per-pass mesh port flags */
+int mesh_wifi_chipset_detect(struct mesh_ctx *ctx); /* writes tmpdir/wifidetect */
+void mesh_status_to_apmond(struct mesh_ctx *ctx); /* "mesh" extension block, if apmond */
 int mesh_probe_interface_mac(struct mesh_ctx *ctx);
 int mesh_set_iface_path_cost(struct mesh_ctx *ctx, int path_cost,
 			     const char *bridge, const char *iface);

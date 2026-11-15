@@ -43,6 +43,7 @@ set(MESH11SD_SOURCES
 	src/lib/managed.c
 	src/lib/led.c
 	src/lib/status.c
+	src/lib/wifidetect.c
 )
 
 add_executable(mesh11sd ${MESH11SD_SOURCES})
