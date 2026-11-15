@@ -299,7 +299,7 @@ MBP/TPN: WAN is added to `br-tun$tun_id`. MRP portal may serve DHCPv4/RA on vtun
 | `mesh_metric_threshold` | 50 | Portal-selection hysteresis (airtime metric). |
 | `reboot_on_error` | 1 | Watchdog reboot if portal still missing. |
 | `stop_on_error` | 0 | Idle instead of reboot (overrides reboot_on_error). |
-| `watchdog_nonvolatile_log` | 0 | **Debug only** — can wear flash. Appends time, uptime, then the message to `/mesh11sd_log/mesh11sd.log`. Re-read every third checkinterval, so a plain `uci set` turns it on or off without commit or restart; an uncommitted setting lasts until mesh11sd restarts or the node reboots. |
+| `watchdog_nonvolatile_log` | 0 | **Debug only** — can wear flash. Appends time, uptime, then the message to `/mesh11sd_log/mesh11sd.log`. Manage it with `mesh11sd watchdog_nonvolatile_log enable` or `disable` (live, until restart or reboot), adding `commit` to save only this option. |
 | `apmond_enable` | 1 | AP/Ethernet stats to the portal. |
 | `apmond_cgi_dir` | `/www/cgi-bin/` | |
 | `apmon_verbose_debug_enable` | 0 | |
@@ -402,6 +402,7 @@ The daemon runs as a service. CLI is for status, logs, and a few runtime knobs. 
 | `mesh11sd country [CC]` | Show or set regulatory domain (reboot to apply) |
 | `mesh11sd get_valid_channels` | Non-DFS channels for current country |
 | `mesh11sd wifi_chipset_detect` | JSON phy capabilities |
+| `mesh11sd watchdog_nonvolatile_log [enable\|disable] [commit]` | Debug only, wears flash. Show, or turn on or off, the nonvolatile watchdog log; `commit` saves only this option |
 
 **Service / persist**
 
@@ -986,21 +987,22 @@ config mesh11sd 'setup'
 	#
 	# While enabled, a flash wear warning is logged (logread and mesh11sd read_log) every third checkinterval.
 	#
-	# The daemon re-reads this option every third checkinterval, so it can be turned on or off
-	# at run time without a commit or restart:
+	# Turn it on or off at run time with the mesh11sd command, without a restart:
 	#
-	#	uci set mesh11sd.setup.watchdog_nonvolatile_log='1'
-	#	uci set mesh11sd.setup.watchdog_nonvolatile_log='0'
+	#	mesh11sd watchdog_nonvolatile_log enable
+	#	mesh11sd watchdog_nonvolatile_log disable
 	#
-	# An uncommitted setting lasts until mesh11sd restarts or the node reboots, and the log
-	# written up to that point stays on flash. Commit it only if logging must continue after a reboot:
+	# This takes effect within three checkintervals and lasts until mesh11sd restarts or the
+	# node reboots. The log written up to then stays on flash, so it still shows why a node rebooted.
+	# Add commit to save the setting so that logging continues after a reboot:
 	#
-	#	uci commit mesh11sd
+	#	mesh11sd watchdog_nonvolatile_log enable commit
+	#	mesh11sd watchdog_nonvolatile_log disable commit
+	#
+	# Only this option is saved; other pending changes are left as they are.
+	# With no argument, mesh11sd watchdog_nonvolatile_log shows the current state.
 	#
 	# Default 0 (disabled)
-	#
-	# Example - enable:
-	#option watchdog_nonvolatile_log '1'
 	#
 	# ##########WARNING##########
 	# THIS OPTION IS FOR PORTAL DETECT WATCHDOG DEBUGGING PURPOSES ONLY

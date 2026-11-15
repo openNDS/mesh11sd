@@ -524,21 +524,22 @@ config mesh11sd 'setup'
 	#
 	# While enabled, a flash wear warning is logged (logread and mesh11sd read_log) every third checkinterval.
 	#
-	# The daemon re-reads this option every third checkinterval, so it can be turned on or off
-	# at run time without a commit or restart:
+	# Turn it on or off at run time with the mesh11sd command, without a restart:
 	#
-	#	uci set mesh11sd.setup.watchdog_nonvolatile_log='1'
-	#	uci set mesh11sd.setup.watchdog_nonvolatile_log='0'
+	#	mesh11sd watchdog_nonvolatile_log enable
+	#	mesh11sd watchdog_nonvolatile_log disable
 	#
-	# An uncommitted setting lasts until mesh11sd restarts or the node reboots, and the log
-	# written up to that point stays on flash. Commit it only if logging must continue after a reboot:
+	# This takes effect within three checkintervals and lasts until mesh11sd restarts or the
+	# node reboots. The log written up to then stays on flash, so it still shows why a node rebooted.
+	# Add commit to save the setting so that logging continues after a reboot:
 	#
-	#	uci commit mesh11sd
+	#	mesh11sd watchdog_nonvolatile_log enable commit
+	#	mesh11sd watchdog_nonvolatile_log disable commit
+	#
+	# Only this option is saved; other pending changes are left as they are.
+	# With no argument, mesh11sd watchdog_nonvolatile_log shows the current state.
 	#
 	# Default 0 (disabled)
-	#
-	# Example - enable:
-	#option watchdog_nonvolatile_log '1'
 	#
 	# ##########WARNING##########
 	# THIS OPTION IS FOR PORTAL DETECT WATCHDOG DEBUGGING PURPOSES ONLY
