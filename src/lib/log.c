@@ -157,6 +157,7 @@ void mesh_write_to_syslog(struct mesh_ctx *ctx, const char *debugtype, const cha
 
 	if (!ctx || !msg || !msg[0])
 		return;
+	snprintf(ctx->last_logmsg, sizeof(ctx->last_logmsg), "%s", msg);
 	if (ctx->last_syslogmessage[0] && !strcmp(msg, ctx->last_syslogmessage))
 		return;
 	if (ctx->mute)
@@ -277,4 +278,48 @@ void mesh_log_err(struct mesh_ctx *ctx, const char *fmt, ...)
 	va_start(ap, fmt);
 	mesh_log_v(ctx, "err", fmt, ap);
 	va_end(ap);
+}
+
+/*
+ * watchdog_nonvolatile_log: append the last logged message to
+ * /mesh11sd_log/mesh11sd.log, which is on flash and so survives a
+ * reboot. It wears the flash, so it is only for finding out why a node
+ * restarted its network or rebooted. Nothing is written while the node
+ * is waiting for auto_config to be enabled or tested with no mesh
+ * configured.
+ */
+#define WATCHDOG_LOG_DIR "/mesh11sd_log"
+#define WATCHDOG_LOG_FILE WATCHDOG_LOG_DIR "/mesh11sd.log"
+
+void mesh_watchdog_log(struct mesh_ctx *ctx)
+{
+	char show[64];
+	char date[64];
+	unsigned long uptime = 0;
+	time_t now;
+	FILE *f;
+
+	if (!ctx || ctx->watchdog_nonvolatile_log <= 0 || !ctx->last_logmsg[0])
+		return;
+	if (ctx->auto_config == 0 &&
+	    access(MESH11SD_TMPDIR "/auto_config_test", F_OK) != 0 &&
+	    mesh_uci_show_filter("wireless", "mode='mesh'", show, sizeof(show)) == 0 &&
+	    !show[0])
+		return;
+
+	f = fopen("/proc/uptime", "r");
+	if (f) {
+		if (fscanf(f, "%lu", &uptime) != 1)
+			uptime = 0;
+		fclose(f);
+	}
+	now = time(NULL);
+	strftime(date, sizeof(date), "%a %b %e %H:%M:%S %Z %Y", localtime(&now));
+
+	mkdir(WATCHDOG_LOG_DIR, 0755);
+	f = fopen(WATCHDOG_LOG_FILE, "a");
+	if (!f)
+		return;
+	fprintf(f, "%s %lu %s\n", date, uptime, ctx->last_logmsg);
+	fclose(f);
 }

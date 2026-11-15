@@ -506,6 +506,15 @@ int mesh_ctx_load_setup(struct mesh_ctx *ctx)
 		ctx->watchdog_nonvolatile_log = parse_int_default(buf, 0);
 	else
 		ctx->watchdog_nonvolatile_log = 0;
+	{
+		static int warned;
+
+		if (ctx->watchdog_nonvolatile_log > 0 && !warned) {
+			warned = 1;
+			mesh_log_warn(ctx, "******WARNING******: Irrepairable flash wear will occur and storage space will be used up. Please disable watchdog nonvolatile logging as soon as possible.");
+			mesh_log_warn(ctx, "******WARNING******: Irrepairable flash wear will occur and storage space will be used up by watchdog debug log at /mesh11sd_log/mesh11sd.log");
+		}
+	}
 	if (mesh_uci_get("mesh11sd.setup.mesh_path_stabilisation", buf, sizeof(buf)) == 0)
 		ctx->mesh_path_stabilisation = parse_int_default(buf, 1);
 	else

@@ -1099,11 +1099,14 @@ int mesh_portal_watchdog(struct mesh_ctx *ctx)
 			return 0;
 		}
 		mesh_log_debug(ctx, "Portal Watchdog - checking status ....");
+		mesh_watchdog_log(ctx);
 		mesh_get_portal_ula(ctx, "discover");
 		mesh_log_debug(ctx, "Portal Watchdog probe link_to_portal [ %d ] portal_ula [ %s ]",
 			       ctx->link_to_portal, ctx->portal_ula);
+		mesh_watchdog_log(ctx);
 		if (ctx->link_to_portal == 0) {
 			mesh_log_debug(ctx, "Portal Watchdog - portal detected ....");
+			mesh_watchdog_log(ctx);
 			ctx->failcount = 0;
 			ctx->network_restart = 0;
 			snprintf(ctx->is_portal, sizeof(ctx->is_portal), "detected");
@@ -1121,6 +1124,7 @@ int mesh_portal_watchdog(struct mesh_ctx *ctx)
 		if (ctx->network_restart == 1) {
 			mesh_write_to_syslog(ctx, "err",
 				"portal detect threshold reached, watchdog is monitoring");
+			mesh_watchdog_log(ctx);
 			ctx->network_restart = 2;
 			ctx->failcount = 0;
 			return 0;
@@ -1128,6 +1132,7 @@ int mesh_portal_watchdog(struct mesh_ctx *ctx)
 		if (ctx->network_restart == 2) {
 			mesh_write_to_syslog(ctx, "notice",
 				"portal detect threshold exceeded, watchdog is restarting the network...");
+			mesh_watchdog_log(ctx);
 			ctx->network_restart = 3;
 			service_cmd("network", "restart");
 			mesh_set_bridge_mac_addresses(ctx);
@@ -1138,10 +1143,12 @@ int mesh_portal_watchdog(struct mesh_ctx *ctx)
 			if (ctx->stop_on_error) {
 				mesh_write_to_syslog(ctx, "err",
 					"portal detect threshold exceeded... disabling mesh management");
+				mesh_watchdog_log(ctx);
 				ctx->enabled = 0;
 			} else if (ctx->reboot_on_error) {
 				mesh_write_to_syslog(ctx, "err",
 					"portal detect threshold exceeded... rebooting node");
+				mesh_watchdog_log(ctx);
 				{
 					char *argv[] = { "reboot", NULL };
 					mesh_run_capture(argv, NULL, 0);
@@ -1577,10 +1584,12 @@ static void cleanup_stale_bridge_ulas(struct mesh_ctx *ctx, const char *dev,
 				owned = 1;
 		}
 		if (owned && !keep) {
-			if (ipv6_addr_del(dev, addr) == 0)
+			if (ipv6_addr_del(dev, addr) == 0) {
 				mesh_log_notice(ctx,
 						"Removed stale portal address %s from %s",
 						addr, dev);
+				mesh_watchdog_log(ctx);
+			}
 			continue;
 		}
 
@@ -1588,10 +1597,12 @@ static void cleanup_stale_bridge_ulas(struct mesh_ctx *ctx, const char *dev,
 		 * (the reverted OpenWrt prefix). Do not touch link-local. */
 		if (!is_portal && !on_mesh && is_gw &&
 		    strstr(line, "scope global")) {
-			if (ipv6_addr_del(dev, addr) == 0)
+			if (ipv6_addr_del(dev, addr) == 0) {
 				mesh_log_notice(ctx,
 						"Removed stale portal address %s from %s",
 						addr, dev);
+				mesh_watchdog_log(ctx);
+			}
 		}
 	}
 }
@@ -1635,9 +1646,11 @@ static void cleanup_stale_onlink_routes(struct mesh_ctx *ctx, const char *dev,
 		if (want_subnet && want_subnet[0] &&
 		    hextet_eq(old_subnet, want_subnet))
 			continue;
-		if (mesh_run_capture(delv, NULL, 0) == 0)
+		if (mesh_run_capture(delv, NULL, 0) == 0) {
 			mesh_log_notice(ctx, "Removed stale portal route %s from %s",
 					prefix, dev);
+			mesh_watchdog_log(ctx);
+		}
 	}
 }
 
@@ -1677,10 +1690,12 @@ static void cleanup_stale_portal_neighs(struct mesh_ctx *ctx, const char *dev,
 		if (want_subnet && want_subnet[0] &&
 		    hextet_eq(old_subnet, want_subnet))
 			continue;
-		if (mesh_run_capture(delv, NULL, 0) == 0)
+		if (mesh_run_capture(delv, NULL, 0) == 0) {
 			mesh_log_notice(ctx,
 					"Removed stale portal neighbour %s from %s",
 					neigh, dev);
+			mesh_watchdog_log(ctx);
+		}
 	}
 }
 

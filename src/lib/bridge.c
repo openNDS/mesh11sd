@@ -240,10 +240,12 @@ static int apply_bridge_mac(struct mesh_ctx *ctx, const char *br,
 
 	if (swconfig_bridge() && mesh_port_in_bridge(br)) {
 		mesh_log_debug(ctx, "swconfig: %s has a mesh port, leaving it up", br);
+		mesh_watchdog_log(ctx);
 		goto uci_only;
 	}
 
 	mesh_log_debug(ctx, "Setting %s MAC to %s", br, want);
+	mesh_watchdog_log(ctx);
 	{
 		char *a[] = { "ip", "link", "set", (char *)br, "address", want, NULL };
 		mesh_run_capture(a, NULL, 0);
@@ -257,6 +259,7 @@ static int apply_bridge_mac(struct mesh_ctx *ctx, const char *br,
 		mesh_run_capture(up, NULL, 0);
 		if (read_sysfs_mac(br, cur, sizeof(cur)) != 0 || !mac_equal(cur, want)) {
 			mesh_log_debug(ctx, "Failed to set mac [ %s ] on [ %s ]", want, br);
+			mesh_watchdog_log(ctx);
 			return 1;
 		}
 	}
@@ -294,6 +297,7 @@ static void apply_member_mac(struct mesh_ctx *ctx, const char *iface,
 		return;
 
 	mesh_log_debug(ctx, "Setting %s MAC to %s", iface, want);
+	mesh_watchdog_log(ctx);
 	{
 		char *a[] = { "ip", "link", "set", (char *)iface, "address", want, NULL };
 		mesh_run_capture(a, NULL, 0);
@@ -350,6 +354,7 @@ int mesh_set_bridge_mac_addresses(struct mesh_ctx *ctx)
 	/* v7: only skip when swconfig switch present AND swconfig_mac_skip != 0 */
 	if (swconfig_bridge() && ctx->swconfig_mac_skip) {
 		mesh_log_debug(ctx, "swconfig: leaving MAC addresses unchanged");
+		mesh_watchdog_log(ctx);
 		return 0;
 	}
 
@@ -382,6 +387,7 @@ int mesh_set_bridge_mac_addresses(struct mesh_ctx *ctx)
 		if (swconfig_bridge() && mesh_port_in_bridge(mesh_bridge)) {
 			mesh_log_debug(ctx, "swconfig: %s has a mesh port, leaving it up",
 				       mesh_bridge);
+			mesh_watchdog_log(ctx);
 		} else {
 			char *dn[] = { "ip", "link", "set", mesh_bridge, "down", NULL };
 			char *ad[] = { "ip", "link", "set", mesh_bridge, "address",
@@ -390,6 +396,7 @@ int mesh_set_bridge_mac_addresses(struct mesh_ctx *ctx)
 			char achieved[32] = "";
 
 			mesh_log_debug(ctx, "Setting %s MAC to %s", mesh_bridge, brmesh_mac);
+			mesh_watchdog_log(ctx);
 			mesh_run_capture(dn, NULL, 0);
 			mesh_run_capture(ad, NULL, 0);
 			mesh_run_capture(up, NULL, 0);
@@ -402,6 +409,7 @@ int mesh_set_bridge_mac_addresses(struct mesh_ctx *ctx)
 			} else {
 				mesh_log_debug(ctx, "Failed to set mac [ %s ] on [ %s ]",
 					       brmesh_mac, mesh_bridge);
+				mesh_watchdog_log(ctx);
 			}
 		}
 	}
@@ -435,6 +443,7 @@ int mesh_set_bridge_mac_addresses(struct mesh_ctx *ctx)
 					       "address", vxlan_mac, NULL };
 				mesh_log_debug(ctx, "Setting %s MAC to %s",
 					       vxlan_bridge, vxlan_mac);
+				mesh_watchdog_log(ctx);
 				mesh_run_capture(ad, NULL, 0);
 			}
 		}

@@ -1005,6 +1005,7 @@ int mesh_scan_channel(struct mesh_ctx *ctx)
 
 	mesh_log_debug(ctx, "Entering scan channel, link_to_portal [ %d ]",
 		       ctx->link_to_portal);
+	mesh_watchdog_log(ctx);
 	if (ctx->link_to_portal <= 0)
 		return 0;
 	if (mesh_uci_show_filter("wireless", "mode='mesh'", show, sizeof(show)) != 0)
@@ -1026,6 +1027,7 @@ int mesh_scan_channel(struct mesh_ctx *ctx)
 		if (mesh_uci_get(key, ifn, sizeof(ifn)) != 0)
 			continue;
 		mesh_log_info(ctx, "scan_channel iw dev %s scan", ifn);
+		mesh_watchdog_log(ctx);
 		/* background-ish: run and discard; channel pick is applied by wifi reload in v7 */
 		mesh_run_capture(scan, NULL, 0);
 		break;

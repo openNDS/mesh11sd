@@ -51,6 +51,7 @@ struct mesh_ctx {
 
 	char log_mountpoint[128];
 	char last_syslogmessage[512];
+	char last_logmsg[512];	/* last message, for the watchdog log */
 	char auto_mesh_id[64];		/* hashed id used as mesh_id */
 	char auto_mesh_id_raw[128];
 	char auto_mesh_key[80];		/* hashed key - never print */
@@ -179,6 +180,7 @@ void mesh_log_debug(struct mesh_ctx *ctx, const char *fmt, ...);
 void mesh_log_notice(struct mesh_ctx *ctx, const char *fmt, ...);
 void mesh_log_warn(struct mesh_ctx *ctx, const char *fmt, ...);
 void mesh_log_err(struct mesh_ctx *ctx, const char *fmt, ...);
+void mesh_watchdog_log(struct mesh_ctx *ctx); /* last message to flash, if enabled */
 
 int mesh_is_hex(const char *s);
 int mesh_str_to_hex(const char *in, char *out, size_t outlen);
