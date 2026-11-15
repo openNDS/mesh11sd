@@ -356,6 +356,7 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 		}
 		mesh_check_accept_ra(ctx);
 		mesh_check_mtu(ctx);
+		mesh_check_brport_flags(ctx);
 
 		if (ctx->auto_config != 0 ||
 		    access(MESH11SD_TMPDIR "/auto_config_test", F_OK) == 0 ||
