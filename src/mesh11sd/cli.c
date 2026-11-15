@@ -236,15 +236,15 @@ static void print_help(void)
 "\n"
 "####\n"
 "  Option: watchdog_nonvolatile_log\n"
-"  Usage: mesh11sd watchdog_nonvolatile_log [enable|disable] [commit]\n"
+"  Usage: mesh11sd watchdog_nonvolatile_log [enable [commit]|disable]\n"
 "    FOR DEBUGGING ONLY - this log wears flash memory and uses up storage space.\n"
 "    Logs portal watchdog actions, network restarts, reboots, channel scans and other\n"
 "    events to /mesh11sd_log/mesh11sd.log, so the reason a node rebooted survives the reboot.\n"
 "    With no argument, shows whether the log is off, on until the next restart or reboot, or on and saved\n"
-"    enable or disable takes effect within three checkintervals and lasts until\n"
-"      mesh11sd restarts or the node reboots\n"
-"    commit also saves the setting to the mesh11sd config, so it survives a reboot.\n"
+"    enable turns it on within three checkintervals, until mesh11sd restarts or the node reboots\n"
+"    enable commit also saves it to the mesh11sd config, so it survives a reboot.\n"
 "      Only this option is saved; other pending changes are left as they are.\n"
+"    disable turns it off within three checkintervals, and also removes a saved enable\n"
 "\n"
 "####\n"
 "  Option: get_valid_channels\n"
@@ -281,7 +281,7 @@ static int watchdog_log_saved(void)
 }
 
 /*
- * mesh11sd watchdog_nonvolatile_log [enable|disable] [commit]
+ * mesh11sd watchdog_nonvolatile_log [enable [commit]|disable]
  * enable/disable stage the option; the daemon picks it up within three
  * checkintervals. commit saves only this option to flash.
  */
@@ -310,14 +310,19 @@ static int watchdog_log_cli(int argc, char **argv)
 	else if (!strcmp(argv[2], "disable"))
 		value = "0";
 	else {
-		fprintf(stderr, "Usage: mesh11sd watchdog_nonvolatile_log [enable|disable] [commit]\n");
+		fprintf(stderr, "Usage: mesh11sd watchdog_nonvolatile_log [enable [commit]|disable]\n");
 		return 1;
 	}
 	commit = (argc >= 4 && !strcmp(argv[3], "commit"));
-	if (argc >= 4 && !commit) {
-		fprintf(stderr, "Usage: mesh11sd watchdog_nonvolatile_log [enable|disable] [commit]\n");
+	if ((argc >= 4 && !commit) || (commit && value[0] == '0')) {
+		fprintf(stderr, "Usage: mesh11sd watchdog_nonvolatile_log [enable [commit]|disable]\n");
 		return 1;
 	}
+
+	/* disable always leaves it off: if the saved config has it on,
+	 * save 0 too (this option only), otherwise just stage 0. */
+	if (value[0] == '0' && watchdog_log_saved() > 0)
+		commit = 1;
 
 	if (commit) {
 		if (mesh_uci_commit_option("mesh11sd", tuple, value) != 0)
@@ -325,9 +330,11 @@ static int watchdog_log_cli(int argc, char **argv)
 	} else if (mesh_uci_set(tuple, value) != 0) {
 		return 1;
 	}
-	printf("watchdog_nonvolatile_log %s%s, takes effect within three checkintervals\n",
-	       value[0] == '1' ? "enabled" : "disabled",
-	       commit ? " and saved" : " until mesh11sd restarts or the node reboots");
+	if (value[0] == '0')
+		printf("watchdog_nonvolatile_log disabled, takes effect within three checkintervals\n");
+	else
+		printf("watchdog_nonvolatile_log enabled%s, takes effect within three checkintervals\n",
+		       commit ? " and saved" : " until mesh11sd restarts or the node reboots");
 	if (value[0] == '1')
 		printf("WARNING: this log wears flash memory. Disable it as soon as debugging is done.\n");
 	return 0;

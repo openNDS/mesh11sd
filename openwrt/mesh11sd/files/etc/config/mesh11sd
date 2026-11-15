@@ -527,16 +527,18 @@ config mesh11sd 'setup'
 	# Turn it on or off at run time with the mesh11sd command, without a restart:
 	#
 	#	mesh11sd watchdog_nonvolatile_log enable
-	#	mesh11sd watchdog_nonvolatile_log disable
 	#
 	# This takes effect within three checkintervals and lasts until mesh11sd restarts or the
 	# node reboots. The log written up to then stays on flash, so it still shows why a node rebooted.
 	# Add commit to save the setting so that logging continues after a reboot:
 	#
 	#	mesh11sd watchdog_nonvolatile_log enable commit
-	#	mesh11sd watchdog_nonvolatile_log disable commit
 	#
 	# Only this option is saved; other pending changes are left as they are.
+	# To turn it off, whether or not it was saved:
+	#
+	#	mesh11sd watchdog_nonvolatile_log disable
+	#
 	# With no argument, mesh11sd watchdog_nonvolatile_log shows the current state.
 	#
 	# Default 0 (disabled)
