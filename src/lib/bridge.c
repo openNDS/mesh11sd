@@ -418,6 +418,7 @@ int mesh_set_bridge_mac_addresses(struct mesh_ctx *ctx)
 		char key[96];
 		char config_mac[32] = "";
 
+		persist_swconfig_bridge_mac(ctx, mesh_bridge, brmesh_mac);
 		snprintf(key, sizeof(key), "network.%s.macaddr", ctx->auto_mesh_network);
 		if (mesh_uci_get(key, config_mac, sizeof(config_mac)) != 0)
 			config_mac[0] = '\0';
