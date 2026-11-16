@@ -517,8 +517,31 @@ config mesh11sd 'setup'
 	#
 	# This enables a non-volatile debug log at /mesh11sd_log/mesh11sd.log.
 	# Each line is wall-clock time, uptime in seconds, then the message.
-	# It records portal watchdog actions, portal probes, channel scans, a stalled mesh radio, peer handoff and bridge MAC changes.
+	# It records portal watchdog actions and probes, network restarts and reboots, channel scans,
+	# network reloads, stale portal address cleanup, bridge MAC changes and each checkinterval,
+	# so the reason a node restarted its network or rebooted survives the reboot.
 	# Nothing is written while auto_config is disabled, test mode is off, and no mesh interface is configured.
+	#
+	# While enabled, a flash wear warning is logged (logread and mesh11sd read_log) every third checkinterval.
+	#
+	# Turn it on or off at run time with the mesh11sd command, without a restart:
+	#
+	#	mesh11sd watchdog_nonvolatile_log enable
+	#
+	# This takes effect within three checkintervals and lasts until mesh11sd restarts or the
+	# node reboots. The log written up to then stays on flash, so it still shows why a node rebooted.
+	# Add commit to save the setting so that logging continues after a reboot:
+	#
+	#	mesh11sd watchdog_nonvolatile_log enable commit
+	#
+	# Only this option is saved; other pending changes are left as they are.
+	# To turn it off, whether or not it was saved:
+	#
+	#	mesh11sd watchdog_nonvolatile_log disable
+	#
+	# With no argument, mesh11sd watchdog_nonvolatile_log shows the current state.
+	#
+	# Default 0 (disabled)
 	#
 	# ##########WARNING##########
 	# THIS OPTION IS FOR PORTAL DETECT WATCHDOG DEBUGGING PURPOSES ONLY

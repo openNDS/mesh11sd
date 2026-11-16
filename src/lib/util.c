@@ -629,6 +629,7 @@ int mesh_network_reload_if_changed(struct mesh_ctx *ctx, const char *who)
 		return 0;
 	}
 	mesh_log_debug(ctx, "%s: network reload", who);
+	mesh_watchdog_log(ctx);
 	mesh_run_capture(argv, NULL, 0);
 	mesh_network_mark_applied();
 	return 1;

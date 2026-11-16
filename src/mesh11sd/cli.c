@@ -235,6 +235,18 @@ static void print_help(void)
 "    The result is also written to /tmp/mesh11sd/wifidetect\n"
 "\n"
 "####\n"
+"  Option: watchdog_nonvolatile_log\n"
+"  Usage: mesh11sd watchdog_nonvolatile_log [enable [commit]|disable]\n"
+"    FOR DEBUGGING ONLY - this log wears flash memory and uses up storage space.\n"
+"    Logs portal watchdog actions, network restarts, reboots, channel scans and other\n"
+"    events to /mesh11sd_log/mesh11sd.log, so the reason a node rebooted survives the reboot.\n"
+"    With no argument, shows whether the log is off, on until the next restart or reboot, or on and saved\n"
+"    enable turns it on within three checkintervals, until mesh11sd restarts or the node reboots\n"
+"    enable commit also saves it to the mesh11sd config, so it survives a reboot.\n"
+"      Only this option is saved; other pending changes are left as they are.\n"
+"    disable turns it off within three checkintervals, and also removes a saved enable\n"
+"\n"
+"####\n"
 "  Option: get_valid_channels\n"
 "  Usage: mesh11sd get_valid_channels\n"
 "    Returns a list of valid wireless channels for the current country code setting\n"
@@ -248,6 +260,85 @@ static void print_help(void)
 }
 
 
+
+/* The value saved in /etc/config/mesh11sd, ignoring staged changes. */
+static int watchdog_log_saved(void)
+{
+	FILE *f = fopen("/etc/config/mesh11sd", "r");
+	char line[256];
+	int saved = 0;
+
+	while (f && fgets(line, sizeof(line), f)) {
+		char val[16] = "";
+
+		if (sscanf(line, " option watchdog_nonvolatile_log '%15[^']'", val) == 1 ||
+		    sscanf(line, " option watchdog_nonvolatile_log %15s", val) == 1)
+			saved = atoi(val);
+	}
+	if (f)
+		fclose(f);
+	return saved;
+}
+
+/*
+ * mesh11sd watchdog_nonvolatile_log [enable [commit]|disable]
+ * enable/disable stage the option; the daemon picks it up within three
+ * checkintervals. commit saves only this option to flash.
+ */
+static int watchdog_log_cli(int argc, char **argv)
+{
+	const char *tuple = "mesh11sd.setup.watchdog_nonvolatile_log";
+	char buf[16];
+	int live = 0, saved, commit;
+	const char *value;
+
+	if (argc < 3) {
+		if (mesh_uci_get(tuple, buf, sizeof(buf)) == 0)
+			live = atoi(buf);
+		saved = watchdog_log_saved();
+		if (live <= 0)
+			printf("disabled%s\n", saved > 0 ? " (enabled in saved config, active after restart or reboot)" : "");
+		else if (saved > 0)
+			printf("enabled (saved, survives reboot)\n");
+		else
+			printf("enabled (until mesh11sd restarts or the node reboots)\n");
+		return 0;
+	}
+
+	if (!strcmp(argv[2], "enable"))
+		value = "1";
+	else if (!strcmp(argv[2], "disable"))
+		value = "0";
+	else {
+		fprintf(stderr, "Usage: mesh11sd watchdog_nonvolatile_log [enable [commit]|disable]\n");
+		return 1;
+	}
+	commit = (argc >= 4 && !strcmp(argv[3], "commit"));
+	if ((argc >= 4 && !commit) || (commit && value[0] == '0')) {
+		fprintf(stderr, "Usage: mesh11sd watchdog_nonvolatile_log [enable [commit]|disable]\n");
+		return 1;
+	}
+
+	/* disable always leaves it off: if the saved config has it on,
+	 * save 0 too (this option only), otherwise just stage 0. */
+	if (value[0] == '0' && watchdog_log_saved() > 0)
+		commit = 1;
+
+	if (commit) {
+		if (mesh_uci_commit_option("mesh11sd", tuple, value) != 0)
+			return 1;
+	} else if (mesh_uci_set(tuple, value) != 0) {
+		return 1;
+	}
+	if (value[0] == '0')
+		printf("watchdog_nonvolatile_log disabled, takes effect within three checkintervals\n");
+	else
+		printf("watchdog_nonvolatile_log enabled%s, takes effect within three checkintervals\n",
+		       commit ? " and saved" : " until mesh11sd restarts or the node reboots");
+	if (value[0] == '1')
+		printf("WARNING: this log wears flash memory. Disable it as soon as debugging is done.\n");
+	return 0;
+}
 
 int mesh_cli_dispatch(struct mesh_ctx *ctx, int argc, char **argv)
 {
@@ -536,6 +627,9 @@ int mesh_cli_dispatch(struct mesh_ctx *ctx, int argc, char **argv)
 		printf("%d", lines);
 		return 0;
 	}
+
+	if (!strcmp(cmd, "watchdog_nonvolatile_log"))
+		return watchdog_log_cli(argc, argv);
 
 	if (!strcmp(cmd, "wifi_chipset_detect")) {
 		FILE *f;
