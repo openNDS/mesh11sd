@@ -271,6 +271,7 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 		    ctx->auto_config == 0)
 			mesh_log_warn(ctx, "Auto Config is in TEST mode");
 		if (!ctx->enabled) {
+			mesh_log_info(ctx, "Checkinterval [%d]", ctx->checkinterval);
 			sleep((unsigned)ctx->checkinterval);
 			continue;
 		}
@@ -278,6 +279,7 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 		/* Block auto_config (and further config this pass) until
 		 * requirements are met: no ath10k-ct, ip-full, mesh wpad. */
 		if (mesh_check_requirements(ctx) != 0) {
+			mesh_log_info(ctx, "Checkinterval [%d]", ctx->checkinterval);
 			sleep((unsigned)ctx->checkinterval);
 			continue;
 		}
