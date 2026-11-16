@@ -223,6 +223,28 @@ static int portal_copies_present(void)
 	return 1;
 }
 
+/* vtun is on, but the committed portal wireless config has no VTunnel
+ * AP. That happens when the portal config was built while ip-full or
+ * vxlan was missing and the package was installed afterwards. */
+static int vtun_ap_missing(struct mesh_ctx *ctx)
+{
+	char path[128], line[256];
+	FILE *f;
+	int found = 0;
+
+	if (!ctx->vtun_enable)
+		return 0;
+	portal_copy_path("wireless", path, sizeof(path));
+	f = fopen(path, "r");
+	if (!f)
+		return 0;
+	while (!found && fgets(line, sizeof(line), f))
+		if (strstr(line, "network 'vtunlan'"))
+			found = 1;
+	fclose(f);
+	return !found;
+}
+
 /* Next line that is not last_role (mesh11sd's own role note). */
 static char *next_config_line(char *buf, int len, FILE *f)
 {
@@ -919,6 +941,11 @@ int mesh_managed_pass(struct mesh_ctx *ctx, int auto_config_done)
 		}
 		if (mesh11sd_config_changed()) {
 			rebuild_portal(ctx, "mesh11sd config changed", 0,
+				       auto_config_done);
+			return 0;
+		}
+		if (vtun_ap_missing(ctx)) {
+			rebuild_portal(ctx, "vtun is enabled but there is no VTunnel AP", 0,
 				       auto_config_done);
 			return 0;
 		}
