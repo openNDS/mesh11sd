@@ -87,11 +87,11 @@ int mesh_rootmode(struct mesh_ctx *ctx)
 	char cur[16] = "";
 
 	mesh_log_debug(ctx, "Checking mesh_hwmp_rootmode");
-	mesh_uci_get("mesh11sd.mesh_params.mesh_hwmp_rootmode", cur, sizeof(cur));
+	mesh_param_get("mesh_hwmp_rootmode", cur, sizeof(cur));
 	if (ctx->portal_detect == 0 || ctx->portal_detect == 4 ||
 	    !strcmp(ctx->detected_state, "portal")) {
 		if (atoi(cur) != 4)
-			mesh_uci_set("mesh11sd.mesh_params.mesh_hwmp_rootmode", "4");
+			mesh_param_set("mesh_hwmp_rootmode", "4");
 	}
 	return 0;
 }
@@ -584,12 +584,12 @@ int mesh_mobility_settings(struct mesh_ctx *ctx, const char *mode)
 				snprintf(setl, sizeof(setl), "del wireless.%s.beacon_int", e.radio);
 				mesh_uci_batch_line(setl);
 			}
-			mesh_uci_batch_line("del mesh11sd.mesh_params.mesh_fwding");
-			mesh_uci_batch_line("del mesh11sd.mesh_params.mesh_hwmp_rann_interval");
-			mesh_uci_batch_line("del mesh11sd.mesh_params.mesh_hwmp_preq_min_interval");
-			mesh_uci_batch_line("del mesh11sd.mesh_params.mesh_hwmp_active_path_timeout");
-			mesh_uci_batch_line("del mesh11sd.mesh_params.mesh_hwmp_max_preq_retries");
-			mesh_uci_batch_line("del mesh11sd.mesh_params.mesh_hwmp_rootmode");
+			mesh_param_del("mesh_fwding");
+			mesh_param_del("mesh_hwmp_rann_interval");
+			mesh_param_del("mesh_hwmp_preq_min_interval");
+			mesh_param_del("mesh_hwmp_active_path_timeout");
+			mesh_param_del("mesh_hwmp_max_preq_retries");
+			mesh_param_del("mesh_hwmp_rootmode");
 		}
 		snprintf(content, sizeof(content),
 			 "mesh_node_mobility_level=\"0\"; rootmode=\"\"; beacon_int=\"\"; "
@@ -621,31 +621,21 @@ int mesh_mobility_settings(struct mesh_ctx *ctx, const char *mode)
 				 e.stanza, e.dtim_period);
 			mesh_uci_batch_line(setl);
 		}
-		snprintf(setl, sizeof(setl), "set mesh11sd.mesh_params.mesh_fwding='%d'",
-			 e.mesh_fwding);
-		mesh_uci_batch_line(setl);
-		snprintf(setl, sizeof(setl),
-			 "set mesh11sd.mesh_params.mesh_hwmp_rann_interval='%d'", e.rann);
-		mesh_uci_batch_line(setl);
-		snprintf(setl, sizeof(setl),
-			 "set mesh11sd.mesh_params.mesh_hwmp_preq_min_interval='%d'", e.preq_min);
-		mesh_uci_batch_line(setl);
-		snprintf(setl, sizeof(setl),
-			 "set mesh11sd.mesh_params.mesh_hwmp_active_path_timeout='%d'",
-			 e.path_timeout);
-		mesh_uci_batch_line(setl);
-		snprintf(setl, sizeof(setl),
-			 "set mesh11sd.mesh_params.mesh_max_peer_links='%d'", e.max_peers);
-		mesh_uci_batch_line(setl);
-		snprintf(setl, sizeof(setl),
-			 "set mesh11sd.mesh_params.mesh_rssi_threshold='%s'", e.rssi);
-		mesh_uci_batch_line(setl);
-		snprintf(setl, sizeof(setl),
-			 "set mesh11sd.mesh_params.mesh_hwmp_max_preq_retries='%d'", e.max_preq);
-		mesh_uci_batch_line(setl);
-		snprintf(setl, sizeof(setl),
-			 "set mesh11sd.mesh_params.mesh_hwmp_rootmode='%d'", e.rootmode);
-		mesh_uci_batch_line(setl);
+		snprintf(setl, sizeof(setl), "%d", e.mesh_fwding);
+		mesh_param_set("mesh_fwding", setl);
+		snprintf(setl, sizeof(setl), "%d", e.rann);
+		mesh_param_set("mesh_hwmp_rann_interval", setl);
+		snprintf(setl, sizeof(setl), "%d", e.preq_min);
+		mesh_param_set("mesh_hwmp_preq_min_interval", setl);
+		snprintf(setl, sizeof(setl), "%d", e.path_timeout);
+		mesh_param_set("mesh_hwmp_active_path_timeout", setl);
+		snprintf(setl, sizeof(setl), "%d", e.max_peers);
+		mesh_param_set("mesh_max_peer_links", setl);
+		mesh_param_set("mesh_rssi_threshold", e.rssi);
+		snprintf(setl, sizeof(setl), "%d", e.max_preq);
+		mesh_param_set("mesh_hwmp_max_preq_retries", setl);
+		snprintf(setl, sizeof(setl), "%d", e.rootmode);
+		mesh_param_set("mesh_hwmp_rootmode", setl);
 	}
 
 	/* path_cost is per-vif: only after vifs are up (runtime), not with config/phy */
@@ -988,13 +978,13 @@ int mesh_check_gate(struct mesh_ctx *ctx)
 	char *argv[] = { "iw", "dev", NULL };
 
 	if (mesh_run_capture(argv, out, sizeof(out)) != 0) {
-		mesh_uci_set("mesh11sd.mesh_params.mesh_connected_to_gate", "0");
+		mesh_param_set("mesh_connected_to_gate", "0");
 		return 0;
 	}
 	if (strstr(out, "type AP"))
-		mesh_uci_set("mesh11sd.mesh_params.mesh_connected_to_gate", "1");
+		mesh_param_set("mesh_connected_to_gate", "1");
 	else
-		mesh_uci_set("mesh11sd.mesh_params.mesh_connected_to_gate", "0");
+		mesh_param_set("mesh_connected_to_gate", "0");
 	return 0;
 }
 

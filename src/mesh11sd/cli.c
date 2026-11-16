@@ -90,6 +90,12 @@ static void print_help(void)
 "  Usage: mesh11sd stations\n"
 "\n"
 "####\n"
+"  Option: mesh_params\n"
+"  List the mesh parameters in use\n"
+"  Usage: mesh11sd mesh_params\n"
+"    (config) is a value set in the mesh_params section, (auto) is set by mesh11sd\n"
+"\n"
+"####\n"
 "  Option: mesh_rssi_threshold\n"
 "  Change the mesh rssi threshold\n"
 "  Usage: mesh11sd mesh_rssi_threshold [+|-] [force]\n"
@@ -546,6 +552,9 @@ int mesh_cli_dispatch(struct mesh_ctx *ctx, int argc, char **argv)
 
 	if (!strcmp(cmd, "country"))
 		return mesh_cli_country(ctx, argc >= 3 ? argv[2] : NULL);
+
+	if (!strcmp(cmd, "mesh_params"))
+		return mesh_cli_mesh_params();
 
 	if (!strcmp(cmd, "mesh_rssi_threshold")) {
 		int force = (argc >= 4 && !strcmp(argv[3], "force"));

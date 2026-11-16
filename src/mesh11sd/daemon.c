@@ -139,6 +139,8 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 	unlink(MESH11SD_TMPDIR "/active_mesh_ifname");
 
 	mesh_log_notice(ctx, "mesh11sd is in startup");
+	/* Fresh effective mesh parameters for this run. */
+	unlink(MESH11SD_PARAMS_FILE);
 
 	/* Check ip-full and a mesh-capable wpad first: a node missing them
 	 * must be left exactly as it is (no MACs, ULA or IPv4 staged). The
@@ -354,8 +356,8 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 				char conf[64];
 				int i;
 
-				if (mesh_uci_get("mesh11sd.mesh_params.mesh_rssi_threshold",
-						 conf, sizeof(conf)) != 0 || !conf[0])
+				if (mesh_param_get("mesh_rssi_threshold",
+						   conf, sizeof(conf)) != 0)
 					snprintf(conf, sizeof(conf), "%d",
 						 ctx->mesh_rssi_threshold);
 				mesh_get_mesh_iflist(ctx);

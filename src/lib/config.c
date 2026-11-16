@@ -57,16 +57,70 @@ void mesh_ctx_init(struct mesh_ctx *ctx, int is_daemon)
 }
 
 
-/* v7 check_config_params: write a mesh_params default only if unset, then log. */
+/*
+ * Effective mesh parameters are kept in MESH11SD_PARAMS_FILE, one
+ * "name value" line each, not staged in UCI. A later uci commit (by a
+ * user, LuCI or a package's uci-defaults) then cannot write mesh11sd's
+ * defaults into /etc/config/mesh11sd as if the user had chosen them.
+ */
+int mesh_param_get(const char *name, char *out, size_t outlen)
+{
+	char line[160], key[96];
+	FILE *f;
+	size_t n = strlen(name);
+
+	if (outlen)
+		out[0] = '\0';
+	f = fopen(MESH11SD_PARAMS_FILE, "r");
+	if (f) {
+		while (fgets(line, sizeof(line), f)) {
+			if (!strncmp(line, name, n) && line[n] == ' ') {
+				line[strcspn(line, "\n")] = '\0';
+				snprintf(out, outlen, "%s", line + n + 1);
+				fclose(f);
+				return 0;
+			}
+		}
+		fclose(f);
+	}
+	snprintf(key, sizeof(key), "mesh11sd.mesh_params.%s", name);
+	if (mesh_uci_get(key, out, outlen) == 0 && out[0])
+		return 0;
+	return -1;
+}
+
+/* val NULL removes the entry. */
+void mesh_param_set(const char *name, const char *val)
+{
+	char line[160], tmp[] = MESH11SD_PARAMS_FILE ".new";
+	FILE *in, *out;
+	size_t n = strlen(name);
+
+	mesh_mkdir_p(MESH11SD_TMPDIR);
+	out = fopen(tmp, "w");
+	if (!out)
+		return;
+	in = fopen(MESH11SD_PARAMS_FILE, "r");
+	if (in) {
+		while (fgets(line, sizeof(line), in))
+			if (strncmp(line, name, n) || line[n] != ' ')
+				fputs(line, out);
+		fclose(in);
+	}
+	if (val)
+		fprintf(out, "%s %s\n", name, val);
+	fclose(out);
+	rename(tmp, MESH11SD_PARAMS_FILE);
+}
+
+/* v7 check_config_params: keep the value in use (stash or config), else the default. */
 static void mesh_param_default(struct mesh_ctx *ctx, const char *name, const char *def)
 {
-	char key[96], buf[64];
+	char buf[64];
 
-	snprintf(key, sizeof(key), "mesh11sd.mesh_params.%s", name);
-	if (mesh_uci_get(key, buf, sizeof(buf)) != 0 || !buf[0]) {
+	if (mesh_param_get(name, buf, sizeof(buf)) != 0)
 		snprintf(buf, sizeof(buf), "%s", def);
-		mesh_uci_set(key, buf);
-	}
+	mesh_param_set(name, buf);
 	mesh_log_info(ctx, "option %s [ %s ]", name, buf);
 }
 
@@ -594,44 +648,44 @@ int mesh_check_config_params(struct mesh_ctx *ctx)
 	int mesh_retry = 255, mesh_confirm = 255, mesh_holding = 255;
 	int gate_ann = 1;
 
-	if (mesh_uci_get("mesh11sd.mesh_params.mesh_fwding", buf, sizeof(buf)) == 0)
+	if (mesh_param_get("mesh_fwding", buf, sizeof(buf)) == 0)
 		mesh_fwding = parse_int_default(buf, 1);
 	if (mesh_fwding == 1 && ctx->mesh_gate_only == 1)
 		mesh_fwding = 0;
-	mesh_uci_set("mesh11sd.mesh_params.mesh_fwding", mesh_fwding ? "1" : "0");
+	mesh_param_set("mesh_fwding", mesh_fwding ? "1" : "0");
 
-	if (mesh_uci_get("mesh11sd.mesh_params.mesh_retry_timeout", buf, sizeof(buf)) == 0)
+	if (mesh_param_get("mesh_retry_timeout", buf, sizeof(buf)) == 0)
 		mesh_retry = parse_int_default(buf, 255);
 	snprintf(buf, sizeof(buf), "%d", mesh_retry);
-	mesh_uci_set("mesh11sd.mesh_params.mesh_retry_timeout", buf);
+	mesh_param_set("mesh_retry_timeout", buf);
 
-	if (mesh_uci_get("mesh11sd.mesh_params.mesh_confirm_timeout", buf, sizeof(buf)) == 0)
+	if (mesh_param_get("mesh_confirm_timeout", buf, sizeof(buf)) == 0)
 		mesh_confirm = parse_int_default(buf, 255);
 	snprintf(buf, sizeof(buf), "%d", mesh_confirm);
-	mesh_uci_set("mesh11sd.mesh_params.mesh_confirm_timeout", buf);
+	mesh_param_set("mesh_confirm_timeout", buf);
 
-	if (mesh_uci_get("mesh11sd.mesh_params.mesh_holding_timeout", buf, sizeof(buf)) == 0)
+	if (mesh_param_get("mesh_holding_timeout", buf, sizeof(buf)) == 0)
 		mesh_holding = parse_int_default(buf, 255);
 	snprintf(buf, sizeof(buf), "%d", mesh_holding);
-	mesh_uci_set("mesh11sd.mesh_params.mesh_holding_timeout", buf);
+	mesh_param_set("mesh_holding_timeout", buf);
 
-	if (mesh_uci_get("mesh11sd.mesh_params.mesh_rssi_threshold", buf, sizeof(buf)) == 0)
+	if (mesh_param_get("mesh_rssi_threshold", buf, sizeof(buf)) == 0)
 		ctx->mesh_rssi_threshold = parse_int_default(buf, -63);
 	else
 		ctx->mesh_rssi_threshold = -63;
 	if (ctx->mesh_rssi_threshold > 0)
 		ctx->mesh_rssi_threshold = -63;
 	snprintf(buf, sizeof(buf), "%d", ctx->mesh_rssi_threshold);
-	mesh_uci_set("mesh11sd.mesh_params.mesh_rssi_threshold", buf);
+	mesh_param_set("mesh_rssi_threshold", buf);
 	mesh_log_info(ctx, "option mesh_rssi_threshold [ %d ]", ctx->mesh_rssi_threshold);
 
-	if (mesh_uci_get("mesh11sd.mesh_params.mesh_gate_announcements", buf, sizeof(buf)) == 0)
+	if (mesh_param_get("mesh_gate_announcements", buf, sizeof(buf)) == 0)
 		gate_ann = parse_int_default(buf, 1);
 	if (gate_ann == 1 && ctx->mesh_gate_enable == 0)
 		gate_ann = 0;
 	if (ctx->mesh_gate_only > 0)
 		gate_ann = 0;
-	mesh_uci_set("mesh11sd.mesh_params.mesh_gate_announcements", gate_ann ? "1" : "0");
+	mesh_param_set("mesh_gate_announcements", gate_ann ? "1" : "0");
 
 	/* v7 writes these only if unset. Mobility may later overwrite
 	 * rootmode, max_peer_links and rssi. Portals force rootmode 4. */
