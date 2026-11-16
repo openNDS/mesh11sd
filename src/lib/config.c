@@ -17,6 +17,8 @@ void mesh_ctx_init(struct mesh_ctx *ctx, int is_daemon)
 	ctx->checkinterval = 10;
 	ctx->channel_tracking_checkinterval = 26; /* v7: checkinterval*8/3 */
 	ctx->loop_interval_delta = 20;
+	ctx->loop_interval = 10;
+	ctx->loop_interval_factor = 1;
 	ctx->max_log_entries = 500;
 	ctx->interface_timeout = 10;
 	ctx->portal_detect = 1;

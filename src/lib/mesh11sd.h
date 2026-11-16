@@ -23,6 +23,8 @@ struct mesh_ctx {
 	int commit_all;
 	int checkinterval;
 	int loop_interval_delta;
+	int loop_interval;		/* this pass's end-of-loop pause, from the load */
+	int loop_interval_factor;	/* 1, 2 or 3: no, one or two deltas added */
 	int max_log_entries;
 	int interface_timeout;
 	int auto_config;
