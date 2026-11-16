@@ -7,7 +7,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=mesh11sd
 PKG_VERSION:=8.0.0_beta1
-PKG_RELEASE:=55
+PKG_RELEASE:=56
 
 PKG_MAINTAINER:=Rob White <rob@blue-wave.net>
 PKG_LICENSE:=GPL-2.0-or-later
@@ -27,14 +27,13 @@ define Package/mesh11sd
   SECTION:=net
   CATEGORY:=Network
   TITLE:=Dynamic 802.11s Mesh Management Daemon
-  # uci CLI is base OpenWrt; no linked libs in chunk 1
+  DEPENDS:=+kmod-nft-bridge
   URL:=https://github.com/opennds/mesh11sd
 endef
 
 define Package/mesh11sd/description
-  Mesh11sd autonomously manages all aspects of an 802.11s mesh network.
-  Version 8 is a C port of v7 behaviour. Alpha9 matches v7 echo/printf
-  sha256 digests, applies portal IPv4, and creates/configures AP vifs.
+  Mesh11sd autonomously configures and manages 802.11s backhaul, access
+  points, bridging, portal detection and tunnelled networks on OpenWrt.
 endef
 
 define Package/mesh11sd/conffiles
