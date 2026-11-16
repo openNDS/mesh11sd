@@ -293,6 +293,7 @@ int mesh_check_requirements(struct mesh_ctx *ctx)
 	 * Bit 2: mesh-capable wpad missing
 	 */
 	static int last_mask = -1;
+	static unsigned int calls;
 	int mask = 0;
 
 	if (mesh_is_installed("kmod-ath10k-ct") == 0)
@@ -302,7 +303,12 @@ int mesh_check_requirements(struct mesh_ctx *ctx)
 	if (!has_mesh_wpad())
 		mask |= 4;
 
-	if (mask && mask != last_mask) {
+	/* Log when the set of missing requirements changes, and repeat it
+	 * every 3rd checkinterval while any are still missing, so the reason
+	 * the node is waiting stays visible in the logs. */
+	if (mask != last_mask)
+		calls = 0;
+	if (mask && calls++ % 3 == 0) {
 		if (mask & 1)
 			mesh_log_err(ctx, "Unable to autoconfigure. Please install ath10k NON ct drivers for mesh support");
 		if (mask & 2)

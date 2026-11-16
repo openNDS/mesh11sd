@@ -53,6 +53,66 @@ static void ensure_factory_mac(struct mesh_ctx *ctx)
 	}
 }
 
+/*
+ * v7 loop_sleep_interval: the configured checkinterval is the shortest
+ * end-of-loop pause. It is used until a portal has answered, and again on
+ * any pass where the portal did not answer, so a peer keeps looking for
+ * its portal quickly. Otherwise, with the one-minute load per CPU:
+ * below 0.5, checkinterval; from 0.5, checkinterval + delta; from 1.0,
+ * checkinterval + 2 * delta. The longest pause is held while the load
+ * stays at or above 0.5. This brings the load (and the heat) down on
+ * small devices that would otherwise sit flat out.
+ * loop_interval_delta 0 disables the longer pauses.
+ */
+static void mesh_loop_sleep_interval(struct mesh_ctx *ctx)
+{
+	char line[256];
+	double load = 0;
+	int ncpu = 0;
+	int per;
+	FILE *f;
+
+	ctx->loop_interval = ctx->checkinterval;
+	if (ctx->loop_interval_delta <= 0 ||
+	    (strcmp(ctx->detected_state, "portal") != 0 && ctx->link_to_portal != 0)) {
+		ctx->loop_interval_factor = 1;
+		return;
+	}
+
+	f = fopen("/proc/loadavg", "r");
+	if (f) {
+		if (fscanf(f, "%lf", &load) != 1)
+			load = -1;
+		fclose(f);
+	} else {
+		load = -1;
+	}
+	f = fopen("/proc/cpuinfo", "r");
+	if (f) {
+		while (fgets(line, sizeof(line), f))
+			if (!strncmp(line, "processor", 9))
+				ncpu++;
+		fclose(f);
+	}
+	if (load < 0 || ncpu < 1) {
+		ctx->loop_interval_factor = 1;
+		return;
+	}
+
+	per = (int)(load * 10) / ncpu;	/* tenths of load per CPU */
+	if (per >= 10)
+		ctx->loop_interval_factor = 3;
+	else if (per >= 5 && ctx->loop_interval_factor >= 3)
+		ctx->loop_interval_factor = 3;
+	else if (per >= 5)
+		ctx->loop_interval_factor = 2;
+	else
+		ctx->loop_interval_factor = 1;
+
+	ctx->loop_interval = ctx->checkinterval +
+			     (ctx->loop_interval_factor - 1) * ctx->loop_interval_delta;
+}
+
 int mesh_daemon_run(struct mesh_ctx *ctx)
 {
 	char *nft_argv[] = { "nft", "destroy", "table", "bridge", "mesh11s", NULL };
@@ -190,7 +250,6 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 	mesh_set_led(ctx, "on");
 
 	for (;;) {
-		int loop_interval = ctx->checkinterval;
 		int auto_config_done;
 		char buf[64];
 
@@ -212,6 +271,7 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 		    ctx->auto_config == 0)
 			mesh_log_warn(ctx, "Auto Config is in TEST mode");
 		if (!ctx->enabled) {
+			mesh_log_info(ctx, "Checkinterval [%d]", ctx->checkinterval);
 			sleep((unsigned)ctx->checkinterval);
 			continue;
 		}
@@ -219,6 +279,7 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 		/* Block auto_config (and further config this pass) until
 		 * requirements are met: no ath10k-ct, ip-full, mesh wpad. */
 		if (mesh_check_requirements(ctx) != 0) {
+			mesh_log_info(ctx, "Checkinterval [%d]", ctx->checkinterval);
 			sleep((unsigned)ctx->checkinterval);
 			continue;
 		}
@@ -253,7 +314,6 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 			} else {
 				mesh_log_err(ctx, "auto_config is disabled. Please configure a mesh interface or enable auto_config....");
 				mesh_log_info(ctx, "Checkinterval [%d]", ctx->checkinterval);
-				mesh_watchdog_log(ctx);
 				sleep((unsigned)ctx->checkinterval);
 				continue;
 			}
@@ -430,15 +490,15 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 		/* v7 end-of-loop MAC walk */
 		mesh_set_bridge_mac_addresses(ctx);
 
+		mesh_loop_sleep_interval(ctx);
 		{
 			char content[64];
-			snprintf(content, sizeof(content), "loop_interval=\"%d\"\n", loop_interval);
+			snprintf(content, sizeof(content), "loop_interval=\"%d\"\n", ctx->loop_interval);
 			mesh_file_write(MESH11SD_TMPDIR "/loop_interval", content);
 		}
-		mesh_log_info(ctx, "Checkinterval [%d]", loop_interval);
-		mesh_watchdog_log(ctx);
+		mesh_log_info(ctx, "Checkinterval [%d]", ctx->loop_interval);
 		mesh_watchdog_log_check(ctx);
-		sleep((unsigned)loop_interval);
+		sleep((unsigned)ctx->loop_interval);
 		if (mesh_daemon_stop) {
 			mesh_log_notice(ctx, "Mesh11sd is shutting down");
 			break;

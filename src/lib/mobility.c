@@ -1039,6 +1039,7 @@ int mesh_check_channel(struct mesh_ctx *ctx)
 {
 	static unsigned long last_check;
 	unsigned long now = 0;
+	int mininterval;
 	FILE *f;
 	char up[64];
 
@@ -1051,10 +1052,15 @@ int mesh_check_channel(struct mesh_ctx *ctx)
 			now = (unsigned long)strtoul(up, NULL, 10);
 		fclose(f);
 	}
-	if (last_check &&
-	    (now - last_check) < (unsigned long)ctx->channel_tracking_checkinterval) {
+	/* v7: the floor scales with the live pause (loop_interval / checkinterval),
+	 * so a longer pause under load also spaces out the scans. */
+	mininterval = ctx->channel_tracking_checkinterval;
+	if (ctx->loop_interval > 0 && ctx->checkinterval > 0)
+		mininterval = ctx->channel_tracking_checkinterval * ctx->loop_interval /
+			      ctx->checkinterval;
+	if (last_check && (now - last_check) < (unsigned long)mininterval) {
 		mesh_log_debug(ctx, "Time since last channel tracking check [ %lu ], minimum checkinterval [ %d ]",
-			       now - last_check, ctx->channel_tracking_checkinterval);
+			       now - last_check, mininterval);
 		return 0;
 	}
 	last_check = now;

@@ -292,7 +292,8 @@ void mesh_log_err(struct mesh_ctx *ctx, const char *fmt, ...)
 #define WATCHDOG_LOG_DIR "/mesh11sd_log"
 #define WATCHDOG_LOG_FILE WATCHDOG_LOG_DIR "/mesh11sd.log"
 
-void mesh_watchdog_log(struct mesh_ctx *ctx)
+/* Append one line to the watchdog log, unless no mesh is in use yet. */
+static void watchdog_log_append(struct mesh_ctx *ctx, const char *msg)
 {
 	char show[64];
 	char date[64];
@@ -300,8 +301,6 @@ void mesh_watchdog_log(struct mesh_ctx *ctx)
 	time_t now;
 	FILE *f;
 
-	if (!ctx || ctx->watchdog_nonvolatile_log <= 0 || !ctx->last_logmsg[0])
-		return;
 	if (ctx->auto_config == 0 &&
 	    access(MESH11SD_TMPDIR "/auto_config_test", F_OK) != 0 &&
 	    mesh_uci_show_filter("wireless", "mode='mesh'", show, sizeof(show)) == 0 &&
@@ -321,8 +320,15 @@ void mesh_watchdog_log(struct mesh_ctx *ctx)
 	f = fopen(WATCHDOG_LOG_FILE, "a");
 	if (!f)
 		return;
-	fprintf(f, "%s %lu %s\n", date, uptime, ctx->last_logmsg);
+	fprintf(f, "%s %lu %s\n", date, uptime, msg);
 	fclose(f);
+}
+
+void mesh_watchdog_log(struct mesh_ctx *ctx)
+{
+	if (!ctx || ctx->watchdog_nonvolatile_log <= 0 || !ctx->last_logmsg[0])
+		return;
+	watchdog_log_append(ctx, ctx->last_logmsg);
 }
 
 /*
@@ -330,6 +336,8 @@ void mesh_watchdog_log(struct mesh_ctx *ctx)
  * plain "uci set" turns it on or off without a commit or restart (uci
  * get sees staged changes), and while it is on, warn so the warning
  * stays visible in logread and the option is not forgotten.
+ * Turning it on or off is itself written to the watchdog log, so each
+ * logging session in the file is bracketed by enabled and disabled.
  */
 void mesh_watchdog_log_check(struct mesh_ctx *ctx)
 {
@@ -344,6 +352,8 @@ void mesh_watchdog_log_check(struct mesh_ctx *ctx)
 	if (want != ctx->watchdog_nonvolatile_log) {
 		ctx->watchdog_nonvolatile_log = want;
 		mesh_log_notice(ctx, "watchdog_nonvolatile_log is now [ %d ]", want);
+		watchdog_log_append(ctx, want > 0 ? "watchdog_nonvolatile_log enabled" :
+				    "watchdog_nonvolatile_log disabled");
 	}
 	if (ctx->watchdog_nonvolatile_log <= 0)
 		return;

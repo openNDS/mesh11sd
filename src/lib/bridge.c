@@ -209,6 +209,47 @@ static int mesh_port_in_bridge(const char *br)
 	return 0;
 }
 
+/*
+ * v7 persist_swconfig_bridge_mac: a swconfig bridge is recreated from its
+ * device section, and the interface macaddr is not applied, so the new
+ * bridge would inherit eth0's address. Stage the address on the bridge's
+ * device section (the one with this name and type bridge) as well.
+ */
+static void persist_swconfig_bridge_mac(struct mesh_ctx *ctx, const char *br,
+					const char *mac)
+{
+	char pat[96];
+	char found[512];
+	char sec[128];
+	char key[192];
+	char cur[32];
+	char setl[256];
+	char *dot;
+
+	if (!swconfig_bridge())
+		return;
+	snprintf(pat, sizeof(pat), ".name='%s'", br);
+	if (mesh_uci_show_filter("network", pat, found, sizeof(found)) != 0 || !found[0])
+		return;
+	/* first match, e.g. network.cfg030f15.name='br-lan' */
+	if (sscanf(found, "%127s", sec) != 1)
+		return;
+	dot = strstr(sec, ".name=");
+	if (!dot)
+		return;
+	*dot = '\0';
+
+	snprintf(key, sizeof(key), "%s.type", sec);
+	if (mesh_uci_get(key, cur, sizeof(cur)) != 0 || strcmp(cur, "bridge") != 0)
+		return;
+	snprintf(key, sizeof(key), "%s.macaddr", sec);
+	if (mesh_uci_get(key, cur, sizeof(cur)) == 0 && mac_equal(cur, mac))
+		return;
+	snprintf(setl, sizeof(setl), "set %s.macaddr='%s'", sec, mac);
+	mesh_uci_batch_line(setl);
+	mesh_log_debug(ctx, "swconfig %s macaddr [ %s ]", sec, mac);
+}
+
 /* v7 apply_bridge_mac: set bridge MAC without bouncing wireless ports.
  * Try while UP first; down/up only if needed. Skip change when current matches.
  */
@@ -237,6 +278,8 @@ static int apply_bridge_mac(struct mesh_ctx *ctx, const char *br,
 
 	if (read_sysfs_mac(br, cur, sizeof(cur)) == 0 && mac_equal(cur, want))
 		goto uci_only;
+
+	persist_swconfig_bridge_mac(ctx, br, want);
 
 	if (swconfig_bridge() && mesh_port_in_bridge(br)) {
 		mesh_log_debug(ctx, "swconfig: %s has a mesh port, leaving it up", br);
@@ -375,6 +418,7 @@ int mesh_set_bridge_mac_addresses(struct mesh_ctx *ctx)
 		char key[96];
 		char config_mac[32] = "";
 
+		persist_swconfig_bridge_mac(ctx, mesh_bridge, brmesh_mac);
 		snprintf(key, sizeof(key), "network.%s.macaddr", ctx->auto_mesh_network);
 		if (mesh_uci_get(key, config_mac, sizeof(config_mac)) != 0)
 			config_mac[0] = '\0';
