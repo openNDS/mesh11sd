@@ -253,7 +253,6 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 			} else {
 				mesh_log_err(ctx, "auto_config is disabled. Please configure a mesh interface or enable auto_config....");
 				mesh_log_info(ctx, "Checkinterval [%d]", ctx->checkinterval);
-				mesh_watchdog_log(ctx);
 				sleep((unsigned)ctx->checkinterval);
 				continue;
 			}
@@ -436,7 +435,6 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 			mesh_file_write(MESH11SD_TMPDIR "/loop_interval", content);
 		}
 		mesh_log_info(ctx, "Checkinterval [%d]", loop_interval);
-		mesh_watchdog_log(ctx);
 		mesh_watchdog_log_check(ctx);
 		sleep((unsigned)loop_interval);
 		if (mesh_daemon_stop) {
