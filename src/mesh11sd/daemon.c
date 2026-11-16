@@ -404,6 +404,13 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 			mesh_check_vtunnel(ctx);
 			/* v7: update_vxlan_for_active_portal after check_vtunnel path */
 			mesh_update_vxlan_for_active_portal(ctx);
+		} else if (ctx->vtun_deps_missing) {
+			/* Startup logs this once; repeat it every 3rd pass so the
+			 * reason stays visible in the logs later on. */
+			static unsigned int vtun_deps_calls = 1;
+
+			if (vtun_deps_calls++ % 3 == 0)
+				mesh_log_info(ctx, "option vtun_enable is disabled because required dependencies [ ip-full vxlan ] are not met");
 		}
 
 		mesh_get_portal_type(ctx);

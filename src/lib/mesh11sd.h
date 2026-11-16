@@ -39,6 +39,7 @@ struct mesh_ctx {
 	int mesh_gate_enable;
 	int mesh_gate_only;
 	int vtun_enable;
+	int vtun_deps_missing;	/* vtun off because ip-full or vxlan is missing */
 	int vtun_gate_encryption;
 	int mesh_multi_interfaces_enabled;
 	int mesh_node_mobility_level;

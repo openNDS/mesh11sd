@@ -407,6 +407,7 @@ int mesh_ctx_load_setup(struct mesh_ctx *ctx)
 		const char *vx[] = { "ip-full", "vxlan", NULL };
 		int flags[2] = {1, 1};
 		mesh_check_package_any(vx, flags);
+		ctx->vtun_deps_missing = !(flags[0] == 0 && flags[1] == 0);
 		if (flags[0] == 0 && flags[1] == 0) {
 			if (mesh_uci_get("mesh11sd.setup.vtun_enable", buf, sizeof(buf)) == 0)
 				ctx->vtun_enable = parse_int_default(buf, 1);
