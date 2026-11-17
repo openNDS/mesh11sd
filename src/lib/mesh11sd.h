@@ -11,6 +11,7 @@
 #endif
 
 #define MESH11SD_TMPDIR "/tmp/mesh11sd"
+#define MESH11SD_PARAMS_FILE MESH11SD_TMPDIR "/mesh_params"
 #define MESH11SD_CONFIG "mesh11sd"
 #define MESH11SD_LOG_NAME "mesh11sd_log.log"
 #define MESH11SD_MAX_IFACES 16
@@ -39,6 +40,7 @@ struct mesh_ctx {
 	int mesh_gate_enable;
 	int mesh_gate_only;
 	int vtun_enable;
+	int vtun_deps_missing;	/* vtun off because ip-full or vxlan is missing */
 	int vtun_gate_encryption;
 	int mesh_multi_interfaces_enabled;
 	int mesh_node_mobility_level;
@@ -172,6 +174,10 @@ int mesh_uci_show_filter(const char *package, const char *grep_pat,
 void mesh_ctx_init(struct mesh_ctx *ctx, int is_daemon);
 int mesh_ctx_load_setup(struct mesh_ctx *ctx);
 int mesh_check_config_params(struct mesh_ctx *ctx);
+int mesh_param_get(const char *name, char *out, size_t outlen);
+void mesh_param_set(const char *name, const char *val);
+#define mesh_param_del(name) mesh_param_set((name), NULL)
+int mesh_cli_mesh_params(void);
 void mesh_manage_opennds(struct mesh_ctx *ctx, const char *action);
 
 void mesh_write_to_syslog(struct mesh_ctx *ctx, const char *debugtype, const char *msg);

@@ -276,7 +276,7 @@ int mesh_calc_airtime_metric(struct mesh_ctx *ctx, const char *peer_mac,
 		char thr[16] = "";
 		if (sigp)
 			sscanf(sigp + 11, "%d", &sig);
-		mesh_uci_get("mesh11sd.mesh_params.mesh_rssi_threshold", thr, sizeof(thr));
+		mesh_param_get("mesh_rssi_threshold", thr, sizeof(thr));
 		if (thr[0] && sig <= atoi(thr))
 			single_hop = 0;
 		(void)single_hop;

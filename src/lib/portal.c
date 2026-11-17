@@ -726,7 +726,7 @@ static void portal_handoff(struct mesh_ctx *ctx)
 	int vxlan_up = 0;
 	int vxlan_pending = 1;
 
-	mesh_uci_set("mesh11sd.mesh_params.mesh_connected_to_as", "1");
+	mesh_param_set("mesh_connected_to_as", "1");
 	snprintf(path, sizeof(path), "/var/run/udhcpc-%s.pid", ctx->device);
 	if ((f = fopen(path, "r"))) {
 		int pid = 0;
@@ -1002,7 +1002,7 @@ int mesh_mbp_conf(struct mesh_ctx *ctx)
 		return 0;
 
 	mesh_log_notice(ctx, "Portal detection is disabled, forcing portal mode (MBP)");
-	mesh_uci_set("mesh11sd.mesh_params.mesh_connected_to_as", "1");
+	mesh_param_set("mesh_connected_to_as", "1");
 
 	/* v7 stops udhcpc on the mesh bridge. With lan on proto dhcp that
 	 * udhcpc is netifd's client on the router, so only stop a leftover. */

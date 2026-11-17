@@ -1152,6 +1152,32 @@ int mesh_cli_country(struct mesh_ctx *ctx, const char *code)
 	return 0;
 }
 
+/* mesh11sd mesh_params: the effective values and where each came from. */
+int mesh_cli_mesh_params(void)
+{
+	char line[160], key[96], user[64];
+	FILE *f = fopen(MESH11SD_PARAMS_FILE, "r");
+
+	if (!f) {
+		printf("No mesh parameters yet, mesh11sd has not started\n");
+		return 1;
+	}
+	while (fgets(line, sizeof(line), f)) {
+		char *sp = strchr(line, ' ');
+
+		if (!sp)
+			continue;
+		*sp++ = '\0';
+		sp[strcspn(sp, "\n")] = '\0';
+		snprintf(key, sizeof(key), "mesh11sd.mesh_params.%s", line);
+		printf("%s [ %s ] %s\n", line, sp,
+		       (mesh_uci_get(key, user, sizeof(user)) == 0 && user[0]) ?
+		       "(config)" : "(auto)");
+	}
+	fclose(f);
+	return 0;
+}
+
 int mesh_cli_mesh_rssi_threshold(struct mesh_ctx *ctx, const char *dir, int force)
 {
 	/* v7 mesh_rssi_threshold [+|-] [force]:
@@ -1200,6 +1226,7 @@ int mesh_cli_mesh_rssi_threshold(struct mesh_ctx *ctx, const char *dir, int forc
 				mesh_run_capture(argv, NULL, 0);
 			}
 			mesh_uci_set("mesh11sd.mesh_params.mesh_rssi_threshold", val);
+			mesh_param_set("mesh_rssi_threshold", val);
 			new_current = newv;
 			if (iface) {
 				char *argv[] = { "iw", "dev", iface, "get", "mesh_param",
@@ -1209,6 +1236,7 @@ int mesh_cli_mesh_rssi_threshold(struct mesh_ctx *ctx, const char *dir, int forc
 			}
 		} else {
 			mesh_uci_set("mesh11sd.mesh_params.mesh_rssi_threshold", val);
+			mesh_param_set("mesh_rssi_threshold", val);
 			printf("\n    Forcing new threshold on all peers...\n");
 			unlink(MESH11SD_TMPDIR "/mesh_rssi_threshold");
 			new_current = newv;

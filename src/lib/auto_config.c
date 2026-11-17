@@ -244,7 +244,7 @@ static int mesh_param_values_equal(const char *live, const char *conf)
 int mesh_apply_mesh_params(struct mesh_ctx *ctx)
 {
 	/* v7 check_mesh_params: for every live mesh_param from iw dump, if
-	 * mesh11sd.mesh_params.<name> is set and differs, iw set it. */
+	 * the effective value (stash or mesh11sd.mesh_params) differs, iw set it. */
 	char dump[8192];
 
 	mesh_get_mesh_iflist(ctx);
@@ -256,7 +256,7 @@ int mesh_apply_mesh_params(struct mesh_ctx *ctx)
 			continue;
 		p = dump;
 		while ((line = strsep(&p, "\n")) != NULL) {
-			char name[64], live[64], key[96], conf[64];
+			char name[64], live[64], conf[64];
 			char *eq;
 
 			if (!line[0])
@@ -277,8 +277,7 @@ int mesh_apply_mesh_params(struct mesh_ctx *ctx)
 				if (nl)
 					*nl = '\0';
 			}
-			snprintf(key, sizeof(key), "mesh11sd.mesh_params.%s", name);
-			if (mesh_uci_get(key, conf, sizeof(conf)) != 0 || !conf[0])
+			if (mesh_param_get(name, conf, sizeof(conf)) != 0)
 				continue;
 			if (mesh_param_values_equal(live, conf))
 				continue;

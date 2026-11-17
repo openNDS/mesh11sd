@@ -223,6 +223,53 @@ static int portal_copies_present(void)
 	return 1;
 }
 
+/* vtun is on, but the committed portal wireless config has no VTunnel
+ * AP. That happens when the portal config was built while ip-full or
+ * vxlan was missing and the package was installed afterwards. */
+static int vtun_ap_missing(struct mesh_ctx *ctx)
+{
+	char path[128], line[256];
+	FILE *f;
+	int found = 0;
+
+	if (!ctx->vtun_enable)
+		return 0;
+	portal_copy_path("wireless", path, sizeof(path));
+	f = fopen(path, "r");
+	if (!f)
+		return 0;
+	while (!found && fgets(line, sizeof(line), f))
+		if (strstr(line, "network 'vtunlan'"))
+			found = 1;
+	fclose(f);
+	return !found;
+}
+
+/* In modes 0 and 1 the portal base has a static lan. Older builds could
+ * commit a peer's dhcp lan into it at startup; rebuild it if so. */
+static int portal_base_has_peer_lan(struct mesh_ctx *ctx)
+{
+	char path[128], line[256], want[96];
+	FILE *f;
+	int in_lan = 0, peer = 0;
+
+	if (ctx->portal_detect != 0 && ctx->portal_detect != 1)
+		return 0;
+	snprintf(want, sizeof(want), "config interface '%s'", ctx->auto_mesh_network);
+	portal_copy_path("network", path, sizeof(path));
+	f = fopen(path, "r");
+	if (!f)
+		return 0;
+	while (fgets(line, sizeof(line), f)) {
+		if (!strncmp(line, "config ", 7))
+			in_lan = !strncmp(line, want, strlen(want));
+		else if (in_lan && strstr(line, "option proto 'dhcp'"))
+			peer = 1;
+	}
+	fclose(f);
+	return peer;
+}
+
 /* Next line that is not last_role (mesh11sd's own role note). */
 static char *next_config_line(char *buf, int len, FILE *f)
 {
@@ -839,7 +886,7 @@ void mesh_apply_autostartup_uci(struct mesh_ctx *ctx)
 static void rebuild_portal(struct mesh_ctx *ctx, const char *reason,
 			   int in_loop, int auto_config_done)
 {
-	int i;
+	int i, restage_peer = 0;
 
 	mesh_log_notice(ctx, "Portal configuration: %s - building and committing it", reason);
 
@@ -859,11 +906,35 @@ static void rebuild_portal(struct mesh_ctx *ctx, const char *reason,
 		mesh_uci_revert("system");
 		mesh_apply_autostartup_uci(ctx);
 	}
-	if (!auto_config_done && mesh_auto_config(ctx) != 0) {
+	if (!in_loop && mesh_predicted_peer(ctx)) {
+		/* Startup staged the peer settings before this pass. Drop
+		 * them so they are not committed into the portal base, but
+		 * keep the MACs set by the MAC walk, then stage the portal
+		 * base again and put the peer settings back afterwards. */
+		static struct mesh_own_mac wmac[MESH_OWN_MACS_MAX];
+		static struct mesh_own_mac nmac[MESH_OWN_MACS_MAX];
+		int nw = mesh_own_macs_find(ctx, "wireless", wmac, MESH_OWN_MACS_MAX);
+		int nn = mesh_own_macs_find(ctx, "network", nmac, MESH_OWN_MACS_MAX);
+
+		for (i = 0; MANAGED_PKGS[i]; i++)
+			mesh_uci_revert(MANAGED_PKGS[i]);
+		mesh_uci_revert("system");
+		mesh_own_macs_set("wireless", wmac, nw);
+		mesh_own_macs_set("network", nmac, nn);
+		mesh_apply_autostartup_uci(ctx);
+		mesh_set_ula_prefix(ctx, "set");
+		mesh_vtunnel_preconfigure(ctx);
+		restage_peer = 1;
+	}
+	if ((!auto_config_done || restage_peer) && mesh_auto_config(ctx) != 0) {
 		mesh_log_err(ctx, "Portal configuration not committed: auto config failed");
+		if (restage_peer)
+			mesh_peer_stage_uci(ctx);
 		return;
 	}
 	mesh_commit_portal_config(ctx);
+	if (restage_peer)
+		mesh_peer_stage_uci(ctx);
 	backoff_reset();
 
 	if (!in_loop && auto_config_done)
@@ -919,6 +990,16 @@ int mesh_managed_pass(struct mesh_ctx *ctx, int auto_config_done)
 		}
 		if (mesh11sd_config_changed()) {
 			rebuild_portal(ctx, "mesh11sd config changed", 0,
+				       auto_config_done);
+			return 0;
+		}
+		if (portal_base_has_peer_lan(ctx)) {
+			rebuild_portal(ctx, "the committed lan has peer settings", 0,
+				       auto_config_done);
+			return 0;
+		}
+		if (vtun_ap_missing(ctx)) {
+			rebuild_portal(ctx, "vtun is enabled but there is no VTunnel AP", 0,
 				       auto_config_done);
 			return 0;
 		}

@@ -206,7 +206,7 @@ int mesh_cpe_conf(struct mesh_ctx *ctx)
 
 	/* To other mesh nodes this looks like a peer */
 	if (!ctx->commit_all)
-		mesh_uci_set("mesh11sd.mesh_params.mesh_connected_to_as", "0");
+		mesh_param_set("mesh_connected_to_as", "0");
 	mesh_log_notice(ctx, "CPE mode");
 	mesh_run_capture(odhcpd, NULL, 0);
 	mesh_manage_opennds(ctx, "restart");
