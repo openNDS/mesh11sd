@@ -24,6 +24,34 @@ static int ping_ok(struct mesh_ctx *ctx, const char *addr)
 	return mesh_portal_probe(addr) == 0;
 }
 
+/* A portal's lan and vtun subnet hints come from sha256 of its factory
+ * MAC, which is also its mesh interface MAC. Other software can put a
+ * ::1 on the portal's bridge in another subnet of the same ula_base
+ * (for example the apmond collector), and the portal then advertises
+ * that prefix too. Check that a candidate's subnet is one of the hints
+ * of the portal it belongs to.
+ * Returns 1 on a match, 0 on a mismatch, -1 if it cannot be checked. */
+int mesh_portal_hint_check(const char *ula, const char *mac)
+{
+	char hash[72];
+	char subnet[16];
+	char lan[8], vtun[8];
+	unsigned long s, l, v;
+
+	if (!ula || !ula[0] || !mac || strlen(mac) < 17)
+		return -1;
+	if (mesh_ula_parts_from_addr(ula, NULL, 0, subnet, sizeof(subnet)) != 0)
+		return -1;
+	if (mesh_sha256_hex_echo(mac, hash, sizeof(hash)) != 0 || strlen(hash) < 29)
+		return -1;
+	snprintf(lan, sizeof(lan), "%.4s", hash + 20);
+	snprintf(vtun, sizeof(vtun), "%.4s", hash + 25);
+	s = strtoul(subnet, NULL, 16);
+	l = strtoul(lan, NULL, 16);
+	v = strtoul(vtun, NULL, 16);
+	return (s == l || s == v) ? 1 : 0;
+}
+
 
 int mesh_detect_l3_upstream(struct mesh_ctx *ctx)
 {
@@ -116,6 +144,7 @@ int mesh_update_known_portals_from_ras(struct mesh_ctx *ctx)
 	char mac_clean[32] = "";
 	char eui[40];
 	char node_id[8];
+	char seen[1024] = " ";
 	FILE *tf;
 	char *argv[] = { "ip", "-6", "addr", "show", "dev", ctx->device, "scope", "global", NULL };
 	const char *p;
@@ -176,6 +205,15 @@ int mesh_update_known_portals_from_ras(struct mesh_ctx *ctx)
 				if (sscanf(addr, "%x:%x:%x:%x", &h1, &h2, &h3, &h4) >= 4) {
 					snprintf(cand, sizeof(cand), "%x:%x:%x:%x::1",
 						 h1, h2, h3, h4);
+					char needle[84];
+
+					snprintf(needle, sizeof(needle), " %s ", cand);
+					if (strstr(seen, needle))
+						continue;
+					if (strlen(seen) + strlen(cand) + 2 < sizeof(seen)) {
+						strcat(seen, cand);
+						strcat(seen, " ");
+					}
 					if (tf)
 						fprintf(tf, "%s\n", cand);
 					mesh_log_debug(ctx, "Detected portal candidate [ %s ]", cand);
@@ -432,6 +470,15 @@ int mesh_portal_ula_discover(struct mesh_ctx *ctx)
 		}
 		if (af)
 			fclose(af);
+		/* A remembered portal ULA outside that portal's own subnet
+		 * hints is not a portal address, so look again. */
+		if (current_ula[0] && mesh_portal_hint_check(current_ula, best_peer) == 0) {
+			mesh_log_notice(ctx,
+					"[ %s ] is not a subnet of portal [ %s ], looking again",
+					current_ula, best_peer);
+			current_ula[0] = '\0';
+			best_peer[0] = '\0';
+		}
 		if (current_ula[0] && ping_ok(ctx, current_ula)) {
 			current_reachable = 1;
 			snprintf(best_ula, sizeof(best_ula), "%s", current_ula);
@@ -466,6 +513,15 @@ int mesh_portal_ula_discover(struct mesh_ctx *ctx)
 			}
 			if (mesh_get_metrics_from_ula(ctx, cand, &metric, &hops, peer, sizeof(peer)) != 0)
 				continue;
+			/* Skip a candidate proven to be outside its portal's
+			 * subnet hints. One that cannot be checked (no MAC)
+			 * is still taken, as before. */
+			if (mesh_portal_hint_check(cand, peer) == 0) {
+				mesh_log_debug(ctx,
+					       "Portal candidate [ %s ] is not a subnet of [ %s ], skipped",
+					       cand, peer);
+				continue;
+			}
 			if (!current_ula[0] || !current_reachable) {
 				snprintf(current_ula, sizeof(current_ula), "%s", cand);
 				current_metric = metric;

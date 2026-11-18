@@ -294,7 +294,10 @@ int mesh_get_portal_ula(struct mesh_ctx *ctx, const char *mode)
 			p = strstr(line, "ula_subnet=\"");
 			if (p)
 				sscanf(p + 12, "%7[^\"]", ctx->ula_subnet);
-			ctx->link_to_portal = ping_portal(ctx, ctx->portal_ula);
+			if (mesh_portal_hint_check(ctx->portal_ula, ctx->portal_mac) == 0)
+				ctx->link_to_portal = 1;
+			else
+				ctx->link_to_portal = ping_portal(ctx, ctx->portal_ula);
 			if (ctx->link_to_portal == 0) {
 				/* set_ula_prefix get just overwrote ula_subnet with
 				 * this node's factory-hash hint. Use the selected
