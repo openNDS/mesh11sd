@@ -496,72 +496,62 @@ int mesh_portal_ula_discover(struct mesh_ctx *ctx)
 			return 1;
 		}
 	} else {
-		int pass;
-
-		/* Pass 0 takes only candidates on their portal's own subnet
-		 * hints. Pass 1, the old behaviour, runs only if pass 0
-		 * found nothing (for example a portal whose mesh MAC is not
-		 * its factory MAC). */
-		for (pass = 0; pass < 2; pass++) {
-			if (pass == 1) {
-				if (best_ula[0])
-					break;
-				rewind(f);
+		while (fgets(line, sizeof(line), f)) {
+			char cand[64];
+			int metric = 0, hops = 0;
+			char peer[32] = "";
+			size_t n;
+			n = strlen(line);
+			while (n && (line[n - 1] == '\n' || line[n - 1] == '\r'))
+				line[--n] = '\0';
+			if (!line[0])
+				continue;
+			snprintf(cand, sizeof(cand), "%s", line);
+			{
+				if (mesh_portal_probe(cand) != 0)
+					continue;
 			}
-			while (fgets(line, sizeof(line), f)) {
-				char cand[64];
-				int metric = 0, hops = 0;
-				char peer[32] = "";
-				size_t n;
-				n = strlen(line);
-				while (n && (line[n - 1] == '\n' || line[n - 1] == '\r'))
-					line[--n] = '\0';
-				if (!line[0])
-					continue;
-				snprintf(cand, sizeof(cand), "%s", line);
-				{
-					if (mesh_portal_probe(cand) != 0)
-						continue;
-				}
-				if (mesh_get_metrics_from_ula(ctx, cand, &metric, &hops, peer, sizeof(peer)) != 0)
-					continue;
-				if (pass == 0 && mesh_portal_hint_check(cand, peer) == 0) {
-					mesh_log_debug(ctx,
-						       "Portal candidate [ %s ] is not a subnet of [ %s ], skipped",
-						       cand, peer);
-					continue;
-				}
-				if (!current_ula[0] || !current_reachable) {
-					snprintf(current_ula, sizeof(current_ula), "%s", cand);
-					current_metric = metric;
-					current_reachable = 1;
-					snprintf(best_ula, sizeof(best_ula), "%s", cand);
-					best_metric = metric;
-					best_hops = hops;
-					snprintf(best_peer, sizeof(best_peer), "%s", peer);
-					continue;
-				}
-				if (best_metric == 0) {
+			if (mesh_get_metrics_from_ula(ctx, cand, &metric, &hops, peer, sizeof(peer)) != 0)
+				continue;
+			/* Skip a candidate proven to be outside its portal's
+			 * subnet hints. One that cannot be checked (no MAC)
+			 * is still taken, as before. */
+			if (mesh_portal_hint_check(cand, peer) == 0) {
+				mesh_log_debug(ctx,
+					       "Portal candidate [ %s ] is not a subnet of [ %s ], skipped",
+					       cand, peer);
+				continue;
+			}
+			if (!current_ula[0] || !current_reachable) {
+				snprintf(current_ula, sizeof(current_ula), "%s", cand);
+				current_metric = metric;
+				current_reachable = 1;
+				snprintf(best_ula, sizeof(best_ula), "%s", cand);
+				best_metric = metric;
+				best_hops = hops;
+				snprintf(best_peer, sizeof(best_peer), "%s", peer);
+				continue;
+			}
+			if (best_metric == 0) {
+				best_metric = metric;
+				snprintf(best_ula, sizeof(best_ula), "%s", cand);
+				best_hops = hops;
+				snprintf(best_peer, sizeof(best_peer), "%s", peer);
+			}
+			if (!strcmp(cand, current_ula)) {
+				current_metric = metric;
+				if (!strcmp(best_ula, cand) || metric < best_metric) {
 					best_metric = metric;
 					snprintf(best_ula, sizeof(best_ula), "%s", cand);
 					best_hops = hops;
 					snprintf(best_peer, sizeof(best_peer), "%s", peer);
 				}
-				if (!strcmp(cand, current_ula)) {
-					current_metric = metric;
-					if (!strcmp(best_ula, cand) || metric < best_metric) {
-						best_metric = metric;
-						snprintf(best_ula, sizeof(best_ula), "%s", cand);
-						best_hops = hops;
-						snprintf(best_peer, sizeof(best_peer), "%s", peer);
-					}
-				} else if ((current_metric - metric) >= ctx->mesh_metric_threshold &&
-					   metric < best_metric) {
-					best_metric = metric;
-					snprintf(best_ula, sizeof(best_ula), "%s", cand);
-					best_hops = hops;
-					snprintf(best_peer, sizeof(best_peer), "%s", peer);
-				}
+			} else if ((current_metric - metric) >= ctx->mesh_metric_threshold &&
+				   metric < best_metric) {
+				best_metric = metric;
+				snprintf(best_ula, sizeof(best_ula), "%s", cand);
+				best_hops = hops;
+				snprintf(best_peer, sizeof(best_peer), "%s", peer);
 			}
 		}
 		fclose(f);
