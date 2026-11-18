@@ -143,6 +143,7 @@ int mesh_sysfs_read_int(const char *path, int *out);
 int mesh_sysfs_write_int_if_changed(const char *path, int want); /* 0=same, 1=wrote, -1=err */
 int mesh_sha256_hex(const char *in, char *out, size_t outlen);
 int mesh_sha256_hex_echo(const char *in, char *out, size_t outlen); /* v7 echo|sha256sum */
+int mesh_portal_hint_check(const char *ula, const char *mac);
 int mesh_is_installed(const char *package);
 int mesh_check_package_any(const char *const *names, int *installed_flags);
 int mesh_check_requirements(struct mesh_ctx *ctx); /* 0=ok, -1=unmet; logs on change, then every 3rd call */
