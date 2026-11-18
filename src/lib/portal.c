@@ -642,8 +642,51 @@ static void note_role(struct mesh_ctx *ctx, const char *role)
 
 int mesh_predicted_peer(struct mesh_ctx *ctx)
 {
-	return ctx->portal_detect == 1 &&
+	return ctx->portal_detect == 1 && !ctx->peer_prediction_off &&
 	       !ctx->commit_all && !strcmp(ctx->last_role, "peer");
+}
+
+static int wan_has_default_route(const char *dev)
+{
+	char out[1024];
+	char *r4[] = { "ip", "-4", "route", "show", "default", "dev", (char *)dev, NULL };
+	char *r6[] = { "ip", "-6", "route", "show", "default", "dev", (char *)dev, NULL };
+
+	if (mesh_run_capture(r4, out, sizeof(out)) == 0 && strstr(out, "default"))
+		return 1;
+	if (mesh_run_capture(r6, out, sizeof(out)) == 0 && strstr(out, "default"))
+		return 1;
+	return 0;
+}
+
+/*
+ * A node that was a peer last time normally boots with peer settings.
+ * If its wan already has a default route it is going to be the portal,
+ * so start with portal settings instead. The wan lease often lands a few
+ * seconds after mesh11sd starts, so wait up to 10 s while the wan link
+ * is up. last_role is left as it is, so note_role saves portal later.
+ */
+void mesh_check_peer_prediction(struct mesh_ctx *ctx)
+{
+	char wan[64] = "";
+	int i;
+
+	if (!mesh_predicted_peer(ctx))
+		return;
+	if (mesh_uci_get("network.wan.device", wan, sizeof(wan)) != 0 || !wan[0])
+		return;
+	for (i = 0; i < 10; i++) {
+		if (!iface_is_up(wan))
+			return;
+		if (wan_has_default_route(wan)) {
+			ctx->peer_prediction_off = 1;
+			mesh_log_notice(ctx,
+					"Last role was peer, but wan [ %s ] has a default route - starting with portal settings",
+					wan);
+			return;
+		}
+		sleep(1);
+	}
 }
 
 static void peer_handoff(struct mesh_ctx *ctx)
@@ -1041,6 +1084,23 @@ int mesh_mbp_conf(struct mesh_ctx *ctx)
 	return 1;
 }
 
+/* Say why a mode 1 node is becoming a peer, so a wrong flip can be traced. */
+static void log_peer_reason(struct mesh_ctx *ctx)
+{
+	char wan[64] = "";
+
+	if (ctx->portal_detect != 1)
+		return;
+	if (mesh_uci_get("network.wan.device", wan, sizeof(wan)) != 0 || !wan[0]) {
+		mesh_log_notice(ctx, "Becoming a peer: no wan device configured");
+		return;
+	}
+	mesh_log_notice(ctx,
+			"Becoming a peer: no upstream gateway on wan [ %s ] (link %s, default route %s)",
+			wan, iface_is_up(wan) ? "up" : "down",
+			wan_has_default_route(wan) ? "yes" : "no");
+}
+
 int mesh_check_portal(struct mesh_ctx *ctx)
 {
 	mesh_log_debug(ctx, "Checking portal status");
@@ -1070,6 +1130,7 @@ int mesh_check_portal(struct mesh_ctx *ctx)
 		if (!strcmp(ctx->detected_state, "peer") && !strcmp(ctx->last_state, "initial"))
 			snprintf(ctx->last_state, sizeof(ctx->last_state), "portal");
 		if (!strcmp(ctx->detected_state, "peer") && !strcmp(ctx->last_state, "portal")) {
+			log_peer_reason(ctx);
 			snprintf(ctx->last_state, sizeof(ctx->last_state), "peer");
 			peer_handoff(ctx);
 		}

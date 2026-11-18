@@ -81,6 +81,7 @@ struct mesh_ctx {
 	char detected_state[16];	/* portal|peer */
 	char last_state[16];	/* initial|portal|peer */
 	char last_role[16];	/* mesh11sd.setup.last_role: role at last boot */
+	int peer_prediction_off;	/* wan had a default route at startup */
 	char is_portal[32];
 	char portal_ula[64];
 	char ula_prefix[48];
@@ -238,6 +239,7 @@ int mesh_portal_watchdog(struct mesh_ctx *ctx);
 void mesh_peer_reapply(struct mesh_ctx *ctx);   /* peer overlay again */
 void mesh_peer_stage_uci(struct mesh_ctx *ctx);  /* peer network/dhcp values */
 int mesh_predicted_peer(struct mesh_ctx *ctx);   /* last_role peer, mode 1 */
+void mesh_check_peer_prediction(struct mesh_ctx *ctx); /* startup, mode 1 */
 void mesh_mbp_stage_lan(struct mesh_ctx *ctx);   /* mode 4 lan: dhcp client, ULA RA */
 int mesh_mbp_conf(struct mesh_ctx *ctx);         /* mode 4 one-shot forced portal */
 void mesh_portal_reapply(struct mesh_ctx *ctx); /* portal runtime again */
