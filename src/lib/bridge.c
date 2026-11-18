@@ -1248,6 +1248,7 @@ int mesh_network_preconfigure(struct mesh_ctx *ctx)
 
 	if (ctx->commit_all)
 		return 0;
+	mesh_check_peer_prediction(ctx);
 	if (ctx->portal_detect != 3 && ctx->portal_detect != 5 &&
 	    !mesh_predicted_peer(ctx))
 		mesh_set_ula_prefix(ctx, "set");

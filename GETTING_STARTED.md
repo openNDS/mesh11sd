@@ -125,7 +125,7 @@ CPE LAN is a private subnet. IPv6 mode is `cpe_mode` (`nat66` default; also `pre
 | `mesh_gate_encryption` / `mesh_gate_key` | User Wi-Fi security (default OWE = 4; 1=WPA3, 3=WPA2). |
 | `auto_mesh_band` | Mesh radio band (`2g40` default; also `2g`, `5g`, `6g`, `60g`). Peers track the portal channel. |
 
-Everything else can wait. Defaults: `portal_detect=1`, `mesh_node_mobility_level=2`, `vtun_enable=1` (guest VTunnel SSID), `apmond_enable=1`.
+Everything else can wait. Defaults: `portal_detect=1`, `mesh_node_mobility_level=2`, `vtun_enable=1` (guest VTunnel SSID).
 
 ## Everyday commands
 

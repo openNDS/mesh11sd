@@ -55,9 +55,8 @@ dhcp/network/firewall; code default is `auto`, docs say `nat66`),
 
 ### `setup` — documented but not parsed in v8
 
-`manage_opennds_startup`, `wpad_debuglevel`, `apmond_enable`,
-`apmond_cgi_dir`, `apmon_verbose_debug_enable`, `connect_show_all`.
-(apmond is now a separate package; these can wait.)
+`manage_opennds_startup`, `wpad_debuglevel`, `connect_show_all`.
+The v7 apmond options are gone: apmond is now a separate package.
 README §7 still lists `reactive_path_stabilisation_threshold`, which
 was removed.
 

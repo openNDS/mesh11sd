@@ -642,8 +642,51 @@ static void note_role(struct mesh_ctx *ctx, const char *role)
 
 int mesh_predicted_peer(struct mesh_ctx *ctx)
 {
-	return ctx->portal_detect == 1 &&
+	return ctx->portal_detect == 1 && !ctx->peer_prediction_off &&
 	       !ctx->commit_all && !strcmp(ctx->last_role, "peer");
+}
+
+static int wan_has_default_route(const char *dev)
+{
+	char out[1024];
+	char *r4[] = { "ip", "-4", "route", "show", "default", "dev", (char *)dev, NULL };
+	char *r6[] = { "ip", "-6", "route", "show", "default", "dev", (char *)dev, NULL };
+
+	if (mesh_run_capture(r4, out, sizeof(out)) == 0 && strstr(out, "default"))
+		return 1;
+	if (mesh_run_capture(r6, out, sizeof(out)) == 0 && strstr(out, "default"))
+		return 1;
+	return 0;
+}
+
+/*
+ * A node that was a peer last time normally boots with peer settings.
+ * If its wan already has a default route it is going to be the portal,
+ * so start with portal settings instead. The wan lease often lands a few
+ * seconds after mesh11sd starts, so wait up to 10 s while the wan link
+ * is up. last_role is left as it is, so note_role saves portal later.
+ */
+void mesh_check_peer_prediction(struct mesh_ctx *ctx)
+{
+	char wan[64] = "";
+	int i;
+
+	if (!mesh_predicted_peer(ctx))
+		return;
+	if (mesh_uci_get("network.wan.device", wan, sizeof(wan)) != 0 || !wan[0])
+		return;
+	for (i = 0; i < 10; i++) {
+		if (!iface_is_up(wan))
+			return;
+		if (wan_has_default_route(wan)) {
+			ctx->peer_prediction_off = 1;
+			mesh_log_notice(ctx,
+					"Last role was peer, but wan [ %s ] has a default route - starting with portal settings",
+					wan);
+			return;
+		}
+		sleep(1);
+	}
 }
 
 static void peer_handoff(struct mesh_ctx *ctx)
@@ -1041,6 +1084,23 @@ int mesh_mbp_conf(struct mesh_ctx *ctx)
 	return 1;
 }
 
+/* Say why a mode 1 node is becoming a peer, so a wrong flip can be traced. */
+static void log_peer_reason(struct mesh_ctx *ctx)
+{
+	char wan[64] = "";
+
+	if (ctx->portal_detect != 1)
+		return;
+	if (mesh_uci_get("network.wan.device", wan, sizeof(wan)) != 0 || !wan[0]) {
+		mesh_log_notice(ctx, "Becoming a peer: no wan device configured");
+		return;
+	}
+	mesh_log_notice(ctx,
+			"Becoming a peer: no upstream gateway on wan [ %s ] (link %s, default route %s)",
+			wan, iface_is_up(wan) ? "up" : "down",
+			wan_has_default_route(wan) ? "yes" : "no");
+}
+
 int mesh_check_portal(struct mesh_ctx *ctx)
 {
 	mesh_log_debug(ctx, "Checking portal status");
@@ -1070,6 +1130,7 @@ int mesh_check_portal(struct mesh_ctx *ctx)
 		if (!strcmp(ctx->detected_state, "peer") && !strcmp(ctx->last_state, "initial"))
 			snprintf(ctx->last_state, sizeof(ctx->last_state), "portal");
 		if (!strcmp(ctx->detected_state, "peer") && !strcmp(ctx->last_state, "portal")) {
+			log_peer_reason(ctx);
 			snprintf(ctx->last_state, sizeof(ctx->last_state), "peer");
 			peer_handoff(ctx);
 		}
@@ -1531,9 +1592,14 @@ static int addr_is_gateway_ula(const char *addr)
 /* Remove stale mesh11sd-owned ULAs (wrong-subnet ::1 / EUI64) relative to
  * the current portal. Leaves kernel_ra alone. On a peer, also drop any
  * leftover global ::1 (netifd ip6assign on a reverted ula_prefix). An empty
- * want_subnet means every mesh-owned address on ula_base is stale. */
+ * want_subnet means every mesh-owned address on ula_base is stale.
+ *
+ * mesh11sd only ever adds a ::1 on this node's own lan or vtun subnet hint
+ * (own_sub, own_vxsub), so a ::1 on any other subnet belongs to something
+ * else (e.g. the apmond collector address) and is left alone. */
 static void cleanup_stale_bridge_ulas(struct mesh_ctx *ctx, const char *dev,
-				     const char *want_subnet, int is_portal)
+				     const char *want_subnet, int is_portal,
+				     const char *own_sub, const char *own_vxsub)
 {
 	char out[8192];
 	char mac[32];
@@ -1580,7 +1646,10 @@ static void cleanup_stale_bridge_ulas(struct mesh_ctx *ctx, const char *dev,
 			keep = (want_subnet && want_subnet[0] &&
 				hextet_eq(old_subnet, want_subnet));
 			/* mesh11sd-owned: our EUI-64 or a portal ::1 */
-			if (is_gw || (have_eui && eui[0] && strstr(addr_only, eui)))
+			if (is_gw && (hextet_eq(old_subnet, own_sub) ||
+				      hextet_eq(old_subnet, own_vxsub)))
+				owned = 1;
+			if (have_eui && eui[0] && strstr(addr_only, eui))
 				owned = 1;
 		}
 		if (owned && !keep) {
@@ -1661,17 +1730,26 @@ static void cleanup_stale_portal_neighs(struct mesh_ctx *ctx, const char *dev,
 	char *argv[] = {
 		"ip", "-6", "neigh", "show", "dev", (char *)dev, NULL
 	};
+	char addrs[8192];
+	char *addr_argv[] = {
+		"ip", "-6", "addr", "show", "dev", (char *)dev, NULL
+	};
 	char *p, *line;
 	char pfx_head[64];
 
 	if (!dev || !dev[0] || !ctx->ula_base[0])
 		return;
 	snprintf(pfx_head, sizeof(pfx_head), "%s:", ctx->ula_base);
+	/* Runs after cleanup_stale_bridge_ulas, so any address still on a
+	 * subnet belongs to someone else (e.g. apmond) and its ::1 is live. */
+	if (mesh_run_capture(addr_argv, addrs, sizeof(addrs)) != 0)
+		addrs[0] = '\0';
 	if (mesh_run_capture(argv, out, sizeof(out)) != 0)
 		return;
 	p = out;
 	while ((line = strsep(&p, "\n")) != NULL) {
 		char neigh[96];
+		char in_use[96];
 		char old_subnet[16];
 		char *delv[] = {
 			"ip", "-6", "neigh", "del", neigh, "dev",
@@ -1689,6 +1767,10 @@ static void cleanup_stale_portal_neighs(struct mesh_ctx *ctx, const char *dev,
 			continue;
 		if (want_subnet && want_subnet[0] &&
 		    hextet_eq(old_subnet, want_subnet))
+			continue;
+		snprintf(in_use, sizeof(in_use), "inet6 %s:%s:",
+			 ctx->ula_base, old_subnet);
+		if (strstr(addrs, in_use))
 			continue;
 		if (mesh_run_capture(delv, NULL, 0) == 0) {
 			mesh_log_notice(ctx,
@@ -1735,6 +1817,8 @@ int mesh_manage_fallback_ula_route(struct mesh_ctx *ctx)
 	char tun_dev[32];
 	int is_portal;
 	int got_portal;
+	char own_sub[8];
+	char own_vxsub[8];
 
 	mesh_refresh_bridgemac(ctx);
 	lan_dev = ctx->device[0] ? ctx->device : "";
@@ -1751,6 +1835,11 @@ int mesh_manage_fallback_ula_route(struct mesh_ctx *ctx)
 		return 1;
 	}
 	mesh_log_debug(ctx, "ula_base [ %s ]", ctx->ula_base);
+
+	/* This node's own subnet hints, before get_portal_ula overwrites
+	 * ula_subnet with the current portal's. */
+	snprintf(own_sub, sizeof(own_sub), "%s", ctx->ula_subnet);
+	snprintf(own_vxsub, sizeof(own_vxsub), "%s", ctx->ula_vxsubnet);
 
 	got_portal = (mesh_get_portal_ula(ctx, "get") == 0);
 	is_portal = (strcmp(ctx->detected_state, "portal") == 0);
@@ -1769,7 +1858,8 @@ int mesh_manage_fallback_ula_route(struct mesh_ctx *ctx)
 			lan_sub = ctx->ula_subnet;
 
 		ensure_bridge_ulas(ctx, lan_dev, lan_gw, lan_sub, is_portal);
-		cleanup_stale_bridge_ulas(ctx, lan_dev, lan_sub, is_portal);
+		cleanup_stale_bridge_ulas(ctx, lan_dev, lan_sub, is_portal,
+					  own_sub, own_vxsub);
 		cleanup_stale_onlink_routes(ctx, lan_dev, lan_sub);
 		cleanup_stale_portal_neighs(ctx, lan_dev, lan_sub);
 
@@ -1799,7 +1889,8 @@ int mesh_manage_fallback_ula_route(struct mesh_ctx *ctx)
 				ensure_bridge_ulas(ctx, tun_dev, vtun_gw,
 						   ctx->ula_vxsubnet, is_portal);
 			cleanup_stale_bridge_ulas(ctx, tun_dev, tun_sub,
-						  is_portal);
+						  is_portal, own_sub,
+						  own_vxsub);
 			cleanup_stale_onlink_routes(ctx, tun_dev, tun_sub);
 			cleanup_stale_portal_neighs(ctx, tun_dev, tun_sub);
 		}
