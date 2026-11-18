@@ -300,9 +300,6 @@ MBP/TPN: WAN is added to `br-tun$tun_id`. MRP portal may serve DHCPv4/RA on vtun
 | `reboot_on_error` | 1 | Watchdog reboot if portal still missing. |
 | `stop_on_error` | 0 | Idle instead of reboot (overrides reboot_on_error). |
 | `watchdog_nonvolatile_log` | 0 | **Debug only** — can wear flash. Appends time, uptime, then the message to `/mesh11sd_log/mesh11sd.log`. Manage it with `mesh11sd watchdog_nonvolatile_log enable` (live, until restart or reboot) or `enable commit` (saves only this option); `disable` turns it off and removes a saved enable. |
-| `apmond_enable` | 1 | AP/Ethernet stats to the portal. |
-| `apmond_cgi_dir` | `/www/cgi-bin/` | |
-| `apmon_verbose_debug_enable` | 0 | |
 | `mesh_backhaul_led` | `auto` | `none` to disable; or `color:function` from `/sys/class/leds`. |
 | `manage_opennds_startup` | 1 | If opennds is installed: started on a portal or CPE, stopped (and autostart disabled) on a peer. 0 leaves opennds alone. |
 | `log_mountpoint` | `/tmp` | Not on system flash for long-term logs. Subdir `mesh11sd` holds the log only. Runtime state stays in `/tmp/mesh11sd`. |
@@ -1078,29 +1075,6 @@ config mesh11sd 'setup'
 	#option reboot_on_error '0'
 
 	###########################################################################################
-	# apmond_enable (optional)
-	#
-	# Enables the access point monitoring daemon
-	# 	Assumes the uhttpd and px5g-mbedtls (or luci-ssl) packages are installed.
-	#	But other portal based https web servers can be used.
-	# Default: 1 (enabled)
-	#
-	# Data is collected from access point interfaces on this node and sent to the portal node
-	#
-	# Example:
-	#option apmond_enable '0'
-
-	###########################################################################################
-	# apmond_cgi_dir (optional)
-	#
-	# Sets the apmond cgi directory
-	#	Takes effect when this node becomes a portal (portal detect 0, 1 and 4)
-	# Default: /www/cgi-bin
-	#
-	# Example:
-	#option apmond_cgi_dir '/webroot/cgi'
-
-	###########################################################################################
 	# mesh_backhaul_led (optional)
 	#
 	# Enables the mesh backhaul heartbeat led indicator
@@ -1215,17 +1189,6 @@ config mesh11sd 'setup'
 	#
 	# Example:
 	#option cpe_mode 'prefix_delegation'
-
-	###########################################################################################
-	# apmon_verbose_debug_enable (optional)
-	#
-	# Enables apmon verbose debug logging.
-	# Logs can be read using the mesh11sd read_log command
-
-	# Default 0 (disabled)
-	#
-	# Example: Enable verbose logging
-	#option apmon_verbose_debug_enable '1'
 
 	###########################################################################################
 	# odhcpd_log_level (optional)

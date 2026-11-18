@@ -602,29 +602,6 @@ config mesh11sd 'setup'
 	#option reboot_on_error '0'
 
 	###########################################################################################
-	# apmond_enable (optional)
-	#
-	# Enables the access point monitoring daemon
-	# 	Assumes the uhttpd and px5g-mbedtls (or luci-ssl) packages are installed.
-	#	But other portal based https web servers can be used.
-	# Default: 1 (enabled)
-	#
-	# Data is collected from access point interfaces on this node and sent to the portal node
-	#
-	# Example:
-	#option apmond_enable '0'
-
-	###########################################################################################
-	# apmond_cgi_dir (optional)
-	#
-	# Sets the apmond cgi directory
-	#	Takes effect when this node becomes a portal (portal detect 0, 1 and 4)
-	# Default: /www/cgi-bin
-	#
-	# Example:
-	#option apmond_cgi_dir '/webroot/cgi'
-
-	###########################################################################################
 	# mesh_backhaul_led (optional)
 	#
 	# Enables the mesh backhaul heartbeat led indicator
@@ -741,17 +718,6 @@ config mesh11sd 'setup'
 	#
 	# Example:
 	#option cpe_mode 'prefix_delegation'
-
-	###########################################################################################
-	# apmon_verbose_debug_enable (optional)
-	#
-	# Enables apmon verbose debug logging.
-	# Logs can be read using the mesh11sd read_log command
-
-	# Default 0 (disabled)
-	#
-	# Example: Enable verbose logging
-	#option apmon_verbose_debug_enable '1'
 
 	###########################################################################################
 	# odhcpd_log_level (optional)
