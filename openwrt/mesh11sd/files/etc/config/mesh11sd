@@ -302,20 +302,32 @@ config mesh11sd 'setup'
 	###########################################################################################
 	# mesh_gate_base_ssid
 	#
-	# Sets the mesh gate base ssid string
+	# Sets the base ssid string of this node's access points
 	#	If ssid_suffix_enable is set to 0, must be a maximum of 30 characters in length
 	#	If ssid_suffix_enable is set to 1, must be a maximum of 22 characters in length
 	#	Excess characters will be truncated
+	#	Spaces are removed, as some mobile devices truncate long ssids that contain spaces
 	#
-	# Default:
-	#	1 - uses the ssid string set in the wireless config if it is NOT set to OpenWrt
-	#	2 - uses the ssid string MeshGate if the SSID string in the wireless config is OpenWrt
+	# Default: MeshGate, or the ssid strings in the wireless config if keep_system_ssids is set to 1
 	#
-	#
-	# When set, overrides the ssid string set in the wireless config
+	# When set, overrides the ssid strings set in the wireless config
 	#
 	# Example:
 	#option mesh_gate_base_ssid 'OfficeNetwork'
+
+	###########################################################################################
+	# keep_system_ssids (optional)
+	#
+	# Keeps the access point ssid strings already set in the wireless config,
+	#	if mesh_gate_base_ssid is not set.
+	#	The ssid suffix is still added if ssid_suffix_enable is set to 1
+	#	VTunnel ssids are always generated (see vtun_base_ssid)
+	#
+	# Default: 0 (the access points use mesh_gate_base_ssid, or MeshGate)
+	#	A notice is logged when an existing ssid is replaced
+	#
+	# Set to 1 to keep the ssids set in the wireless config:
+	#option keep_system_ssids '1'
 
 	###########################################################################################
 	# mesh_gate_encryption (optional)
@@ -324,6 +336,8 @@ config mesh11sd 'setup'
 	# Default: 4 (Opportunistic Wireless Encryption - owe)
 	# Set to 0 (none/owe-transition), 1 (sae, aka wpa3), 2 (sae-mixed, aka wpa2/wpa3), 3 (psk2, aka wpa2)
 	# or 4 (Opportunistic Wireless Encryption - owe)
+	# owe (0 and 4) needs a full version of wpad (eg wpad-mbedtls). With a mesh only wpad an error is logged
+	#	and 4 falls back to 0 (none).
 	#
 	# Example - enable psk2 encryption
 	#option mesh_gate_encryption '3'
@@ -365,6 +379,7 @@ config mesh11sd 'setup'
 	# Note: All vtun options require the ip-full and vxlan packages to be installed, otherwise the options will be ignored
 	#
 	# Sets the vxtunnel id, a decimal number between 1 and 16777216 (24 bits)
+	#	A leading zero is replaced by 42 (eg 069 becomes 4269), as it would stop the vxtunnel interface being created
 	#
 	# Default: 69
 	#
@@ -389,6 +404,8 @@ config mesh11sd 'setup'
 	#
 	# Sets the vxtunnel ipv4 address mask to be used in the vxtunnel.
 	# Becomes active if the node becomes a portal (portal_detect 0 or 1).
+	# Either a dotted netmask or a prefix length (eg 16 or /16, from 1 to 30).
+	# An invalid mask is replaced by the default.
 	#
 	# Default: 255.255.255.0
 	#
@@ -400,6 +417,8 @@ config mesh11sd 'setup'
 	# Note: All vtun options require the ip-full and vxlan packages to be installed, otherwise the options will be ignored
 	#
 	# Sets the vxtunnel gate encryption to be used on node gates (access points) connected to the vxtunnel.
+	# owe (0 and 4) needs a full version of wpad (eg wpad-mbedtls). With a mesh only wpad an error is logged
+	#	and 4 falls back to 0 (none).
 	#
 	# Default: 4 (Opportunistic Wireless Encryption - owe)
 	# Set to 0 (none/owe-transition), 1 (sae, aka wpa3), 2 (sae-mixed, aka wpa2/wpa3), 3 (psk2, aka wpa2)
@@ -428,6 +447,7 @@ config mesh11sd 'setup'
 	#	If ssid_suffix_enable is set to 0, must be a maximum of 30 characters in length
 	#	If ssid_suffix_enable is set to 1, must be a maximum of 22 characters in length
 	#	Excess characters will be truncated
+	#	Spaces are removed, as some mobile devices truncate long ssids that contain spaces
 	#
 	# Default: VTunnel
 	#
@@ -483,24 +503,19 @@ config mesh11sd 'setup'
 	#option swconfig_mac_skip '1'
 
 	###########################################################################################
-	# mesh_leechmode_enable (optional)
-	# Determines whether this node will be a gate only leech node
+	# disable_hwmp_forwarding (optional)
 	#
-	# Valid only with mesh_node_mobility_level = 0 and not on a portal node.
+	# Peer nodes only. Ignored on a portal, which must forward.
 	#
-	# A gate only leech node acts as an access point with a mesh backhaul connection, but does not contribute to the mesh
+	# When set to 1, this node connects to the backhaul and serves its own access points and clients,
+	# but does not forward traffic for other nodes (sets mesh_fwding to 0).
 	#
-	# This is useful when a node is well within the coverage of 2 or more peer nodes,
+	# This can help when a node is well within the coverage of 2 or more other nodes,
 	# as otherwise it could create unstable multi hop paths within the backhaul.
 	#
-	# Can also be set dynamically using the command line option 'mesh11sd mesh_leechmode [enable/disable]'
-	#	See the documentation for further information (Hint: try 'mesh11sd --help')
+	# Default: 0 (forwarding enabled)
 	#
-	# Default: 0 (disabled)
-	# Set to 1 to enable (turns off the node's mesh forwarding and active HWMP mac-routing)
-	#
-	# Example - enable leach mode
-	#option mesh_leechmode_enable '1'
+	#option disable_hwmp_forwarding '1'
 
 	###########################################################################################
 	# txpower (optional)
@@ -550,17 +565,6 @@ config mesh11sd 'setup'
 	# IF LEFT ENABLED FOR A LENGTH OF TIME IT MAY CAUSE NONE REPAIRABLE FLASH MEMORY WEAR AND USE UP FREE STORAGE SPACE
 	# DISABLE IMMEDIATELY AFTER DEBUGGING OPERATIONS ARE COMPLETE
 	# ##########WARNING##########
-
-	###########################################################################################
-	# mesh_path_stabilisation (optional)
-	#
-	# This enables mesh path stabilisation, preventing multi hop path changes due to multipath signal strength jitter
-	# Usually not required when mesh_node_mobility_level is set to greater than 0
-	#
-	# Default: 0 (disabled)
-	#
-	# To enable, set to 1:
-	#option mesh_path_stabilisation '1'
 
 	###########################################################################################
 	# mesh_mac_forced_forwarding (optional)
@@ -638,6 +642,7 @@ config mesh11sd 'setup'
 	#
 	# Specifies the mountpoint of storage to be used for the mesh11sd logging system
 	# Default: /tmp
+	# If it is not a mounted filesystem, /tmp is used and a warning is logged at startup and every third checkinterval
 	# A subdirectory "mesh11sd" will be created in the mountpoint for the log file
 	# Runtime state remains in /tmp/mesh11sd and does not survive reboot
 	# Ensure this mountpoint is NOT in system flash memory as it will lead to premature flash failure
@@ -745,8 +750,10 @@ config mesh11sd 'setup'
 	###########################################################################################
 	# wpad_debuglevel (optional)
 	#
-	# Sets wpa_supplicant verbosity via the wpad init script.
-	# 0-2 QUIET/ERROR/WARNING, 3 INFO, 4 DEBUG, 5 EXCESSIVE
+	# Sets wpa_supplicant verbosity by adding -q, -d or -dd to its command line in /etc/init.d/wpad
+	# 0-2 QUIET/ERROR/WARNING (-q), 3 INFO (no flag), 4 DEBUG (-d), 5 EXCESSIVE (-dd)
+	# The original script is kept as /etc/init.d/wpad.original. The script is only rewritten,
+	# and wpad restarted, when the level changes.
 	# Default: 2
 	#
 	#option wpad_debuglevel '3'

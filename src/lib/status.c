@@ -614,7 +614,8 @@ int mesh_cli_status(struct mesh_ctx *ctx)
 	mesh_json_field("    ", "auto_mesh_id", ctx->auto_mesh_id, 0);
 	mesh_json_field_int("    ", "mesh_gate_enable", ctx->mesh_gate_enable, 0);
 	mesh_json_field_int("    ", "swconfig_mac_skip", ctx->swconfig_mac_skip, 0);
-	mesh_json_field_int("    ", "mesh_leechmode_enable", ctx->mesh_gate_only, 0);
+	mesh_json_field_int("    ", "disable_hwmp_forwarding", ctx->disable_hwmp_forwarding, 0);
+	mesh_json_field_int("    ", "keep_system_ssids", ctx->keep_system_ssids, 0);
 	mesh_json_field_int("    ", "mesh_node_mobility_level",
 			    ctx->mesh_node_mobility_level, 0);
 	if (access(MESH11SD_TMPDIR "/mesh_mobility", R_OK) == 0) {
@@ -641,8 +642,6 @@ int mesh_cli_status(struct mesh_ctx *ctx)
 	}
 	mesh_json_field("    ", "txpower", txpower, 0);
 	mesh_json_field_int("    ", "mesh_path_cost", ctx->mesh_path_cost, 0);
-	mesh_json_field_int("    ", "mesh_path_stabilisation",
-			    ctx->mesh_path_stabilisation, 0);
 	mesh_json_field_int("    ", "checkinterval", ctx->checkinterval, 0);
 	mesh_json_field_int("    ", "loop_interval_delta", ctx->loop_interval_delta, 0);
 	mesh_json_field("    ", "loop_interval", loop_interval, 0);
@@ -650,6 +649,7 @@ int mesh_cli_status(struct mesh_ctx *ctx)
 	mesh_json_field_int("    ", "ssid_suffix_enable", ctx->ssid_suffix_enable, 0);
 	/* apmond_* intentionally omitted from Stage 1 port */
 	mesh_json_field_int("    ", "odhcpd_log_level", ctx->odhcpd_log_level, 0);
+	mesh_json_field_int("    ", "wpad_debuglevel", ctx->wpad_debuglevel, 0);
 	if (access("/etc/init.d/opennds", X_OK) == 0)
 		mesh_json_field_int("    ", "manage_opennds_startup", ctx->manage_opennds_startup, 0);
 	if (ctx->portal_detect == 3)

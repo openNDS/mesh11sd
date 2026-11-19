@@ -37,7 +37,7 @@ If the image uses **ath10k-ct**, switch to non-ct ath10k packages; otherwise the
 6. **CPE** — mesh is the WAN; LAN is a private NAT network (IPv4 + NAT66 or PD)
 7. **OWE** on mesh gates by default (optional WPA2/WPA3)
 8. **Guest / vxtunnel** SSIDs over VXLAN without configuring 802.1Q on the mesh
-9. **apmond** — AP and Ethernet client stats collected on the portal (`mesh11sd show_ap_data`)
+9. **apmond** — AP and Ethernet client stats are collected by the separate apmond package. If apmond is installed, mesh11sd passes its status to it. See the apmond package documentation
 10. **Mobility levels** 0–6 (level 6 is PTT/voice-oriented)
 11. **Cabled backhaul** with STP path cost
 12. **OpenNDS** — if installed, mesh11sd starts/stops it as the node becomes portal or peer
@@ -56,7 +56,7 @@ If the image uses **ath10k-ct**, switch to non-ct ath10k packages; otherwise the
 | **5** | TPN | Peer. **LAN** = mesh (no VLANs). **WAN** = vxlan trunk (VLANs OK). Works with portal 0, 1, or 4. |
 | **2** | — | Unused (use 5). |
 
-A node can also be a **gate** (hosts APs). **Leech mode** (`mesh_leechmode_enable`) is an AP that uses the mesh but does not forward; only with mobility level 0 and not on a portal.
+A node can also be a **gate** (hosts APs). A peer with `disable_hwmp_forwarding=1` serves its own APs and clients but does not forward for other nodes; it is ignored on a portal.
 
 IPv6 Unique Local Addresses (ULA) on the mesh are derived from `auto_mesh_id` and the factory MAC. Peers discover the portal ULA from RAs. `mesh11sd connect` lists **label/factory MACs** because the mesh vif is set to that MAC.
 
@@ -263,22 +263,23 @@ Values in the tables below are script defaults when the option is unset. Set wit
 | Option | Default | Notes |
 | --- | --- | --- |
 | `mesh_gate_enable` | 1 | 0 all APs off; 1 all on; 2 APs only on radios **without** a mesh vif. |
-| `mesh_gate_base_ssid` | wireless SSID, or `MeshGate` | Max 22 chars if suffix on, else 30. |
-| `mesh_gate_encryption` | **4 (OWE)** | 0 none/OWE-transition, 1 SAE, 2 sae-mixed, 3 psk2, 4 OWE. Falls back to 0 without full wpad. |
+| `mesh_gate_base_ssid` | `MeshGate` | Max 22 chars if suffix on, else 30. Spaces removed. If unset and `keep_system_ssids=1`, the wireless config SSIDs are kept. |
+| `keep_system_ssids` | 0 | 1 keeps the AP SSIDs from the wireless config when `mesh_gate_base_ssid` is unset. VTunnel SSIDs are always generated. With 0, replacing an existing SSID is logged. |
+| `mesh_gate_encryption` | **4 (OWE)** | 0 none/OWE-transition, 1 SAE, 2 sae-mixed, 3 psk2, 4 OWE. Falls back to 0 without full wpad. 0 and 4 need OWE: with a mesh only wpad an error is logged. |
 | `mesh_gate_key` | unset | Ignored for encryption 0 and 4. |
 | `ssid_suffix_enable` | 1 | Last 4 hex digits of mesh MAC appended to SSID. |
-| `mesh_leechmode_enable` | 0 | AP-only, no mesh forwarding. Mobility 0, not portal. CLI: `mesh11sd mesh_leechmode`. |
+| `disable_hwmp_forwarding` | 0 | Peers only: 1 sets `mesh_fwding` 0, so the node serves its own APs but does not forward for other nodes. Ignored on a portal. Replaces `mesh_leechmode_enable`. |
 
 ### 7.4 VXLAN vxtunnel (needs `ip-full` and `vxlan`)
 
 | Option | Default | Notes |
 | --- | --- | --- |
-| `vtun_enable` | 1 (0 on CPE) | Point-to-multipoint vxlan. |
-| `tun_id` | 69 | VNI / bridge `br-tun69`. 1–16777216. |
+| `vtun_enable` | 1 | Point-to-multipoint vxlan. |
+| `tun_id` | 69 | VNI / bridge `br-tun69`. 1–16777216. A leading zero becomes `42` (`069` → `4269`). |
 | `vtun_ip` | auto | Overlay IPv4 of the routed portal on the tunnel. |
-| `vtun_mask` | 255.255.255.0 | |
-| `vtun_base_ssid` | `VTunnel` | Guest SSID on the tunnel. |
-| `vtun_gate_encryption` | 4 (OWE) | Same codes as mesh_gate_encryption. |
+| `vtun_mask` | 255.255.255.0 | Dotted mask or prefix length (`16` or `/16`, 1–30). Invalid → default. |
+| `vtun_base_ssid` | `VTunnel` | Guest SSID on the tunnel. Spaces removed; max 22 chars if suffix on, else 30. |
+| `vtun_gate_encryption` | 4 (OWE) | Same codes and wpad checks as mesh_gate_encryption. |
 | `vtun_gate_key` | unset | Min 8 chars if used. |
 | `vtun_path_cost` | **65525** | STP cost of the tunnel. 0 = do not set. |
 | `vtun_isolate` | 0 | 1 = no forwarding between mesh/lan and vxtunnel (guest isolation). |
@@ -286,13 +287,11 @@ Values in the tables below are script defaults when the option is unset. Set wit
 
 MBP/TPN: WAN is added to `br-tun$tun_id`. MRP portal may serve DHCPv4/RA on vtunlan; MBP/CPE/TPN/peers do not.
 
-### 7.5 Path, watchdog, AP monitor, CPE
+### 7.5 Path, watchdog, logging, CPE
 
 | Option | Default | Notes |
 | --- | --- | --- |
 | `mesh_path_cost` | **65525** | STP cost of the mesh. 0 = do not set. README 6.x “10” is obsolete. |
-| `mesh_path_stabilisation` | 0 | Rarely needed if mobility level &gt; 0. |
-| `reactive_path_stabilisation_threshold` | 10 | Checkintervals before reactive stabilisation. |
 | `mesh_mac_forced_forwarding` | 1 | |
 | `swconfig_mac_skip` | 0 | 1 leaves swconfig bridge and port MAC addresses unchanged. Default 0 runs the walk; a bridge that already has a mesh port is left up on that walk. No effect on DSA or a switchless board. |
 | `gateway_proxy_arp` | 1 | |
@@ -302,14 +301,14 @@ MBP/TPN: WAN is added to `br-tun$tun_id`. MRP portal may serve DHCPv4/RA on vtun
 | `watchdog_nonvolatile_log` | 0 | **Debug only** — can wear flash. Appends time, uptime, then the message to `/mesh11sd_log/mesh11sd.log`. Manage it with `mesh11sd watchdog_nonvolatile_log enable` (live, until restart or reboot) or `enable commit` (saves only this option); `disable` turns it off and removes a saved enable. |
 | `mesh_backhaul_led` | `auto` | `none` to disable; or `color:function` from `/sys/class/leds`. |
 | `manage_opennds_startup` | 1 | If opennds is installed: started on a portal or CPE, stopped (and autostart disabled) on a peer. 0 leaves opennds alone. |
-| `log_mountpoint` | `/tmp` | Not on system flash for long-term logs. Subdir `mesh11sd` holds the log only. Runtime state stays in `/tmp/mesh11sd`. |
+| `log_mountpoint` | `/tmp` | Not on system flash for long-term logs. Subdir `mesh11sd` holds the log only. Runtime state stays in `/tmp/mesh11sd`. If not a mounted filesystem, `/tmp` is used and a warning is logged every third checkinterval. |
 | `max_log_entries` | 500 | `mesh11sd read_log`. |
 | `use_default_beacon_interval` | 1 | 1 leaves the beacon interval at the driver default. 0 sets it from `mesh_node_mobility_level`, except on ath11k, mt76_wmac, and a multi-band wiphy, which keep 100. |
 | `mesh_dtim_period` | 2 | Overridden by mobility level unless the driver ignores it. |
 | `mesh_node_mobility_level` | **2** | 0–6; see CLI. |
 | `cpe_mode` | `nat66` | CPE only: `nat66` or `prefix_delegation`. |
 | `odhcpd_log_level` | 3 | 0–7. |
-| `wpad_debuglevel` | 2 | 0–5; rewrites wpad init flags. |
+| `wpad_debuglevel` | 2 | 0–2 `-q`, 3 none (info), 4 `-d`, 5 `-dd` on the wpa_supplicant command line in `/etc/init.d/wpad` (original kept as `wpad.original`). Rewritten, and wpad restarted, only when the level changes. |
 | `connect_show_all` | 1 | `connect` with no args lists island meshes too. |
 
 ## 8. Configuration - Mesh Parameter Options
@@ -353,7 +352,7 @@ Parameters and meaning:
  * **mesh_hwmp_rootmode** — this STA as HWMP root (portals: 4)
  * **mesh_hwmp_rann_interval** — interval between root announcements (ms)
  * **mesh_gate_announcements** — advertise access to a broader network beyond the MBSS
- * **mesh_fwding** — whether this STA forwards (0 in leech mode)
+ * **mesh_fwding** — whether this STA forwards (0 on a peer with `disable_hwmp_forwarding=1`)
  * **mesh_rssi_threshold** — minimum average signal to establish a peer link (dBm, negative)
  * **mesh_hwmp_active_path_to_root_timeout** — validity of proactive PREQ info toward the root (ms)
  * **mesh_hwmp_root_interval** — interval between proactive PREQs (ms)
@@ -379,8 +378,6 @@ The daemon runs as a service. CLI is for status, logs, and a few runtime knobs. 
 | `mesh11sd connect` / `connect filter_list` / `connect [Node ID]` | List or SSH to a node (label MAC) |
 | `mesh11sd copy` / `copy filter_list` / `copy [Node ID] [file]` | Copy file to `$tmpdir/` on a node |
 | `mesh11sd stations` | One-hop mesh STAs |
-| `mesh11sd show_ap_data all` | AP/Ethernet client stats (portal) |
-| `mesh11sd get_ap_data` | Stats for this node |
 | `mesh11sd read_log` / `read_log -f` | Internal log (`-f` truncates then follows) |
 | `mesh11sd debuglevel [0-3]` | Get/set |
 | `mesh11sd get_portal_type` | MBP, MRP, MPE, CPE, TPN |
@@ -394,7 +391,6 @@ The daemon runs as a service. CLI is for status, logs, and a few runtime knobs. 
 | --- | --- |
 | `mesh11sd txpower +` / `-` | ±3 dBm immediately |
 | `mesh11sd mesh_rssi_threshold +` / `-` `[force]` | ±3 dB; `force` drops peers briefly |
-| `mesh11sd mesh_leechmode enable` / `disable` | |
 | `mesh11sd mesh_node_mobility_level [0-6]` | 0 stationary; 1 RTS/AQL; 2 ~1.5 m/s; 3–5 higher speed/overhead; 6 PTT/voice |
 | `mesh11sd country [CC]` | Show or set regulatory domain (reboot to apply) |
 | `mesh11sd get_valid_channels` | Non-DFS channels for current country |
@@ -407,7 +403,7 @@ The daemon runs as a service. CLI is for status, logs, and a few runtime knobs. 
 | --- | --- |
 | `mesh11sd enable` / `disable` | Daemon flag |
 | `mesh11sd auto_config test` / `enable` / `disable` | Test reverts on reboot |
-| `mesh11sd commit_changes commit` | Persist leechmode, txpower, rssi |
+| `mesh11sd commit_changes commit` | Persist debuglevel, txpower, rssi, mobility level |
 | `mesh11sd commit_all commit` | Write auto_config result to files |
 | `mesh11sd revert_all revert` | Undo commit_all |
 | `mesh11sd restore_all restore` | Put wireless, dhcp, network, firewall and system back to their state before mesh11sd first ran, keeping the mesh11sd config, then reboot. Use it if something has committed mesh11sd's staged changes, such as a package install that runs a blanket `uci commit`. |
@@ -417,9 +413,11 @@ The daemon runs as a service. CLI is for status, logs, and a few runtime knobs. 
 | `mesh11sd download_revert_to_default` | Undo that |
 | `mesh11sd is_installed [pkg]` | Exit 0 if installed |
 
-**Logging / apmond helpers**
+**Logging helpers**
 
-`write_to_syslog`, `write_log`, `write_node_data`, `send_ap_data`, `str_to_hex`, `hex_to_str`, `is_hex`, `is_ipv4addr_valid`.
+`write_to_syslog`, `write_log`, `str_to_hex`, `hex_to_str`, `is_hex`, `is_ipv4addr_valid`.
+
+AP and Ethernet client statistics (`show_ap_data` / `get_ap_data` in v7) are now provided by the separate apmond package; see the apmond package documentation.
 
 There is **no** `mesh11sd wireless channel` command (older README was wrong). Channel is `portal_channel` plus peer tracking.
 
@@ -429,7 +427,7 @@ There is **no** `mesh11sd wireless channel` command (older README was wrong). Ch
 
 Hybrid Wireless Mesh Protocol (HWMP) is the mac-routing protocol of the backhaul. `mesh11sd status` shows **airtime metric**, **mpath metric**, and **MP_FLAGS** for each path.
 
-Portals force `mesh_hwmp_rootmode` to **4** (proactive root). Peers typically use 2 (or 0 in leech mode).
+Portals force `mesh_hwmp_rootmode` to **4** (proactive root). Peers typically use 2.
 
 **MP_FLAGS** is a bitmask (`NL80211_MPATH_FLAG_*` in the Linux kernel):
 
@@ -449,7 +447,7 @@ Airtime link metric updates are driven mainly by **beacon interval** and HWMP PR
 
 | Level | Intent |
 | --- | --- |
-| 0 | Stationary; leechmode allowed |
+| 0 | Stationary |
 | 1 | RTS, TX queue, AQL; slow movement |
 | **2** (default) | About 1.5 m/s relative |
 | 3–5 | Faster movement, more overhead |
@@ -459,7 +457,7 @@ By default (`use_default_beacon_interval=1`) the beacon interval is left at the 
 
 ## 12. Default configuration file
 
-This is the **source** UCI file shipped in the package (`linux_openwrt/mesh11sd/files/etc/config/mesh11sd`). Image **uci-defaults** strips comment lines, so the copy on the device is only the options you set plus an empty `mesh_params` section. Runtime values live in the UCI overlay (`uci export mesh11sd`); see [§7](#7-configuration---setup-options) and [§8](#8-configuration---mesh-parameter-options).
+This is the **source** UCI file shipped in the package (`openwrt/mesh11sd/files/etc/config/mesh11sd`). Image **uci-defaults** strips comment lines, so the copy on the device is only the options you set plus an empty `mesh_params` section. Runtime values live in the UCI overlay (`uci export mesh11sd`); see [§7](#7-configuration---setup-options) and [§8](#8-configuration---mesh-parameter-options).
 
 ```
 config mesh11sd 'setup'
@@ -523,7 +521,10 @@ config mesh11sd 'setup'
 	#  	A nat routed ipv4 lan is created with its own ipv4 subnet.
 	#  	By default a nat66 routed ipv6 lan is created with its own ipv6 subnet.
 	#
-	#   	Depending on the upstream ISP, possible modes are nat66 and prefix_delegation, settable using the cpe_mode option (see below)
+	#  	The mesh backhaul is the wan, on bridge br-wan, and gets its ipv4 address by dhcp.
+	#  	VTunnel access points are bridged to the portal over the vxlan; the CPE's own vtunlan has no address.
+	#
+	#   	Depending on the upstream ISP, possible ipv6 modes are nat66 and prefix_delegation, settable using the cpe_mode option (see below)
 	#
 	#  4  - Mesh Bridge Portal (MBP) node. Force Bridge vxlan trunk portal node
 	#	This mode should be used if a bridged connection to the upstream ISP router is required (ie bridged/no-nat ipv4/ipv6 ).
@@ -762,20 +763,32 @@ config mesh11sd 'setup'
 	###########################################################################################
 	# mesh_gate_base_ssid
 	#
-	# Sets the mesh gate base ssid string
+	# Sets the base ssid string of this node's access points
 	#	If ssid_suffix_enable is set to 0, must be a maximum of 30 characters in length
 	#	If ssid_suffix_enable is set to 1, must be a maximum of 22 characters in length
 	#	Excess characters will be truncated
+	#	Spaces are removed, as some mobile devices truncate long ssids that contain spaces
 	#
-	# Default:
-	#	1 - uses the ssid string set in the wireless config if it is NOT set to OpenWrt
-	#	2 - uses the ssid string MeshGate if the SSID string in the wireless config is OpenWrt
+	# Default: MeshGate, or the ssid strings in the wireless config if keep_system_ssids is set to 1
 	#
-	#
-	# When set, overrides the ssid string set in the wireless config
+	# When set, overrides the ssid strings set in the wireless config
 	#
 	# Example:
 	#option mesh_gate_base_ssid 'OfficeNetwork'
+
+	###########################################################################################
+	# keep_system_ssids (optional)
+	#
+	# Keeps the access point ssid strings already set in the wireless config,
+	#	if mesh_gate_base_ssid is not set.
+	#	The ssid suffix is still added if ssid_suffix_enable is set to 1
+	#	VTunnel ssids are always generated (see vtun_base_ssid)
+	#
+	# Default: 0 (the access points use mesh_gate_base_ssid, or MeshGate)
+	#	A notice is logged when an existing ssid is replaced
+	#
+	# Set to 1 to keep the ssids set in the wireless config:
+	#option keep_system_ssids '1'
 
 	###########################################################################################
 	# mesh_gate_encryption (optional)
@@ -784,6 +797,8 @@ config mesh11sd 'setup'
 	# Default: 4 (Opportunistic Wireless Encryption - owe)
 	# Set to 0 (none/owe-transition), 1 (sae, aka wpa3), 2 (sae-mixed, aka wpa2/wpa3), 3 (psk2, aka wpa2)
 	# or 4 (Opportunistic Wireless Encryption - owe)
+	# owe (0 and 4) needs a full version of wpad (eg wpad-mbedtls). With a mesh only wpad an error is logged
+	#	and 4 falls back to 0 (none).
 	#
 	# Example - enable psk2 encryption
 	#option mesh_gate_encryption '3'
@@ -814,7 +829,7 @@ config mesh11sd 'setup'
 	#
 	# Enables point to multi-point vxlan tunneling from portal to all compatible nodes
 	#
-	# Default: 1 (enabled) unless portal_detect is set to 3 (cpe mode), in which case the default is 0 (disabled)
+	# Default: 1 (enabled)
 	#
 	# To disable, set to zero:
 	#option vtun_enable '0'
@@ -825,6 +840,7 @@ config mesh11sd 'setup'
 	# Note: All vtun options require the ip-full and vxlan packages to be installed, otherwise the options will be ignored
 	#
 	# Sets the vxtunnel id, a decimal number between 1 and 16777216 (24 bits)
+	#	A leading zero is replaced by 42 (eg 069 becomes 4269), as it would stop the vxtunnel interface being created
 	#
 	# Default: 69
 	#
@@ -849,6 +865,8 @@ config mesh11sd 'setup'
 	#
 	# Sets the vxtunnel ipv4 address mask to be used in the vxtunnel.
 	# Becomes active if the node becomes a portal (portal_detect 0 or 1).
+	# Either a dotted netmask or a prefix length (eg 16 or /16, from 1 to 30).
+	# An invalid mask is replaced by the default.
 	#
 	# Default: 255.255.255.0
 	#
@@ -860,6 +878,8 @@ config mesh11sd 'setup'
 	# Note: All vtun options require the ip-full and vxlan packages to be installed, otherwise the options will be ignored
 	#
 	# Sets the vxtunnel gate encryption to be used on node gates (access points) connected to the vxtunnel.
+	# owe (0 and 4) needs a full version of wpad (eg wpad-mbedtls). With a mesh only wpad an error is logged
+	#	and 4 falls back to 0 (none).
 	#
 	# Default: 4 (Opportunistic Wireless Encryption - owe)
 	# Set to 0 (none/owe-transition), 1 (sae, aka wpa3), 2 (sae-mixed, aka wpa2/wpa3), 3 (psk2, aka wpa2)
@@ -888,6 +908,7 @@ config mesh11sd 'setup'
 	#	If ssid_suffix_enable is set to 0, must be a maximum of 30 characters in length
 	#	If ssid_suffix_enable is set to 1, must be a maximum of 22 characters in length
 	#	Excess characters will be truncated
+	#	Spaces are removed, as some mobile devices truncate long ssids that contain spaces
 	#
 	# Default: VTunnel
 	#
@@ -943,24 +964,19 @@ config mesh11sd 'setup'
 	#option swconfig_mac_skip '1'
 
 	###########################################################################################
-	# mesh_leechmode_enable (optional)
-	# Determines whether this node will be a gate only leech node
+	# disable_hwmp_forwarding (optional)
 	#
-	# Valid only with mesh_node_mobility_level = 0 and not on a portal node.
+	# Peer nodes only. Ignored on a portal, which must forward.
 	#
-	# A gate only leech node acts as an access point with a mesh backhaul connection, but does not contribute to the mesh
+	# When set to 1, this node connects to the backhaul and serves its own access points and clients,
+	# but does not forward traffic for other nodes (sets mesh_fwding to 0).
 	#
-	# This is useful when a node is well within the coverage of 2 or more peer nodes,
+	# This can help when a node is well within the coverage of 2 or more other nodes,
 	# as otherwise it could create unstable multi hop paths within the backhaul.
 	#
-	# Can also be set dynamically using the command line option 'mesh11sd mesh_leechmode [enable/disable]'
-	#	See the documentation for further information (Hint: try 'mesh11sd --help')
+	# Default: 0 (forwarding enabled)
 	#
-	# Default: 0 (disabled)
-	# Set to 1 to enable (turns off the node's mesh forwarding and active HWMP mac-routing)
-	#
-	# Example - enable leach mode
-	#option mesh_leechmode_enable '1'
+	#option disable_hwmp_forwarding '1'
 
 	###########################################################################################
 	# txpower (optional)
@@ -1010,28 +1026,6 @@ config mesh11sd 'setup'
 	# IF LEFT ENABLED FOR A LENGTH OF TIME IT MAY CAUSE NONE REPAIRABLE FLASH MEMORY WEAR AND USE UP FREE STORAGE SPACE
 	# DISABLE IMMEDIATELY AFTER DEBUGGING OPERATIONS ARE COMPLETE
 	# ##########WARNING##########
-
-	###########################################################################################
-	# mesh_path_stabilisation (optional)
-	#
-	# This enables mesh path stabilisation, preventing multi hop path changes due to multipath signal strength jitter
-	# Usually not required when mesh_node_mobility_level is set to greater than 0
-	#
-	# Default: 0 (disabled)
-	#
-	# To enable, set to 1:
-	#option mesh_path_stabilisation '1'
-
-	###########################################################################################
-	# reactive_path_stabilisation_threshold (optional)
-	#
-	# If an unstable path to an immediate neighbour node is detected, a counter is incremented each checkinterval while the unstable condition continues.
-	# 	Mesh path stabilisation is activated once the counter exceeds the threshold.
-	# Usually not required when mesh_node_mobility_level is set to greater than 0
-	#
-	# Default: 10 checkinterval periods.
-	#
-	#option reactive_path_stabilisation_threshold '5'
 
 	###########################################################################################
 	# mesh_mac_forced_forwarding (optional)
@@ -1109,6 +1103,7 @@ config mesh11sd 'setup'
 	#
 	# Specifies the mountpoint of storage to be used for the mesh11sd logging system
 	# Default: /tmp
+	# If it is not a mounted filesystem, /tmp is used and a warning is logged at startup and every third checkinterval
 	# A subdirectory "mesh11sd" will be created in the mountpoint for the log file
 	# Runtime state remains in /tmp/mesh11sd and does not survive reboot
 	# Ensure this mountpoint is NOT in system flash memory as it will lead to premature flash failure
@@ -1175,13 +1170,13 @@ config mesh11sd 'setup'
 	# Sets the cpe ipv6 mode
 	# Applicable only when portal_detect is set to 3
 	#
-	# Possible modes are nat66 and prefix_delegation
+	# Possible modes are nat66 and prefix_delegation (or pd)
 	#
 	# Prefix Delegation works with all client devices, including Android,
 	#	but the ISP needs to provide a prefix large enough to delegate a /64 subnet to every cpe mesh node.
 	#	Exhausting available delegations is a danger.
 	#
-	# Relay is not supported. Some Android versions detect a relay and turn off their IPv6 interface within ~60 seconds.
+	# Relay mode is not supported, as Android turns off ipv6 behind a relay. Any other value is treated as nat66.
 	#
 	# NAT66 will work with all types of client devices, including Android, so is used as the default.
 	# Default: nat66
@@ -1216,8 +1211,10 @@ config mesh11sd 'setup'
 	###########################################################################################
 	# wpad_debuglevel (optional)
 	#
-	# Sets wpa_supplicant verbosity via the wpad init script.
-	# 0-2 QUIET/ERROR/WARNING, 3 INFO, 4 DEBUG, 5 EXCESSIVE
+	# Sets wpa_supplicant verbosity by adding -q, -d or -dd to its command line in /etc/init.d/wpad
+	# 0-2 QUIET/ERROR/WARNING (-q), 3 INFO (no flag), 4 DEBUG (-d), 5 EXCESSIVE (-dd)
+	# The original script is kept as /etc/init.d/wpad.original. The script is only rewritten,
+	# and wpad restarted, when the level changes.
 	# Default: 2
 	#
 	#option wpad_debuglevel '3'
