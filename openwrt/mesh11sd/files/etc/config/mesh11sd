@@ -323,6 +323,10 @@ config mesh11sd 'setup'
 	#	The ssid suffix is still added if ssid_suffix_enable is set to 1
 	#	VTunnel ssids are always generated (see vtun_base_ssid)
 	#
+	# Applies when mesh11sd first configures the wireless (no mesh interfaces yet),
+	#	for example after a fresh install or a factory reset.
+	#	Ssids already configured are left as they are on later restarts.
+	#
 	# Default: 0 (the access points use mesh_gate_base_ssid, or MeshGate)
 	#	A notice is logged when an existing ssid is replaced
 	#
