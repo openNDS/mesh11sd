@@ -808,7 +808,9 @@ int mesh_auto_config(struct mesh_ctx *ctx)
 						mesh_log_notice(ctx, "AP [ %s ] ssid [ %s ] replaced by [ %s ], set option keep_system_ssids 1 to keep it",
 								sect, ssid, ctx->mesh_gate_base_ssid);
 					snprintf(ssid, sizeof(ssid), "%s", ctx->mesh_gate_base_ssid);
-				} else if (!ssid[0]) {
+				} else if (!ssid[0] || (!is_vx && strcmp(ssid, "OpenWrt") == 0)) {
+					/* A stock OpenWrt SSID is always replaced,
+					 * even when keep_system_ssids is 1. */
 					snprintf(ssid, sizeof(ssid), "MeshGate");
 				}
 				/* A kept SSID may already carry this node's suffix.
