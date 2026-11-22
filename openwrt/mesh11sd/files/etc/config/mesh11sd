@@ -309,6 +309,7 @@ config mesh11sd 'setup'
 	#	Spaces are removed, as some mobile devices truncate long ssids that contain spaces
 	#
 	# Default: MeshGate, or the ssid strings in the wireless config if keep_system_ssids is set to 1
+	#	(a stock 'OpenWrt' ssid is always replaced)
 	#
 	# When set, overrides the ssid strings set in the wireless config
 	#
@@ -320,8 +321,13 @@ config mesh11sd 'setup'
 	#
 	# Keeps the access point ssid strings already set in the wireless config,
 	#	if mesh_gate_base_ssid is not set.
+	#	A stock 'OpenWrt' ssid is always replaced, even when this is 1
 	#	The ssid suffix is still added if ssid_suffix_enable is set to 1
 	#	VTunnel ssids are always generated (see vtun_base_ssid)
+	#
+	# Applies when mesh11sd first configures the wireless (no mesh interfaces yet),
+	#	for example after a fresh install or a factory reset.
+	#	Ssids already configured are left as they are on later restarts.
 	#
 	# Default: 0 (the access points use mesh_gate_base_ssid, or MeshGate)
 	#	A notice is logged when an existing ssid is replaced

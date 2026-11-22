@@ -264,7 +264,7 @@ Values in the tables below are script defaults when the option is unset. Set wit
 | --- | --- | --- |
 | `mesh_gate_enable` | 1 | 0 all APs off; 1 all on; 2 APs only on radios **without** a mesh vif. |
 | `mesh_gate_base_ssid` | `MeshGate` | Max 22 chars if suffix on, else 30. Spaces removed. If unset and `keep_system_ssids=1`, the wireless config SSIDs are kept. |
-| `keep_system_ssids` | 0 | 1 keeps the AP SSIDs from the wireless config when `mesh_gate_base_ssid` is unset. VTunnel SSIDs are always generated. With 0, replacing an existing SSID is logged. |
+| `keep_system_ssids` | 0 | 1 keeps the AP SSIDs from the wireless config when `mesh_gate_base_ssid` is unset. A stock `OpenWrt` SSID is always replaced. VTunnel SSIDs are always generated. With 0, replacing an existing SSID is logged. Applies at first configuration (fresh install or factory reset); configured SSIDs are not changed on later restarts. |
 | `mesh_gate_encryption` | **4 (OWE)** | 0 none/OWE-transition, 1 SAE, 2 sae-mixed, 3 psk2, 4 OWE. Falls back to 0 without full wpad. 0 and 4 need OWE: with a mesh only wpad an error is logged. |
 | `mesh_gate_key` | unset | Ignored for encryption 0 and 4. |
 | `ssid_suffix_enable` | 1 | Last 4 hex digits of mesh MAC appended to SSID. |
@@ -770,6 +770,7 @@ config mesh11sd 'setup'
 	#	Spaces are removed, as some mobile devices truncate long ssids that contain spaces
 	#
 	# Default: MeshGate, or the ssid strings in the wireless config if keep_system_ssids is set to 1
+	#	(a stock 'OpenWrt' ssid is always replaced)
 	#
 	# When set, overrides the ssid strings set in the wireless config
 	#
@@ -781,8 +782,13 @@ config mesh11sd 'setup'
 	#
 	# Keeps the access point ssid strings already set in the wireless config,
 	#	if mesh_gate_base_ssid is not set.
+	#	A stock 'OpenWrt' ssid is always replaced, even when this is 1
 	#	The ssid suffix is still added if ssid_suffix_enable is set to 1
 	#	VTunnel ssids are always generated (see vtun_base_ssid)
+	#
+	# Applies when mesh11sd first configures the wireless (no mesh interfaces yet),
+	#	for example after a fresh install or a factory reset.
+	#	Ssids already configured are left as they are on later restarts.
 	#
 	# Default: 0 (the access points use mesh_gate_base_ssid, or MeshGate)
 	#	A notice is logged when an existing ssid is replaced
