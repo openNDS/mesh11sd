@@ -146,6 +146,10 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 	 * must be left exactly as it is (no MACs, ULA or IPv4 staged). The
 	 * main loop keeps checking and logs what is missing. */
 	reqs_ok = mesh_check_requirements(ctx) == 0;
+	mesh_warn_v7_defaults(ctx);
+	/* v7: set the wpad debuglevel at startup */
+	if (reqs_ok)
+		mesh_manage_wpad_loglevel(ctx);
 
 	mesh_refresh_bridgemac(ctx);
 	if (reqs_ok) {
@@ -269,6 +273,7 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 		}
 		if (mesh_uci_get("mesh11sd.setup.enabled", buf, sizeof(buf)) == 0)
 			ctx->enabled = atoi(buf) ? 1 : 0;
+		mesh_check_log_mountpoint(ctx);
 		if (access(MESH11SD_TMPDIR "/auto_config_test", F_OK) == 0 &&
 		    ctx->auto_config == 0)
 			mesh_log_warn(ctx, "Auto Config is in TEST mode");

@@ -30,7 +30,7 @@ static int level_num(const char *debugtype, const char **stderr_flag)
 	return 1;
 }
 
-static int is_mountpoint(const char *path)
+int mesh_is_mountpoint(const char *path)
 {
 	FILE *f;
 	char line[512];
@@ -52,6 +52,20 @@ static int is_mountpoint(const char *path)
 	return found;
 }
 
+/* v7 falls back to /tmp when log_mountpoint is not a mounted filesystem.
+ * Startup logs the fallback once (mesh_ctx_load_setup); repeat it every
+ * 3rd checkinterval so it stays visible. */
+void mesh_check_log_mountpoint(struct mesh_ctx *ctx)
+{
+	static unsigned int calls = 1;
+
+	if (!ctx->log_mountpoint_wanted[0])
+		return;
+	if (calls++ % 3 == 0)
+		mesh_log_warn(ctx, "option log_mountpoint [ %s ] is not a mountpoint, logging to [ %s ]",
+			      ctx->log_mountpoint_wanted, ctx->log_mountpoint);
+}
+
 void mesh_write_log(struct mesh_ctx *ctx, const char *debugtype, const char *msg)
 {
 	char logdir[192];
@@ -66,7 +80,7 @@ void mesh_write_log(struct mesh_ctx *ctx, const char *debugtype, const char *msg
 	if (!ctx || !msg)
 		return;
 
-	if (!is_mountpoint(ctx->log_mountpoint)) {
+	if (!mesh_is_mountpoint(ctx->log_mountpoint)) {
 		snprintf(cmd, sizeof(cmd),
 			 "logger -p daemon.err -s -t 'mesh11sd[%d]:' "
 			 "'Log location is NOT a mountpoint - logs would fill storage space - logging disabled'",

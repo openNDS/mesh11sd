@@ -105,11 +105,6 @@ static void print_help(void)
 "    Warning - \"force\" will briefly remove this node from the mesh network, taking a few seconds to rejoin\n"
 "\n"
 "####\n"
-"  Option: mesh_leechmode\n"
-"  Usage: mesh11sd mesh_leechmode [enable/disable]\n"
-"  If enabled, the mesh node connects to the mesh backhaul but does not forward packets or contribute to the mesh.\n"
-"\n"
-"####\n"
 "  Option: mesh_node_mobility_level\n"
 "  Usage: mesh11sd mesh_node_mobility_level [level]\n"
 "  Sets the mesh node mobility level\n"
@@ -123,7 +118,7 @@ static void print_help(void)
 "####\n"
 "  Option: commit_changes\n"
 "  Usage: mesh11sd commit_changes commit\n"
-"    Commits changes to debuglevel, mesh_leechmode, txpower, mesh_rssi_threshold and mesh_node_mobility_level\n"
+"    Commits changes to debuglevel, txpower, mesh_rssi_threshold and mesh_node_mobility_level\n"
 "    to non volatile configuration (make permanent). Other staged changes are kept but not committed\n"
 "\n"
 "####\n"
@@ -492,8 +487,6 @@ int mesh_cli_dispatch(struct mesh_ctx *ctx, int argc, char **argv)
 		return mesh_cli_connect(ctx, argc, argv);
 	if (!strcmp(cmd, "copy"))
 		return mesh_cli_copy(ctx, argc, argv);
-	if (!strcmp(cmd, "mesh_leechmode"))
-		return mesh_cli_mesh_leechmode(ctx, argc >= 3 ? argv[2] : NULL);
 	if (!strcmp(cmd, "mesh_node_mobility_level"))
 		return mesh_cli_mesh_node_mobility_level(ctx, argc >= 3 ? argv[2] : NULL);
 	if (!strcmp(cmd, "force_ipv4_download"))

@@ -640,3 +640,115 @@ int mesh_network_reload_if_changed(struct mesh_ctx *ctx, const char *who)
 	mesh_network_mark_applied();
 	return 1;
 }
+
+/*
+ * v7 manage_wpad_loglevel: map wpad_debuglevel (0-5) onto the
+ * wpa_supplicant command line in /etc/init.d/wpad:
+ *   0-2 -q (quiet), 3 none (info), 4 -d (debug), 5 -dd (excessive).
+ * The init script is rewritten, and wpad restarted, only when the flag
+ * changes, so this is normally a single flash write after install.
+ */
+#define WPAD_INIT "/etc/init.d/wpad"
+
+static int is_wpad_flag(const char *tok, size_t len)
+{
+	return (len == 2 && (!strncmp(tok, "-q", 2) || !strncmp(tok, "-d", 2))) ||
+	       (len == 3 && !strncmp(tok, "-dd", 3));
+}
+
+int mesh_manage_wpad_loglevel(struct mesh_ctx *ctx)
+{
+	static char in[16384], out[20480];
+	const char *target;
+	char current[4] = "";
+	char *line, *next;
+	size_t used = 0, n;
+	FILE *f;
+	int found = 0;
+
+	switch (ctx->wpad_debuglevel) {
+	case 0: case 1: case 2: target = "-q"; break;
+	case 4: target = "-d"; break;
+	case 5: target = "-dd"; break;
+	default: target = ""; break;
+	}
+
+	f = fopen(WPAD_INIT, "r");
+	if (!f)
+		return 0;
+	n = fread(in, 1, sizeof(in) - 1, f);
+	fclose(f);
+	in[n] = '\0';
+
+	/* Copy the script, rebuilding each "wpa_supplicant ..." command line
+	 * without any -q/-d/-dd, then with the target flag after the name. */
+	out[0] = '\0';
+	for (line = in; line && *line; line = next) {
+		char *cmd, *eol = strchr(line, '\n');
+
+		next = eol ? eol + 1 : NULL;
+		if (eol)
+			*eol = '\0';
+		cmd = strstr(line, "wpa_supplicant ");
+		if (!cmd) {
+			used += snprintf(out + used, sizeof(out) - used, "%s%s",
+					 line, eol ? "\n" : "");
+		} else {
+			char *tok = cmd + strlen("wpa_supplicant ");
+
+			found = 1;
+			*cmd = '\0';
+			used += snprintf(out + used, sizeof(out) - used, "%swpa_supplicant%s%s",
+					 line, target[0] ? " " : "", target);
+			while (*tok) {
+				size_t tl = strcspn(tok, " ");
+
+				if (is_wpad_flag(tok, tl)) {
+					if (!current[0])
+						snprintf(current, sizeof(current), "%.*s", (int)tl, tok);
+				} else if (tl) {
+					used += snprintf(out + used, sizeof(out) - used, " %.*s",
+							 (int)tl, tok);
+				}
+				tok += tl;
+				while (*tok == ' ')
+					tok++;
+			}
+			if (eol)
+				used += snprintf(out + used, sizeof(out) - used, "\n");
+		}
+		if (used >= sizeof(out) - 1)
+			return -1;	/* would not fit, leave the script alone */
+	}
+
+	if (!found || !strcmp(current, target)) {
+		mesh_log_debug(ctx, "wpa_supplicant verbosity unchanged");
+		return 0;
+	}
+
+	/* Keep the original once, as v7 */
+	if (access(WPAD_INIT ".original", F_OK) != 0) {
+		char *cp[] = { "cp", "-p", WPAD_INIT, WPAD_INIT ".original", NULL };
+
+		mesh_run_capture(cp, NULL, 0);
+		mesh_log_info(ctx, "Created backup of original wpad init script");
+	}
+	f = fopen(WPAD_INIT ".mesh11sd", "w");
+	if (!f)
+		return -1;
+	fputs(out, f);
+	fclose(f);
+	chmod(WPAD_INIT ".mesh11sd", 0755);
+	if (rename(WPAD_INIT ".mesh11sd", WPAD_INIT) != 0) {
+		unlink(WPAD_INIT ".mesh11sd");
+		return -1;
+	}
+	mesh_log_notice(ctx, "Updated wpa_supplicant verbosity: wpad_debuglevel=%d -> %s",
+			ctx->wpad_debuglevel, target[0] ? target : "default (INFO)");
+	{
+		char *argv[] = { WPAD_INIT, "restart", NULL };
+
+		mesh_run_capture(argv, NULL, 0);
+	}
+	return 1;
+}

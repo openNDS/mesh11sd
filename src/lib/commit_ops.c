@@ -20,7 +20,6 @@ int mesh_cli_commit_changes(struct mesh_ctx *ctx, int argc, char **argv)
 	char debuglevel_change[256] = "";
 	char rssi_change[256] = "";
 	char txpower_change[256] = "";
-	char leech_change[256] = "";
 	char mob_change[256] = "";
 	char *p, *line;
 
@@ -46,8 +45,6 @@ int mesh_cli_commit_changes(struct mesh_ctx *ctx, int argc, char **argv)
 			snprintf(rssi_change, sizeof(rssi_change), "%s", line);
 		if (strstr(line, "txpower"))
 			snprintf(txpower_change, sizeof(txpower_change), "%s", line);
-		if (strstr(line, "mesh_leechmode_enable"))
-			snprintf(leech_change, sizeof(leech_change), "%s", line);
 		if (strstr(line, "mesh_node_mobility_level"))
 			snprintf(mob_change, sizeof(mob_change), "%s", line);
 	}
@@ -71,12 +68,6 @@ int mesh_cli_commit_changes(struct mesh_ctx *ctx, int argc, char **argv)
 		mesh_uci_batch_line(setl);
 		puts("TX power change committed");
 	}
-	if (leech_change[0]) {
-		char setl[280];
-		snprintf(setl, sizeof(setl), "set %s", leech_change);
-		mesh_uci_batch_line(setl);
-		puts("Mesh leechmode change committed");
-	}
 	if (mob_change[0]) {
 		char setl[280];
 		snprintf(setl, sizeof(setl), "set %s", mob_change);
@@ -85,11 +76,11 @@ int mesh_cli_commit_changes(struct mesh_ctx *ctx, int argc, char **argv)
 	}
 	mesh_uci_commit("mesh11sd");
 	/* v7: stage the other pending changes again (all but txpower,
-	 * mesh_rssi_threshold and mesh_gate_only) */
+	 * and mesh_rssi_threshold) */
 	p = others;
 	while ((line = strsep(&p, "\n")) != NULL) {
 		if (!line[0] || strstr(line, "txpower") ||
-		    strstr(line, "mesh_rssi_threshold") || strstr(line, "mesh_gate_only"))
+		    strstr(line, "mesh_rssi_threshold"))
 			continue;
 		mesh_uci_restage_change(line);
 	}

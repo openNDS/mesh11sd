@@ -246,6 +246,23 @@ int mesh_apply_mesh_params(struct mesh_ctx *ctx)
 	/* v7 check_mesh_params: for every live mesh_param from iw dump, if
 	 * the effective value (stash or mesh11sd.mesh_params) differs, iw set it. */
 	char dump[8192];
+	int no_fwding = 0;
+
+	/* disable_hwmp_forwarding: peers only. A portal must forward. */
+	if (ctx->disable_hwmp_forwarding) {
+		static int logged_portal = -1;
+		int portal = !strcmp(ctx->detected_state, "portal") ||
+			     ctx->portal_detect == 0 || ctx->portal_detect == 4;
+
+		if (portal != logged_portal) {
+			if (portal)
+				mesh_log_notice(ctx, "option disable_hwmp_forwarding is ignored on a portal");
+			else
+				mesh_log_notice(ctx, "option disable_hwmp_forwarding: this peer does not forward for other nodes");
+			logged_portal = portal;
+		}
+		no_fwding = !portal;
+	}
 
 	mesh_get_mesh_iflist(ctx);
 	for (int i = 0; i < ctx->iflist_count; i++) {
@@ -277,7 +294,9 @@ int mesh_apply_mesh_params(struct mesh_ctx *ctx)
 				if (nl)
 					*nl = '\0';
 			}
-			if (mesh_param_get(name, conf, sizeof(conf)) != 0)
+			if (no_fwding && !strcmp(name, "mesh_fwding"))
+				snprintf(conf, sizeof(conf), "0");
+			else if (mesh_param_get(name, conf, sizeof(conf)) != 0)
 				continue;
 			if (mesh_param_values_equal(live, conf))
 				continue;
@@ -395,6 +414,13 @@ int mesh_restart_mesh(struct mesh_ctx *ctx)
 	mesh_apply_mesh_params(ctx);
 	in_restart = 0;
 	return 0;
+}
+
+static int ends_with(const char *s, const char *tail)
+{
+	size_t n = strlen(s), t = strlen(tail);
+
+	return n >= t && !strcmp(s + n - t, tail);
 }
 
 static int mesh_capable_phy(const char *phy)
@@ -519,9 +545,10 @@ int mesh_auto_config(struct mesh_ctx *ctx)
 		phyindex = phy_index_hex(wiphy);
 		snprintf(phyhex, sizeof(phyhex), "%x", phyindex);
 
-		if (ctx->mesh_phy_index[0] && strcmp(phyhex, ctx->mesh_phy_index) != 0) {
-			mesh_log_info(ctx, "option mesh_phy_index [ %s ] does not match phyindex [ %s ] - skipping this wiphy",
-				      ctx->mesh_phy_index, phyhex);
+		/* mesh_phy_index is a decimal phy index (validated at startup) */
+		if (ctx->mesh_phy_index[0] && atoi(ctx->mesh_phy_index) != phyindex) {
+			mesh_log_info(ctx, "option mesh_phy_index [ %s ] does not match phyindex [ %d ] - skipping this wiphy",
+				      ctx->mesh_phy_index, phyindex);
 			continue;
 		}
 
@@ -733,6 +760,7 @@ int mesh_auto_config(struct mesh_ctx *ctx)
 			p = raw;
 			while ((line = strsep(&p, "\n")) != NULL) {
 				char sect[96], radio[64], band[16], ssid[64], ifname[64];
+				char ssid_tail[48];
 				char phy[32], phyhex[8], radiohex[8], key[128];
 				int is_vx;
 
@@ -767,19 +795,35 @@ int mesh_auto_config(struct mesh_ctx *ctx)
 						 "set wireless.%s.ifname='%s'", sect, ifname);
 					mesh_uci_batch_line(setl);
 				}
-				if (strcmp(ssid, ctx->vtun_base_ssid) != 0 &&
-				    ctx->mesh_gate_base_ssid[0])
+				snprintf(ssid_tail, sizeof(ssid_tail), "-%s-%s-r%sp%s",
+					 band, suffix, radiohex, phyhex);
+				if (!is_vx && strcmp(ssid, ctx->vtun_base_ssid) != 0 &&
+				    ctx->mesh_gate_base_ssid[0]) {
+					/* Name a user SSID that is replaced, so it is
+					 * clear how to keep it. */
+					size_t bl = strlen(ctx->mesh_gate_base_ssid);
+
+					if (ssid[0] && strcmp(ssid, "OpenWrt") != 0 &&
+					    strncmp(ssid, ctx->mesh_gate_base_ssid, bl) != 0)
+						mesh_log_notice(ctx, "AP [ %s ] ssid [ %s ] replaced by [ %s ], set option keep_system_ssids 1 to keep it",
+								sect, ssid, ctx->mesh_gate_base_ssid);
 					snprintf(ssid, sizeof(ssid), "%s", ctx->mesh_gate_base_ssid);
-				if (ctx->ssid_suffix_enable) {
+				} else if (!ssid[0]) {
+					snprintf(ssid, sizeof(ssid), "MeshGate");
+				}
+				/* A kept SSID may already carry this node's suffix.
+				 * An SSID is at most 32 bytes, so shorten the base. */
+				if (ctx->ssid_suffix_enable && !ends_with(ssid, ssid_tail)) {
+					if (strlen(ssid) + strlen(ssid_tail) > 32)
+						ssid[32 - strlen(ssid_tail)] = '\0';
 					snprintf(setl, sizeof(setl),
-						 "set wireless.%s.ssid='%s-%s-%s-r%sp%s'",
-						 sect, ssid, band, suffix, radiohex, phyhex);
+						 "set wireless.%s.ssid='%s%s'",
+						 sect, ssid, ssid_tail);
 				} else {
 					snprintf(setl, sizeof(setl),
 						 "set wireless.%s.ssid='%s'", sect, ssid);
 				}
 				mesh_uci_batch_line(setl);
-				(void)is_vx;
 			}
 		}
 

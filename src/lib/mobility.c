@@ -926,13 +926,6 @@ int mesh_check_path_changes(struct mesh_ctx *ctx)
 						mesh_log_info(ctx,
 							"Path to [ %s ], changed, [ %d ] hop(s) via [ %s ], HWMP Sequence Lifetime [ %ld ] ms",
 							dest, hops, nh, lifetime);
-						/* Reactive path stabilisation (threshold removed). */
-						if (ctx->mesh_path_stabilisation == 1 &&
-						    strcmp(ctx->detected_state, "portal") != 0) {
-							mesh_log_debug(ctx,
-								"Station [ %s ] has an incrementing path change count.",
-								dest);
-						}
 					}
 				} else if (hops == 1 && pchg > 1) {
 					mesh_log_debug(ctx,
@@ -941,14 +934,6 @@ int mesh_check_path_changes(struct mesh_ctx *ctx)
 					mesh_log_info(ctx,
 						"Path to [ %s ], changed, [ %d ] hop(s) via [ %s ], HWMP Sequence Lifetime [ %ld ] ms",
 						dest, hops, nh, lifetime);
-					if (ctx->mesh_path_stabilisation == 1) {
-						mesh_log_debug(ctx,
-							"Station [ %s ], consider its location or adjust txpower and/or rssi_threshold",
-							dest);
-						if (strcmp(ctx->detected_state, "portal") != 0)
-							mesh_log_debug(ctx,
-								" ..... or, if not already enabled, consider setting a higher mesh mobility level on this node");
-					}
 				}
 			} else {
 				mesh_log_info(ctx,

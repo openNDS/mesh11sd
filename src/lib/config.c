@@ -2,6 +2,7 @@
 #include "mesh11sd.h"
 
 #include <ctype.h>
+#include <dirent.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -184,6 +185,76 @@ static void hash_mesh_key(struct mesh_ctx *ctx, const char *raw_key)
 		snprintf(ctx->auto_mesh_key, sizeof(ctx->auto_mesh_key), "%s", seed);
 }
 
+/* Number of wiphys, as v7 `iw list | grep -c Wiphy` */
+static int count_wiphys(void)
+{
+	DIR *d = opendir("/sys/class/ieee80211");
+	struct dirent *de;
+	int n = 0;
+
+	if (!d)
+		return 0;
+	while ((de = readdir(d)) != NULL)
+		if (!strncmp(de->d_name, "phy", 3))
+			n++;
+	closedir(d);
+	return n;
+}
+
+/* v7: uci show firewall | grep -w "name='<zone>'" */
+static int firewall_zone_exists(const char *zone)
+{
+	char pat[64], out[1024];
+
+	snprintf(pat, sizeof(pat), ".name='%s'", zone);
+	if (mesh_uci_show_filter("firewall", pat, out, sizeof(out)) != 0)
+		return 1;	/* cannot tell, keep the configured zone */
+	return out[0] != '\0';
+}
+
+/* Copy an SSID base without spaces (they truncate on phones), at most
+ * maxlen characters, as v7: tr -d " " | head -c maxlen */
+static void ssid_base_copy(char *dst, size_t dstlen, const char *src, int maxlen)
+{
+	int i, j = 0;
+
+	for (i = 0; src[i] && j < maxlen && (size_t)j < dstlen - 1; i++)
+		if (src[i] != ' ')
+			dst[j++] = src[i];
+	dst[j] = '\0';
+}
+
+/*
+ * v7 is_ipv4mask_valid, plus a CIDR prefix ("24" or "/24").
+ * Writes the dotted mask to out. Returns 0 if valid, -1 if not.
+ */
+static int ipv4_mask_normalise(const char *in, char *out, size_t outlen)
+{
+	unsigned int a, b, c, d, mask;
+	char extra;
+
+	if (in[0] == '/')
+		in++;
+	if (strspn(in, "0123456789") == strlen(in) && strlen(in) <= 2) {
+		int prefix = atoi(in);
+
+		if (prefix < 1 || prefix > 30)
+			return -1;
+		mask = 0xffffffffu << (32 - prefix);
+	} else {
+		if (sscanf(in, "%u.%u.%u.%u%c", &a, &b, &c, &d, &extra) != 4 ||
+		    a > 255 || b > 255 || c > 255 || d > 255)
+			return -1;
+		mask = (a << 24) | (b << 16) | (c << 8) | d;
+		/* contiguous ones, and not /31 or /32 */
+		if (mask == 0 || (~mask & (~mask + 1)) != 0 || (~mask) < 3)
+			return -1;
+	}
+	snprintf(out, outlen, "%u.%u.%u.%u", mask >> 24, (mask >> 16) & 255,
+		 (mask >> 8) & 255, mask & 255);
+	return 0;
+}
+
 int mesh_ctx_load_setup(struct mesh_ctx *ctx)
 {
 	char buf[256];
@@ -211,13 +282,22 @@ int mesh_ctx_load_setup(struct mesh_ctx *ctx)
 		ctx->enabled = 1;
 	mesh_log_info(ctx, "option enabled [ %d ]", ctx->enabled);
 
-	if (mesh_uci_get("mesh11sd.setup.log_mountpoint", buf, sizeof(buf)) == 0 && buf[0]) {
-		strncpy(ctx->log_mountpoint, buf, sizeof(ctx->log_mountpoint) - 1);
-		ctx->log_mountpoint[sizeof(ctx->log_mountpoint) - 1] = '\0';
-	} else {
-		strncpy(ctx->log_mountpoint, "/tmp", sizeof(ctx->log_mountpoint) - 1);
+	/* v7: the log goes under log_mountpoint only if it is a mounted
+	 * filesystem, else under /tmp. Nothing is created on flash. */
+	ctx->log_mountpoint_wanted[0] = '\0';
+	if (mesh_uci_get("mesh11sd.setup.log_mountpoint", buf, sizeof(buf)) != 0 || !buf[0])
+		snprintf(buf, sizeof(buf), "/tmp");
+	snprintf(ctx->log_mountpoint, sizeof(ctx->log_mountpoint), "%s", buf);
+	if (!mesh_is_mountpoint(ctx->log_mountpoint)) {
+		if (strcmp(ctx->log_mountpoint, "/tmp") != 0) {
+			snprintf(ctx->log_mountpoint_wanted, sizeof(ctx->log_mountpoint_wanted),
+				 "%s", ctx->log_mountpoint);
+		}
+		snprintf(ctx->log_mountpoint, sizeof(ctx->log_mountpoint), "/tmp");
+		if (ctx->log_mountpoint_wanted[0])
+			mesh_log_warn(ctx, "option log_mountpoint [ %s ] is not a mountpoint, logging to [ /tmp ]",
+				      ctx->log_mountpoint_wanted);
 	}
-	mesh_mkdir_p(ctx->log_mountpoint);
 	{
 		char logdir[192];
 		snprintf(logdir, sizeof(logdir), "%s/mesh11sd", ctx->log_mountpoint);
@@ -350,10 +430,17 @@ int mesh_ctx_load_setup(struct mesh_ctx *ctx)
 	else
 		snprintf(ctx->portal_channel, sizeof(ctx->portal_channel), "default");
 
-	if (mesh_uci_get("mesh11sd.setup.mesh_phy_index", buf, sizeof(buf)) == 0)
-		snprintf(ctx->mesh_phy_index, sizeof(ctx->mesh_phy_index), "%s", buf);
-	else
-		ctx->mesh_phy_index[0] = '\0';
+	/* v7: a decimal index of an existing wiphy, else ignored */
+	ctx->mesh_phy_index[0] = '\0';
+	if (mesh_uci_get("mesh11sd.setup.mesh_phy_index", buf, sizeof(buf)) == 0 && buf[0]) {
+		if (strspn(buf, "0123456789") != strlen(buf) || strlen(buf) > 3)
+			mesh_log_info(ctx, "option mesh_phy_index must be an integer - ignoring setup value of [ %s ]", buf);
+		else if (atoi(buf) >= count_wiphys())
+			mesh_log_info(ctx, "option mesh_phy_index is invalid, phy does not exist - ignoring setup value of [ %s ]", buf);
+		else
+			snprintf(ctx->mesh_phy_index, sizeof(ctx->mesh_phy_index), "%d", atoi(buf));
+	}
+	mesh_log_info(ctx, "option mesh_phy_index [ %s ]", ctx->mesh_phy_index);
 
 	if (mesh_uci_get("mesh11sd.setup.mesh_multi_interfaces", buf, sizeof(buf)) == 0 &&
 	    !strcmp(buf, "enabled"))
@@ -385,6 +472,11 @@ int mesh_ctx_load_setup(struct mesh_ctx *ctx)
 	} else if (!strcmp(ctx->auto_mesh_network, "lan")) {
 		snprintf(ctx->auto_mesh_network, sizeof(ctx->auto_mesh_network), "wan");
 	}
+	/* v7: fall back to lan if there is no firewall zone of that name */
+	if (!firewall_zone_exists(ctx->auto_mesh_network)) {
+		mesh_log_warn(ctx, "network zone [ %s ] does not exist", ctx->auto_mesh_network);
+		snprintf(ctx->auto_mesh_network, sizeof(ctx->auto_mesh_network), "lan");
+	}
 	mesh_log_info(ctx, "option auto_mesh_network [ %s ]", ctx->auto_mesh_network);
 
 	if (mesh_uci_get("mesh11sd.setup.mesh_basename", buf, sizeof(buf)) == 0 && buf[0]) {
@@ -405,19 +497,30 @@ int mesh_ctx_load_setup(struct mesh_ctx *ctx)
 	else
 		ctx->ssid_suffix_enable = 1;
 
-	if (mesh_uci_get("mesh11sd.setup.mesh_gate_base_ssid", buf, sizeof(buf)) == 0) {
-		int maxlen = ctx->ssid_suffix_enable ? 22 : 30;
-		int i, j = 0;
-		for (i = 0; buf[i] && j < maxlen; i++) {
-			if (buf[i] != ' ')
-				ctx->mesh_gate_base_ssid[j++] = buf[i];
-		}
-		ctx->mesh_gate_base_ssid[j] = '\0';
+	/* keep_system_ssids 1: leave the AP SSIDs from the wireless config
+	 * alone (v7 did this implicitly unless the SSID was OpenWrt). */
+	if (mesh_uci_get("mesh11sd.setup.keep_system_ssids", buf, sizeof(buf)) == 0)
+		ctx->keep_system_ssids = parse_int_default(buf, 0) > 0 ? 1 : 0;
+	else
+		ctx->keep_system_ssids = 0;
+	mesh_log_info(ctx, "option keep_system_ssids [ %d ]", ctx->keep_system_ssids);
+
+	/* A set mesh_gate_base_ssid is always used, as v7. Unset: MeshGate,
+	 * or nothing (keep the existing SSIDs) when keep_system_ssids is 1. */
+	ctx->mesh_gate_base_ssid[0] = '\0';
+	if (mesh_uci_get("mesh11sd.setup.mesh_gate_base_ssid", buf, sizeof(buf)) == 0)
+		ssid_base_copy(ctx->mesh_gate_base_ssid, sizeof(ctx->mesh_gate_base_ssid),
+			       buf, ctx->ssid_suffix_enable ? 22 : 30);
+	if (ctx->mesh_gate_base_ssid[0]) {
+		mesh_log_info(ctx, "option mesh_gate_base_ssid [ %s ]", ctx->mesh_gate_base_ssid);
+		if (ctx->keep_system_ssids)
+			mesh_log_notice(ctx, "option keep_system_ssids is ignored because mesh_gate_base_ssid is set");
+	} else if (ctx->keep_system_ssids) {
+		mesh_log_info(ctx, "option mesh_gate_base_ssid [ Not Set ] Keeping system SSIDs");
 	} else {
-		ctx->mesh_gate_base_ssid[0] = '\0';
-	}
-	if (!ctx->mesh_gate_base_ssid[0])
 		snprintf(ctx->mesh_gate_base_ssid, sizeof(ctx->mesh_gate_base_ssid), "MeshGate");
+		mesh_log_info(ctx, "option mesh_gate_base_ssid [ Not Set ] Using default");
+	}
 
 	{
 		const char *wpad_full[] = {
@@ -429,6 +532,9 @@ int mesh_ctx_load_setup(struct mesh_ctx *ctx)
 		};
 		int flags[8] = {0};
 		int no_full = mesh_check_package_any(wpad_full, flags);
+
+		ctx->wpad_no_owe = 0;
+		ctx->wpad_no_full = no_full;
 		if (mesh_uci_get("mesh11sd.setup.mesh_gate_encryption", buf, sizeof(buf)) == 0)
 			ctx->mesh_gate_encryption = parse_int_default(buf, 4);
 		else
@@ -437,11 +543,20 @@ int mesh_ctx_load_setup(struct mesh_ctx *ctx)
 			int no_mesh = mesh_check_package_any(wpad_mesh, NULL);
 			if (no_mesh)
 				ctx->mesh_gate_encryption = 0;
+			else
+				ctx->wpad_no_owe = 1;	/* mesh only wpad: no OWE */
 		}
+		if (ctx->wpad_no_owe && (ctx->mesh_gate_encryption == 0 ||
+					 ctx->mesh_gate_encryption == 4))
+			mesh_log_err(ctx, "option mesh_gate_encryption [ %d ] needs OWE, which the installed mesh only wpad does not support. Install a full version of wpad",
+				     ctx->mesh_gate_encryption);
 		if (ctx->mesh_gate_encryption == 4 && no_full)
 			ctx->mesh_gate_encryption = 0;
 	}
-	mesh_log_info(ctx, "option mesh_gate_encryption [ %d ]", ctx->mesh_gate_encryption);
+	if (ctx->mesh_gate_encryption >= 0 && ctx->mesh_gate_encryption <= 4)
+		mesh_log_info(ctx, "option mesh_gate_encryption [ %d ]", ctx->mesh_gate_encryption);
+	else
+		mesh_log_err(ctx, "option mesh_gate_encryption must be 0 (none/owe_transition), 1 (sae, aka wpa3), 2 (sae-mixed, aka wpa2/wpa3), 3 (psk2, aka wpa2) or 4 (owe)");
 
 	if (mesh_uci_get("mesh11sd.setup.mesh_gate_key", buf, sizeof(buf)) == 0)
 		snprintf(ctx->mesh_gate_key, sizeof(ctx->mesh_gate_key), "%s", buf);
@@ -474,31 +589,78 @@ int mesh_ctx_load_setup(struct mesh_ctx *ctx)
 			mesh_log_info(ctx, "option vtun_enable is disabled because required dependencies [ ip-full vxlan ] are not met");
 		}
 	}
-	if (mesh_uci_get("mesh11sd.setup.tun_id", buf, sizeof(buf)) == 0 && buf[0])
-		snprintf(ctx->tun_id, sizeof(ctx->tun_id), "%s", buf);
-	if (mesh_uci_get("mesh11sd.setup.vtun_base_ssid", buf, sizeof(buf)) == 0 && buf[0])
-		snprintf(ctx->vtun_base_ssid, sizeof(ctx->vtun_base_ssid), "%s", buf);
+	/* tun_id is the vxlan id and part of the interface names. v7 changes
+	 * a leading zero to 42 (069 becomes 4269). It must be a number. */
+	if (mesh_uci_get("mesh11sd.setup.tun_id", buf, sizeof(buf)) != 0 || !buf[0])
+		snprintf(buf, sizeof(buf), "69");
+	if (buf[0] == '0') {
+		char fixed[16];
+
+		snprintf(fixed, sizeof(fixed), "42%.9s", buf + 1);
+		mesh_log_warn(ctx, "option tun_id [ %s ] has a leading zero, using [ %s ]", buf, fixed);
+		snprintf(buf, sizeof(buf), "%s", fixed);
+	}
+	if (strspn(buf, "0123456789") != strlen(buf) || strlen(buf) > 8) {
+		mesh_log_err(ctx, "option tun_id [ %s ] must be a number of up to 8 digits, using [ 69 ]", buf);
+		snprintf(buf, sizeof(buf), "69");
+	}
+	snprintf(ctx->tun_id, sizeof(ctx->tun_id), "%s", buf);
+	mesh_log_info(ctx, "option tun_id [ %s ]", ctx->tun_id);
+
+	/* v7: VTunnel if unset; spaces stripped, max 22 (30 without suffix) */
+	ctx->vtun_base_ssid[0] = '\0';
+	if (mesh_uci_get("mesh11sd.setup.vtun_base_ssid", buf, sizeof(buf)) == 0)
+		ssid_base_copy(ctx->vtun_base_ssid, sizeof(ctx->vtun_base_ssid),
+			       buf, ctx->ssid_suffix_enable ? 22 : 30);
+	if (!ctx->vtun_base_ssid[0])
+		snprintf(ctx->vtun_base_ssid, sizeof(ctx->vtun_base_ssid), "VTunnel");
+	mesh_log_info(ctx, "option vtun_base_ssid [ %s ]", ctx->vtun_base_ssid);
+
 	if (mesh_uci_get("mesh11sd.setup.vtun_gate_encryption", buf, sizeof(buf)) == 0)
 		ctx->vtun_gate_encryption = parse_int_default(buf, 4);
 	else
 		ctx->vtun_gate_encryption = 4;
+	/* Same wpad checks as mesh_gate_encryption */
+	if (ctx->wpad_no_owe && (ctx->vtun_gate_encryption == 0 ||
+				 ctx->vtun_gate_encryption == 4))
+		mesh_log_err(ctx, "option vtun_gate_encryption [ %d ] needs OWE, which the installed mesh only wpad does not support. Install a full version of wpad",
+			     ctx->vtun_gate_encryption);
+	if (ctx->vtun_gate_encryption == 4 && ctx->wpad_no_full)
+		ctx->vtun_gate_encryption = 0;
+	if (ctx->vtun_gate_encryption >= 0 && ctx->vtun_gate_encryption <= 4)
+		mesh_log_info(ctx, "option vtun_gate_encryption [ %d ]", ctx->vtun_gate_encryption);
+	else
+		mesh_log_err(ctx, "option vtun_gate_encryption must be 0 (none/owe_transition), 1 (sae, aka wpa3), 2 (sae-mixed, aka wpa2/wpa3), 3 (psk2, aka wpa2) or 4 (owe)");
+
 	if (mesh_uci_get("mesh11sd.setup.vtun_gate_key", buf, sizeof(buf)) == 0)
 		snprintf(ctx->vtun_gate_key, sizeof(ctx->vtun_gate_key), "%s", buf);
 	else
 		ctx->vtun_gate_key[0] = '\0';
 	if (ctx->vtun_gate_encryption == 4)
 		snprintf(ctx->vtun_gate_key, sizeof(ctx->vtun_gate_key), "owe_null_key");
+	if (ctx->vtun_gate_key[0] && strlen(ctx->vtun_gate_key) < 8 &&
+	    ctx->vtun_gate_encryption != 4) {
+		mesh_log_err(ctx, "vtun_gate_key is too short, it must be 8 or more characters");
+		ctx->vtun_gate_key[0] = '\0';
+	}
+	mesh_log_info(ctx, "option vtun_gate_key [ %s ]",
+		      ctx->vtun_gate_key[0] ? "set" : "unset");
 
 	if (mesh_uci_get("mesh11sd.setup.mesh_gate_enable", buf, sizeof(buf)) == 0)
 		ctx->mesh_gate_enable = parse_int_default(buf, 1);
 	else
 		ctx->mesh_gate_enable = 1;
 
-	if (mesh_uci_get("mesh11sd.setup.mesh_leechmode_enable", buf, sizeof(buf)) != 0)
-		mesh_uci_get("mesh11sd.setup.mesh_gate_only", buf, sizeof(buf));
-	ctx->mesh_gate_only = parse_int_default(buf, 0);
-	if (ctx->mesh_gate_only == 1 && ctx->mesh_gate_enable == 0)
-		ctx->mesh_gate_only = 0;
+	/* Peers only: 1 sets mesh_fwding 0, so this node does not forward
+	 * for other nodes (mesh_apply_mesh_params). Ignored on a portal. */
+	if (mesh_uci_get("mesh11sd.setup.disable_hwmp_forwarding", buf, sizeof(buf)) == 0)
+		ctx->disable_hwmp_forwarding = parse_int_default(buf, 0) > 0 ? 1 : 0;
+	else
+		ctx->disable_hwmp_forwarding = 0;
+	mesh_log_info(ctx, "option disable_hwmp_forwarding [ %d ]", ctx->disable_hwmp_forwarding);
+	if (mesh_uci_get("mesh11sd.setup.mesh_leechmode_enable", buf, sizeof(buf)) == 0 ||
+	    mesh_uci_get("mesh11sd.setup.mesh_gate_only", buf, sizeof(buf)) == 0)
+		mesh_log_warn(ctx, "option mesh_leechmode_enable is no longer supported, see disable_hwmp_forwarding");
 
 	if (mesh_uci_get("mesh11sd.setup.txpower", buf, sizeof(buf)) == 0)
 		snprintf(ctx->txpower, sizeof(ctx->txpower), "%s", buf);
@@ -534,6 +696,13 @@ int mesh_ctx_load_setup(struct mesh_ctx *ctx)
 	else
 		ctx->odhcpd_log_level = 3;
 
+	/* v7: 0-2 quiet, 3 info, 4 debug, 5 excessive (default 2) */
+	if (mesh_uci_get("mesh11sd.setup.wpad_debuglevel", buf, sizeof(buf)) == 0 && buf[0])
+		ctx->wpad_debuglevel = parse_int_default(buf, 2);
+	else
+		ctx->wpad_debuglevel = 2;
+	mesh_log_info(ctx, "option wpad_debuglevel [ %d ]", ctx->wpad_debuglevel);
+
 	if (mesh_uci_get("mesh11sd.setup.reboot_on_error", buf, sizeof(buf)) == 0)
 		ctx->reboot_on_error = parse_int_default(buf, 1) ? 1 : 0;
 	else
@@ -563,10 +732,9 @@ int mesh_ctx_load_setup(struct mesh_ctx *ctx)
 		ctx->watchdog_nonvolatile_log = parse_int_default(buf, 0);
 	else
 		ctx->watchdog_nonvolatile_log = 0;
-	if (mesh_uci_get("mesh11sd.setup.mesh_path_stabilisation", buf, sizeof(buf)) == 0)
-		ctx->mesh_path_stabilisation = parse_int_default(buf, 1);
-	else
-		ctx->mesh_path_stabilisation = 1;
+	if (mesh_uci_get("mesh11sd.setup.mesh_path_stabilisation", buf, sizeof(buf)) == 0 ||
+	    mesh_uci_get("mesh11sd.setup.reactive_path_stabilisation_threshold", buf, sizeof(buf)) == 0)
+		mesh_log_warn(ctx, "option mesh_path_stabilisation is no longer supported, see mesh_node_mobility_level");
 	/* v7 get_current_setup vtun_ip: if unset, generate_ipv4_base(auto_mesh_key) */
 	{
 		char vtun_net[64] = "";
@@ -585,10 +753,15 @@ int mesh_ctx_load_setup(struct mesh_ctx *ctx)
 		else
 			snprintf(ctx->vtun_ip, sizeof(ctx->vtun_ip), "auto");
 	}
-	if (mesh_uci_get("mesh11sd.setup.vtun_mask", buf, sizeof(buf)) == 0 && buf[0])
-		snprintf(ctx->vtun_mask, sizeof(ctx->vtun_mask), "%s", buf);
-	else
+	/* v7: invalid masks are replaced with 255.255.255.0. A CIDR prefix
+	 * (24 or /24) is accepted too. */
+	snprintf(ctx->vtun_mask, sizeof(ctx->vtun_mask), "255.255.255.0");
+	if (mesh_uci_get("mesh11sd.setup.vtun_mask", buf, sizeof(buf)) == 0 && buf[0] &&
+	    ipv4_mask_normalise(buf, ctx->vtun_mask, sizeof(ctx->vtun_mask)) != 0) {
+		mesh_log_warn(ctx, "option vtun_mask [ %s ] is not a valid netmask, using [ 255.255.255.0 ]", buf);
 		snprintf(ctx->vtun_mask, sizeof(ctx->vtun_mask), "255.255.255.0");
+	}
+	mesh_log_info(ctx, "option vtun_mask [ %s ]", ctx->vtun_mask);
 	if (mesh_uci_get("mesh11sd.setup.vtun_path_cost", buf, sizeof(buf)) == 0)
 		ctx->vtun_path_cost = parse_int_default(buf, 65525);
 	else
@@ -641,6 +814,32 @@ int mesh_ctx_load_setup(struct mesh_ctx *ctx)
 	return 0;
 }
 
+/* Defaults that changed since v7. A v7 user who never set these would
+ * get the new behaviour silently, so say so once at startup. */
+static int setup_unset(const char *opt)
+{
+	char key[96], buf[64];
+
+	snprintf(key, sizeof(key), "mesh11sd.setup.%s", opt);
+	return mesh_uci_get(key, buf, sizeof(buf)) != 0 || !buf[0];
+}
+
+void mesh_warn_v7_defaults(struct mesh_ctx *ctx)
+{
+	char buf[16];
+
+	if (setup_unset("mesh_node_mobility_level"))
+		mesh_log_warn(ctx, "option mesh_node_mobility_level not set, using [ 2 ] (v7 default was 1)");
+	if (setup_unset("use_default_beacon_interval"))
+		mesh_log_warn(ctx, "option use_default_beacon_interval not set, using [ 1 ] (v7 default was 0)");
+	if (setup_unset("gateway_proxy_arp"))
+		mesh_log_warn(ctx, "option gateway_proxy_arp not set, using [ 1 ] (v7 default was 0)");
+	/* v7 2g kept the radio's htmode (usually 20 MHz); only 2g40 meant 40 */
+	if (mesh_uci_get("mesh11sd.setup.auto_mesh_band", buf, sizeof(buf)) == 0 &&
+	    !strcmp(buf, "2g") && setup_unset("channel_bandwidth_2g"))
+		mesh_log_warn(ctx, "option auto_mesh_band [ 2g ] now uses 40 MHz (v7 used the radio setting), set channel_bandwidth_2g 20 for 20 MHz");
+}
+
 int mesh_check_config_params(struct mesh_ctx *ctx)
 {
 	char buf[64];
@@ -650,8 +849,6 @@ int mesh_check_config_params(struct mesh_ctx *ctx)
 
 	if (mesh_param_get("mesh_fwding", buf, sizeof(buf)) == 0)
 		mesh_fwding = parse_int_default(buf, 1);
-	if (mesh_fwding == 1 && ctx->mesh_gate_only == 1)
-		mesh_fwding = 0;
 	mesh_param_set("mesh_fwding", mesh_fwding ? "1" : "0");
 
 	if (mesh_param_get("mesh_retry_timeout", buf, sizeof(buf)) == 0)
@@ -682,8 +879,6 @@ int mesh_check_config_params(struct mesh_ctx *ctx)
 	if (mesh_param_get("mesh_gate_announcements", buf, sizeof(buf)) == 0)
 		gate_ann = parse_int_default(buf, 1);
 	if (gate_ann == 1 && ctx->mesh_gate_enable == 0)
-		gate_ann = 0;
-	if (ctx->mesh_gate_only > 0)
 		gate_ann = 0;
 	mesh_param_set("mesh_gate_announcements", gate_ann ? "1" : "0");
 

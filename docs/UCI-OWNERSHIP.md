@@ -37,28 +37,29 @@ Identity and radio: `auto_mesh_id`, `auto_mesh_key`, `auto_mesh_band`
 
 Access points: `mesh_gate_enable`, `mesh_gate_base_ssid`,
 `mesh_gate_encryption`, `mesh_gate_key`, `ssid_suffix_enable`,
-`mesh_leechmode_enable`.
+`keep_system_ssids`, `disable_hwmp_forwarding` (replaces
+`mesh_leechmode_enable`).
 
 VXLAN: `vtun_enable`, `tun_id`, `vtun_ip`, `vtun_mask`,
 `vtun_base_ssid`, `vtun_gate_encryption`, `vtun_gate_key`,
 `vtun_path_cost`, `vtun_isolate`, `move_ethernet_to_vxlan_bridge`
 (runtime `brctl` only; no UCI write).
 
-Path, watchdog, CPE: `mesh_path_cost`, `mesh_path_stabilisation`,
+Path, watchdog, CPE: `mesh_path_cost`,
 `mesh_mac_forced_forwarding`, `swconfig_mac_skip`, `gateway_proxy_arp`,
 `mesh_metric_threshold`, `reboot_on_error`, `stop_on_error`,
 `watchdog_nonvolatile_log`, `mesh_backhaul_led`, `log_mountpoint`,
 `max_log_entries`, `use_default_beacon_interval`, `mesh_dtim_period`,
 `mesh_node_mobility_level`, `cpe_mode` (parsed, **not yet applied** to
 dhcp/network/firewall; code default is `auto`, docs say `nat66`),
-`odhcpd_log_level`.
+`odhcpd_log_level`, `wpad_debuglevel`.
 
-### `setup` — documented but not parsed in v8
+### `setup` — removed in v8
 
-`manage_opennds_startup`, `wpad_debuglevel`, `connect_show_all`.
 The v7 apmond options are gone: apmond is now a separate package.
-README §7 still lists `reactive_path_stabilisation_threshold`, which
-was removed.
+`mesh_path_stabilisation` and `reactive_path_stabilisation_threshold`
+are removed (superseded by `mesh_node_mobility_level`), as is
+`mesh_leechmode_enable`. A warning is logged if one is still set.
 
 ### `mesh_params`
 
@@ -89,7 +90,7 @@ These stay in `mesh_params`; they are not copied into wireless/network.
 | `wifi-device.htmode` / `noscan` (2.4 GHz) | htmode 20→40 and `noscan=1` | `auto_mesh_band=2g40` and `country` set | `auto_mesh_band` | managed (already in mesh11sd). Optional first-class `channel_bandwidth_2g` (`20`/`40`) |
 | `wifi-device.htmode` (5 / 6 GHz) | **not written** | existing wireless | **none** | **move to mesh11sd (new override option, suggested name: `channel_bandwidth_5g`, `channel_bandwidth_6g`)** — e.g. 20/40/80/160/320 |
 | `wifi-device.txpower` | set only if wireless value is unset | `txpower` | `txpower` | managed (already in mesh11sd) — should overwrite when the option is set, not only when wireless is empty |
-| `wifi-device.log_level` | `3` | hardcoded | none (`wpad_debuglevel` is documented, not parsed) | leave to user (or later tie to `wpad_debuglevel`) |
+| `wifi-device.log_level` | `3` | hardcoded | none (`wpad_debuglevel` sets the wpa_supplicant flags in `/etc/init.d/wpad`, as v7) | leave to user |
 | `wifi-device.beacon_int` | set on the mesh radio only; deleted at mobility 0 | `mesh_node_mobility_level`, forced 100 if `use_default_beacon_interval` or ath11k / mt76_wmac / multi-band wiphy | `mesh_node_mobility_level`, `use_default_beacon_interval` | managed (already in mesh11sd) |
 | `m11sN` (section, `device`, `mode=mesh`, `ifname`, `network`) | created by auto_config | `mesh_basename`, `auto_mesh_network`, radio index | those options | managed (already in mesh11sd) |
 | `m11sN.mesh_id` | hashed id | SHA-256 of `auto_mesh_id` (default `--__`) | `auto_mesh_id` | managed (already in mesh11sd) |
@@ -107,9 +108,9 @@ These stay in `mesh_params`; they are not copied into wireless/network.
 | `wifi-iface` AP `macaddr` | indexed locally-administered MAC if unset and `commit_all=0` | derived from factory MAC | none | not managed: indexed afresh each start, never committed (v7) |
 | `vxradioN` section (`device`, `mode=ap`, `network=vtunlan`, `ifname`, `disabled`) | created when `vtun_enable` | `vtun_enable`, `mesh_gate_enable` | those options | managed (already in mesh11sd) |
 
-Note: if `mesh_gate_base_ssid` is unset, v8 always uses `MeshGate` and
-overwrites every non-vtun AP SSID. The documented “use the wireless
-SSID if it is not OpenWrt” fallback is not in the C port.
+Note: if `mesh_gate_base_ssid` is unset, v8 uses `MeshGate` for every
+non-vtun AP SSID, unless `keep_system_ssids` is 1, which keeps the
+SSIDs from the wireless config (suffix still added).
 
 ### network
 

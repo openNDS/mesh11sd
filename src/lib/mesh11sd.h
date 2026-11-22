@@ -38,7 +38,11 @@ struct mesh_ctx {
 	int ssid_suffix_enable;
 	int mesh_gate_encryption;
 	int mesh_gate_enable;
-	int mesh_gate_only;
+	int disable_hwmp_forwarding;	/* peers: mesh_fwding 0 */
+	int keep_system_ssids;	/* keep AP SSIDs from the wireless config */
+	int wpad_no_full;	/* no full wpad (wpad-mbedtls etc) installed */
+	int wpad_no_owe;	/* only a mesh only wpad: no OWE */
+	int wpad_debuglevel;	/* 0-5, wpa_supplicant -q/-d/-dd */
 	int vtun_enable;
 	int vtun_deps_missing;	/* vtun off because ip-full or vxlan is missing */
 	int vtun_gate_encryption;
@@ -54,6 +58,7 @@ struct mesh_ctx {
 	pid_t pid;
 
 	char log_mountpoint[128];
+	char log_mountpoint_wanted[128];	/* set when the configured one is not mounted */
 	char last_syslogmessage[512];
 	char last_logmsg[512];	/* last message, for the watchdog log */
 	char auto_mesh_id[64];		/* hashed id used as mesh_id */
@@ -106,7 +111,6 @@ struct mesh_ctx {
 	int changed;
 	int macfixup;
 	int daemon_startup;
-	int leechmode;
 	int reboot_on_error;
 	int stop_on_error;
 	int manage_opennds_startup;
@@ -117,7 +121,6 @@ struct mesh_ctx {
 	int mesh_mac_forced_forwarding;
 	int gateway_proxy_arp;
 	int watchdog_nonvolatile_log;
-	int mesh_path_stabilisation;
 	char vtun_ip[32];
 	char vtun_mask[16];
 	int vtun_path_cost;
@@ -184,6 +187,10 @@ void mesh_manage_opennds(struct mesh_ctx *ctx, const char *action);
 
 void mesh_write_to_syslog(struct mesh_ctx *ctx, const char *debugtype, const char *msg);
 void mesh_write_log(struct mesh_ctx *ctx, const char *debugtype, const char *msg);
+int mesh_is_mountpoint(const char *path);
+void mesh_check_log_mountpoint(struct mesh_ctx *ctx); /* warns every 3rd call while on the /tmp fallback */
+int mesh_manage_wpad_loglevel(struct mesh_ctx *ctx); /* v7 manage_wpad_loglevel */
+void mesh_warn_v7_defaults(struct mesh_ctx *ctx); /* startup: defaults changed since v7 */
 int mesh_read_log(struct mesh_ctx *ctx, int follow);
 void mesh_log_info(struct mesh_ctx *ctx, const char *fmt, ...);
 void mesh_log_debug(struct mesh_ctx *ctx, const char *fmt, ...);
@@ -312,7 +319,6 @@ int mesh_fix_mesh_noscan(struct mesh_ctx *ctx);
 /* remote CLI ops */
 int mesh_cli_connect(struct mesh_ctx *ctx, int argc, char **argv);
 int mesh_cli_copy(struct mesh_ctx *ctx, int argc, char **argv);
-int mesh_cli_mesh_leechmode(struct mesh_ctx *ctx, const char *arg);
 int mesh_cli_mesh_node_mobility_level(struct mesh_ctx *ctx, const char *arg);
 int mesh_cli_force_ipv4_download(struct mesh_ctx *ctx);
 int mesh_cli_download_revert_to_default(struct mesh_ctx *ctx);

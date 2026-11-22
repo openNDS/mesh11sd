@@ -123,7 +123,7 @@ CPE LAN is a private subnet. IPv6 mode is `cpe_mode` (`nat66` default; also `pre
 | `country` | Legal radio domain (default DFS-ETSI if unset). |
 | `mesh_gate_base_ssid` | User Wi-Fi name (max 22 chars if suffix enabled). |
 | `mesh_gate_encryption` / `mesh_gate_key` | User Wi-Fi security (default OWE = 4; 1=WPA3, 3=WPA2). |
-| `auto_mesh_band` | Mesh radio band (`2g40` default; also `2g`, `5g`, `6g`, `60g`). Peers track the portal channel. |
+| `auto_mesh_band` | Backhaul radio band (`2g` default, at 40 MHz unless `channel_bandwidth_2g` is 20; also `5g`, `6g`, `60g`). Peers track the portal channel. |
 
 Everything else can wait. Defaults: `portal_detect=1`, `mesh_node_mobility_level=2`, `vtun_enable=1` (guest VTunnel SSID).
 
@@ -134,9 +134,10 @@ mesh11sd status                 # JSON: setup, mesh ifaces, peers
 mesh11sd connect                # list nodes (label MACs); connect [Node ID]
 mesh11sd copy [Node ID] [file]  # copy a file to /tmp/mesh11sd on a peer
 mesh11sd read_log -f            # follow the mesh11sd log
-mesh11sd show_ap_data all       # AP client stats (on a portal)
 mesh11sd get_portal_type        # MRP, MBP, MPE, CPE, TPN
 ```
+
+AP client statistics are provided by the separate apmond package; see the apmond package documentation.
 
 `mesh11sd connect` uses **factory/label MACs** (the mesh vif uses the label MAC so `iw mpath` matches the sticker).
 

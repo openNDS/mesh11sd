@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later
- * Chunk 8: connect/copy remote CLI + misc ops (leechmode, mobility level,
+ * Chunk 8: connect/copy remote CLI + misc ops (mobility level,
  * force_ipv4_download, dhcp4_renew, is_installed).
  */
 #include "mesh11sd.h"
@@ -450,44 +450,6 @@ int mesh_cli_copy(struct mesh_ctx *ctx, int argc, char **argv)
 	walk_connectlist(ctx, REMOTE_COPY, nodeaddr, filepath);
 
 	puts("=============================================================================================================================================================================");
-	puts("");
-	return 0;
-}
-
-int mesh_cli_mesh_leechmode(struct mesh_ctx *ctx, const char *arg)
-{
-	char setl[96];
-	const char *msg;
-
-	puts("===========================================================================");
-	if (!arg || !arg[0]) {
-		printf("Usage: mesh11sd mesh_leechmode [enable/disable]\n");
-		printf("Option mesh_leechmode_enable current value [ %d ]\n",
-		       ctx->mesh_gate_only);
-		puts("===========================================================================");
-		puts("");
-		return 0;
-	}
-	if (!strcmp(arg, "enable")) {
-		ctx->mesh_gate_only = 1;
-		snprintf(setl, sizeof(setl),
-			 "set mesh11sd.setup.mesh_leechmode_enable='1'");
-		mesh_uci_batch_line(setl);
-		msg = "Option mesh_leechmode_enable set to [ 1 ]";
-	} else if (!strcmp(arg, "disable")) {
-		ctx->mesh_gate_only = 0;
-		snprintf(setl, sizeof(setl),
-			 "set mesh11sd.setup.mesh_leechmode_enable='0'");
-		mesh_uci_batch_line(setl);
-		msg = "Option mesh_leechmode_enable set to [ 0 ]";
-	} else {
-		printf("Invalid option [ %s ]\n", arg);
-		puts("===========================================================================");
-		puts("");
-		return 1;
-	}
-	puts(msg);
-	puts("===========================================================================");
 	puts("");
 	return 0;
 }
