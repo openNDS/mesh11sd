@@ -7,7 +7,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=mesh11sd
 PKG_VERSION:=8.0.0_beta1
-PKG_RELEASE:=68
+PKG_RELEASE:=69
 
 PKG_MAINTAINER:=Rob White <rob@blue-wave.net>
 PKG_LICENSE:=GPL-2.0-or-later
@@ -27,7 +27,7 @@ define Package/mesh11sd
   SECTION:=net
   CATEGORY:=Network
   TITLE:=Dynamic 802.11s Mesh Management Daemon
-  DEPENDS:=+kmod-nft-bridge
+  DEPENDS:=+kmod-nft-bridge +libubus +libubox +libblobmsg-json
   URL:=https://github.com/opennds/mesh11sd
 endef
 

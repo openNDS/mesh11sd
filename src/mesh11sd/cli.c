@@ -43,6 +43,12 @@ static void print_help(void)
 "  Usage: mesh11sd config_reload\n"
 "\n"
 "####\n"
+"  Option: ubus\n"
+"  Runs the mesh11sd ubus object (status, stations, config_reload, version).\n"
+"  Started by the init script as a second service instance.\n"
+"  Usage: mesh11sd ubus\n"
+"\n"
+"####\n"
 "  Option: auto_config\n"
 "  Configure auto config mode\n"
 "  Usage:\n"
@@ -369,8 +375,7 @@ int mesh_cli_dispatch(struct mesh_ctx *ctx, int argc, char **argv)
 
 	/* Needs no setup: the daemon reads it when it sees the flag. */
 	if (!strcmp(cmd, "config_reload")) {
-		mesh_mkdir_p(MESH11SD_TMPDIR);
-		if (mesh_file_write(MESH11SD_RELOAD_FLAG, "1\n") != 0) {
+		if (mesh_request_config_reload() != 0) {
 			fprintf(stderr, "Unable to request a configuration reload\n");
 			return 1;
 		}
@@ -526,6 +531,8 @@ int mesh_cli_dispatch(struct mesh_ctx *ctx, int argc, char **argv)
 	if (!strcmp(cmd, "restore_all"))
 		return mesh_cli_restore_all(ctx, argc, argv);
 
+	if (!strcmp(cmd, "ubus"))
+		return mesh_ubus_run(ctx);
 	if (!strcmp(cmd, "daemon"))
 		return mesh_daemon_run(ctx);
 
