@@ -1120,7 +1120,7 @@ int mesh_check_portal(struct mesh_ctx *ctx)
 		return 0;
 	}
 	if (ctx->portal_detect == 5) {
-		/* TPN special-cased earlier in v7; peer-like */
+		/* TPE special-cased earlier in v7; peer-like */
 		return 0;
 	}
 	if (ctx->portal_detect == 4) {

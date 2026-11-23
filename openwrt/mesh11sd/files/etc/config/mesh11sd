@@ -98,7 +98,7 @@ config mesh11sd 'setup'
 	#	In normal use, the lan port could be patched to the upstream router. The wan port is the ethernet entry point of the vxlan tunnel.
 	#	The vxlan tunnel an be used as if it was a port on a managed switch, supporting vlan tagging if required.
 	#
-	#  5  - Trunk Peer Node (TPN)
+	#  5  - Trunk Peer (TPE)
 	#	This is a special case of a peer node where its wan port is an endpoint of the multi-peer vxlan.
 	#	Compatible with portal nodes configured with portal_detect 0, 1 or 4.
 	#

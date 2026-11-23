@@ -2034,7 +2034,7 @@ int mesh_pin_active_portal_arp(struct mesh_ctx *ctx)
 }
 
 /*
- * Modes 4 (MBP) and 5 (TPN): the wan port is the vxlan trunk. Disable the
+ * Modes 4 (MBP) and 5 (TPE): the wan port is the vxlan trunk. Disable the
  * wan and wan6 interfaces and add the wan device to the vtunnel bridge, as
  * uncommitted changes (v7 ensure_wan_on_vxlan_bridge). With do_reload, a
  * changed network config is reloaded so netifd applies it.

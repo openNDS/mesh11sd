@@ -33,7 +33,7 @@ If the image uses **ath10k-ct**, switch to non-ct ath10k packages; otherwise the
 2. **Mesh Routed Portal (MRP)** — IPv4 NAT and IPv6 routing; optional VXLAN trunk
 3. **Auto detect (`portal_detect=1`)** — WAN up → MRP; WAN down → Mesh Peer (MPE)
 4. **Mesh Bridge Portal (MBP)** — bridged to the existing LAN/ISP (no IPv4 NAT); WAN is the vxlan trunk
-5. **Trunk Peer (TPN)** — WAN is a vxlan trunk endpoint (VLANs); LAN is the mesh (no VLANs)
+5. **Trunk Peer (TPE)** — WAN is a vxlan trunk endpoint (VLANs); LAN is the mesh (no VLANs)
 6. **CPE** — mesh is the WAN; LAN is a private NAT network (IPv4 + NAT66 or PD)
 7. **OWE** on mesh gates by default (optional WPA2/WPA3)
 8. **Guest / vxtunnel** SSIDs over VXLAN without configuring 802.1Q on the mesh
@@ -53,7 +53,7 @@ If the image uses **ath10k-ct**, switch to non-ct ath10k packages; otherwise the
 | **0** | MRP | Always routed portal. |
 | **3** | CPE | Mesh is upstream WAN. LAN is a NAT subnet (`cpe_mode`: `nat66` default, or `prefix_delegation`). |
 | **4** | MBP | Bridged portal. **LAN** to ISP/existing LAN. **WAN** is vxlan trunk (`br-tun$tun_id`). |
-| **5** | TPN | Peer. **LAN** = mesh (no VLANs). **WAN** = vxlan trunk (VLANs OK). Works with portal 0, 1, or 4. |
+| **5** | TPE | Peer. **LAN** = mesh (no VLANs). **WAN** = vxlan trunk (VLANs OK). Works with portal 0, 1, or 4. |
 | **2** | — | Unused (use 5). |
 
 A node can also be a **gate** (hosts APs). A peer with `disable_hwmp_forwarding=1` serves its own APs and clients but does not forward for other nodes; it is ignored on a portal.
@@ -312,7 +312,7 @@ Values in the tables below are script defaults when the option is unset. Set wit
 | `vtun_isolate` | 0 | 1 = no forwarding between mesh/lan and vxtunnel (guest isolation). |
 | `move_ethernet_to_vxlan_bridge` | 0 | Move LAN Ethernet onto `br-tun`. Not used in CPE. |
 
-MBP/TPN: WAN is added to `br-tun$tun_id`. MRP portal may serve DHCPv4/RA on vtunlan; MBP/CPE/TPN/peers do not.
+MBP/TPE: WAN is added to `br-tun$tun_id`. MRP portal may serve DHCPv4/RA on vtunlan; MBP/CPE/TPE/peers do not.
 
 ### 7.5 Path, watchdog, logging, CPE
 
@@ -407,7 +407,7 @@ The daemon runs as a service. CLI is for status, logs, and a few runtime knobs. 
 | `mesh11sd stations` | One-hop mesh STAs |
 | `mesh11sd read_log` / `read_log -f` | Internal log (`-f` truncates then follows) |
 | `mesh11sd debuglevel [0-3]` | Get/set |
-| `mesh11sd get_portal_type` | MBP, MRP, MPE, CPE, TPN |
+| `mesh11sd get_portal_type` | MBP, MRP, MPE, CPE, TPE |
 | `mesh11sd get_portal_ula [get\|discover]` | Current or best portal ULA |
 | `mesh11sd get_node_type_code` | Same codes as get_portal_type |
 | `mesh11sd active_nodecount` | Peers in mpath |
@@ -600,7 +600,7 @@ config mesh11sd 'setup'
 	#	In normal use, the lan port could be patched to the upstream router. The wan port is the ethernet entry point of the vxlan tunnel.
 	#	The vxlan tunnel an be used as if it was a port on a managed switch, supporting vlan tagging if required.
 	#
-	#  5  - Trunk Peer Node (TPN)
+	#  5  - Trunk Peer (TPE)
 	#	This is a special case of a peer node where its wan port is an endpoint of the multi-peer vxlan.
 	#	Compatible with portal nodes configured with portal_detect 0, 1 or 4.
 	#
@@ -1345,7 +1345,7 @@ Upstream: [openwrt/openwrt#20967](https://github.com/openwrt/openwrt/issues/2096
 
 ## 14. Acronyms
 
-**STA** station · **PREQ** path request · **HWMP** Hybrid Wireless Mesh Protocol · **RANN** root announcement · **RSSI** signal · **ULA** unique local IPv6 · **3dRV** three-dimensional relative velocity · **MBP** Mesh Bridge Portal · **MRP** Mesh Routed Portal · **MPE** Mesh Peer · **CPE** Client Premises Equipment · **TPN** Trunk Peer Node · **OWE** Opportunistic Wireless Encryption
+**STA** station · **PREQ** path request · **HWMP** Hybrid Wireless Mesh Protocol · **RANN** root announcement · **RSSI** signal · **ULA** unique local IPv6 · **3dRV** three-dimensional relative velocity · **MBP** Mesh Bridge Portal · **MRP** Mesh Routed Portal · **MPE** Mesh Peer · **CPE** Client Premises Equipment · **TPE** Trunk Peer · **OWE** Opportunistic Wireless Encryption
 
 ![mesh11sd](https://github.com/openNDS/mesh11sd/blob/master/docs/images/avatarsmall.png)
 

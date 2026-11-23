@@ -38,10 +38,10 @@ Set the same `auto_mesh_id` (and optional `auto_mesh_key`) on every node. Choose
 | **0** | MRP | Always a routed portal, even with no WAN. | WAN to ISP if you have one. |
 | **3** | CPE | Customer / client premises. Mesh is the **WAN**. LAN is a private NAT network (IPv4 + NAT66 by default). | Laptop/LAN clients on **LAN**. Mesh on WAN/radio. |
 | **4** | MBP | Mesh Bridge Portal. No IPv4 NAT; LAN is bridged to the existing LAN/ISP. WAN is the **vxlan trunk** (not the ISP). | **LAN** patched to the ISP/existing LAN. **WAN** is the trunk. |
-| **5** | TPN | Trunk Peer. LAN is the mesh (no VLANs). WAN is a vxlan trunk endpoint (VLANs OK). | Compatible with `portal_detect` 0, 1, or 4. |
+| **5** | TPE | Trunk Peer. LAN is the mesh (no VLANs). WAN is a vxlan trunk endpoint (VLANs OK). | Compatible with `portal_detect` 0, 1, or 4. |
 | **2** | — | Unused (replaced by 5). | — |
 
-Start every node on **`portal_detect=1`** unless you know you need CPE, MBP, or TPN.
+Start every node on **`portal_detect=1`** unless you know you need CPE, MBP, or TPE.
 
 **Simplest home mesh:** one node with WAN plugged into the ISP router (`portal_detect=1` becomes MRP). Other nodes unplugged from WAN (`portal_detect=1` becomes MPE). Same `auto_mesh_id` on all.
 
@@ -134,7 +134,7 @@ mesh11sd status                 # JSON: setup, mesh ifaces, peers
 mesh11sd connect                # list nodes (label MACs); connect [Node ID]
 mesh11sd copy [Node ID] [file]  # copy a file to /tmp/mesh11sd on a peer
 mesh11sd read_log -f            # follow the mesh11sd log
-mesh11sd get_portal_type        # MRP, MBP, MPE, CPE, TPN
+mesh11sd get_portal_type        # MRP, MBP, MPE, CPE, TPE
 ```
 
 AP client statistics are provided by the separate apmond package; see the apmond package documentation.
