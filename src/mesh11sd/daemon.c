@@ -137,6 +137,8 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 	unlink(MESH11SD_TMPDIR "/maclist");
 	unlink(MESH11SD_TMPDIR "/loop_interval");
 	unlink(MESH11SD_TMPDIR "/active_mesh_ifname");
+	/* startup has just read the setup; an old reload request is done */
+	unlink(MESH11SD_RELOAD_FLAG);
 
 	mesh_log_notice(ctx, "mesh11sd is in startup");
 	/* Fresh effective mesh parameters for this run. */
@@ -263,6 +265,13 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 		if (mesh_daemon_stop) {
 			mesh_log_notice(ctx, "Mesh11sd is shutting down");
 			break;
+		}
+
+		/* mesh11sd config_reload (or service mesh11sd reload) */
+		if (access(MESH11SD_RELOAD_FLAG, F_OK) == 0) {
+			unlink(MESH11SD_RELOAD_FLAG);
+			mesh_ctx_reload_setup(ctx);
+			mesh_log_notice(ctx, "configuration reloaded");
 		}
 
 		/* v7 main loop only refreshes debuglevel; full option dump is startup-only */

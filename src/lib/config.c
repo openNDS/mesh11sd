@@ -814,6 +814,99 @@ int mesh_ctx_load_setup(struct mesh_ctx *ctx)
 	return 0;
 }
 
+/*
+ * mesh11sd config_reload: read the setup section again while the daemon
+ * runs, without a restart and without touching staged UCI changes.
+ *
+ * The setup is read into a copy of the context, and only the options the
+ * main loop uses on every pass are taken from it:
+ *
+ *   debuglevel, enabled, log_mountpoint, max_log_entries, checkinterval,
+ *   loop_interval_delta, channel_tracking_checkinterval,
+ *   portal_detect_threshold, interface_timeout, mesh_path_cost,
+ *   mesh_metric_threshold, mesh_node_mobility_level (run time settings),
+ *   disable_hwmp_forwarding, mesh_mac_forced_forwarding, gateway_proxy_arp,
+ *   reboot_on_error, stop_on_error, manage_opennds_startup, txpower.
+ *
+ * A changed txpower is applied with iw straight away, as mesh11sd txpower
+ * does (mesh_apply_txpower), without writing UCI.
+ *
+ * watchdog_nonvolatile_log is already re-read every third loop.
+ *
+ * Everything else is left as it is. Options used to build the wireless
+ * and network configuration (country, auto_mesh_id, auto_mesh_key,
+ * auto_mesh_band, channel_bandwidth_2g, portal_channel, mesh_phy_index,
+ * auto_mesh_network, mesh_basename, ssid_suffix_enable, keep_system_ssids,
+ * mesh_gate_base_ssid, the gate and vtun encryption and keys, tun_id and
+ * the other vtun options, portal_use_default_ipv4, mesh_dtim_period,
+ * use_default_beacon_interval) only take effect when that configuration
+ * is built: at first configuration (no mesh interface yet), or, with
+ * auto_config 1 and portal_detect 0 or 1, when a committed change to the
+ * mesh11sd config rebuilds the portal configuration (managed.c).
+ * auto_config, portal_detect, commit_all, wpad_debuglevel, odhcpd_log_level,
+ * mesh_backhaul_led and the mesh_params section need a restart.
+ */
+void mesh_ctx_reload_setup(struct mesh_ctx *ctx)
+{
+	static struct mesh_ctx fresh;	/* large; keep it off the stack */
+
+	fresh = *ctx;
+	mesh_ctx_load_setup(&fresh);
+	/* keep the log numbering and repeat check from the copy's messages */
+	ctx->entrynum = fresh.entrynum;
+	snprintf(ctx->last_syslogmessage, sizeof(ctx->last_syslogmessage), "%s",
+		 fresh.last_syslogmessage);
+
+	ctx->debuglevel = fresh.debuglevel;
+	ctx->enabled = fresh.enabled;
+	snprintf(ctx->log_mountpoint, sizeof(ctx->log_mountpoint), "%s",
+		 fresh.log_mountpoint);
+	snprintf(ctx->log_mountpoint_wanted, sizeof(ctx->log_mountpoint_wanted), "%s",
+		 fresh.log_mountpoint_wanted);
+	ctx->max_log_entries = fresh.max_log_entries;
+	ctx->checkinterval = fresh.checkinterval;
+	ctx->loop_interval_delta = fresh.loop_interval_delta;
+	ctx->channel_tracking_checkinterval = fresh.channel_tracking_checkinterval;
+	ctx->interface_timeout = fresh.interface_timeout;
+	ctx->mesh_path_cost = fresh.mesh_path_cost;
+	ctx->mesh_metric_threshold = fresh.mesh_metric_threshold;
+	ctx->mesh_node_mobility_level = fresh.mesh_node_mobility_level;
+	ctx->disable_hwmp_forwarding = fresh.disable_hwmp_forwarding;
+	ctx->mesh_mac_forced_forwarding = fresh.mesh_mac_forced_forwarding;
+	ctx->gateway_proxy_arp = fresh.gateway_proxy_arp;
+	ctx->reboot_on_error = fresh.reboot_on_error;
+	ctx->stop_on_error = fresh.stop_on_error;
+	ctx->manage_opennds_startup = fresh.manage_opennds_startup;
+	if (fresh.txpower[0] && strcmp(fresh.txpower, ctx->txpower) != 0) {
+		int dbm = atoi(fresh.txpower);
+
+		snprintf(ctx->txpower, sizeof(ctx->txpower), "%s", fresh.txpower);
+		if (strspn(fresh.txpower, "0123456789") != strlen(fresh.txpower) || dbm < 1)
+			mesh_log_warn(ctx, "option txpower [ %s ] is not a whole number of dBm, not applied",
+				      fresh.txpower);
+		else if (mesh_apply_txpower(ctx, dbm) < 0)
+			mesh_log_notice(ctx, "option txpower [ %d ] dBm: no mesh interface is up, not applied", dbm);
+		else
+			mesh_log_notice(ctx, "option txpower [ %d ] dBm applied", dbm);
+	}
+	/* derived from portal_detect, which is kept: 0 means no threshold */
+	if (ctx->portal_detect == fresh.portal_detect)
+		ctx->portal_detect_threshold = fresh.portal_detect_threshold;
+
+	if (fresh.auto_config != ctx->auto_config)
+		mesh_log_notice(ctx, "option auto_config changed to [ %d ] - restart mesh11sd to apply",
+				fresh.auto_config);
+	if (fresh.portal_detect != ctx->portal_detect)
+		mesh_log_notice(ctx, "option portal_detect changed to [ %d ] - restart mesh11sd to apply",
+				fresh.portal_detect);
+	if (fresh.commit_all != ctx->commit_all)
+		mesh_log_notice(ctx, "option commit_all changed to [ %d ] - restart mesh11sd to apply",
+				fresh.commit_all);
+	if (fresh.wpad_debuglevel != ctx->wpad_debuglevel)
+		mesh_log_notice(ctx, "option wpad_debuglevel changed to [ %d ] - restart mesh11sd to apply",
+				fresh.wpad_debuglevel);
+}
+
 /* Defaults that changed since v7. A v7 user who never set these would
  * get the new behaviour silently, so say so once at startup. */
 static int setup_unset(const char *opt)

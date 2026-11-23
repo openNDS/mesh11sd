@@ -1021,34 +1021,73 @@ int mesh_set_txpower_uci(struct mesh_ctx *ctx)
 	return 0;
 }
 
-int mesh_cli_txpower(struct mesh_ctx *ctx, const char *arg)
+/* First mesh interface that is up, as used by mesh11sd txpower. */
+static const char *first_up_mesh_iface(struct mesh_ctx *ctx)
 {
 	char status[16];
-	int i, current = 0, new_power;
-	char out[256];
+	int i;
 
 	mesh_get_mesh_iflist(ctx);
+	for (i = 0; i < ctx->iflist_count; i++) {
+		mesh_wait_for_interface(ctx, ctx->iflist[i], status, sizeof(status));
+		if (strcmp(status, "down") != 0)
+			return ctx->iflist[i];
+	}
+	return NULL;
+}
+
+/* Transmit power of ifname in whole dBm, or 0 if it cannot be read. */
+static int read_txpower(const char *ifname)
+{
+	char out[256];
+	char *argv[] = { "iw", "dev", (char *)ifname, "info", NULL };
+	int current = 0;
+
+	if (mesh_run_capture(argv, out, sizeof(out)) == 0) {
+		char *tp = strstr(out, "txpower");
+
+		if (tp)
+			sscanf(tp, "txpower %d", &current);
+	}
+	return current;
+}
+
+/*
+ * Set the mesh transmit power to dbm with iw. Used by mesh11sd txpower
+ * and by config_reload when the txpower setup option has changed.
+ * Nothing is written to UCI. Returns the power read back, or -1 if no
+ * mesh interface is up.
+ */
+int mesh_apply_txpower(struct mesh_ctx *ctx, int dbm)
+{
+	const char *ifname = first_up_mesh_iface(ctx);
+	char pwr[16];
+
+	if (!ifname)
+		return -1;
+	snprintf(pwr, sizeof(pwr), "%d", dbm * 100);
+	{
+		char *argv[] = { "iw", "dev", (char *)ifname, "set", "txpower",
+				 "fixed", pwr, NULL };
+		mesh_run_capture(argv, NULL, 0);
+	}
+	return read_txpower(ifname);
+}
+
+int mesh_cli_txpower(struct mesh_ctx *ctx, const char *arg)
+{
+	const char *ifname;
+	int current, new_power;
+
 	printf("===========================================================================\n");
 	printf("Change the mesh transmit power\n");
-	if (ctx->iflist_count == 0) {
-		printf("    No mesh interfaces found\n");
+	ifname = first_up_mesh_iface(ctx);
+	if (!ifname) {
+		printf("    No mesh interfaces up\n");
 		printf("===========================================================================\n\n");
 		return 0;
 	}
-	for (i = 0; i < ctx->iflist_count; i++) {
-		mesh_wait_for_interface(ctx, ctx->iflist[i], status, sizeof(status));
-		if (!strcmp(status, "down"))
-			continue;
-		{
-			char *argv[] = { "iw", "dev", ctx->iflist[i], "info", NULL };
-			if (mesh_run_capture(argv, out, sizeof(out)) == 0) {
-				char *tp = strstr(out, "txpower");
-				if (tp)
-					sscanf(tp, "txpower %d", &current);
-			}
-		}
-		break;
-	}
+	current = read_txpower(ifname);
 	if (!arg || !arg[0]) {
 		printf("    Current TX power [ %d ] dBm \n", current);
 		printf("    Usage: mesh11sd txpower [+|-] \n");
@@ -1056,21 +1095,9 @@ int mesh_cli_txpower(struct mesh_ctx *ctx, const char *arg)
 	} else if (!strcmp(arg, "+") || !strcmp(arg, "-")) {
 		printf("    Previous TX power [ %d ] dBm \n", current);
 		new_power = !strcmp(arg, "+") ? current + 3 : current - 3;
-		{
-			char pwr[16];
-			char *argv[] = { "iw", "dev", ctx->iflist[i], "set", "txpower",
-					 "fixed", pwr, NULL };
-			snprintf(pwr, sizeof(pwr), "%d", new_power * 100);
-			mesh_run_capture(argv, NULL, 0);
-		}
-		{
-			char *argv[] = { "iw", "dev", ctx->iflist[i], "info", NULL };
-			if (mesh_run_capture(argv, out, sizeof(out)) == 0) {
-				char *tp = strstr(out, "txpower");
-				if (tp)
-					sscanf(tp, "txpower %d", &current);
-			}
-		}
+		current = mesh_apply_txpower(ctx, new_power);
+		if (current < 0)
+			current = 0;
 		printf("\n    New TX power - [ %d ] dBm \n", current);
 		snprintf(ctx->txpower, sizeof(ctx->txpower), "%d", current);
 		mesh_uci_set("mesh11sd.setup.txpower", ctx->txpower);
