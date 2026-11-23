@@ -35,6 +35,14 @@ static void print_help(void)
 "  Returns: \"0\" and exit code 0 if successful, exit code 1 if was already disabled\n"
 "\n"
 "####\n"
+"  Option: config_reload\n"
+"  Asks the running daemon to read the setup options again, without a restart.\n"
+"  It applies them at the start of its next loop. Staged changes are kept.\n"
+"  Options used to build the wireless and network configuration, and\n"
+"  auto_config, portal_detect and commit_all, are not changed by a reload.\n"
+"  Usage: mesh11sd config_reload\n"
+"\n"
+"####\n"
 "  Option: auto_config\n"
 "  Configure auto config mode\n"
 "  Usage:\n"
@@ -356,6 +364,17 @@ int mesh_cli_dispatch(struct mesh_ctx *ctx, int argc, char **argv)
 
 	if (!strcmp(cmd, "-v") || !strcmp(cmd, "--version") || !strcmp(cmd, "version")) {
 		printf("mesh11sd version %s\n", MESH11SD_VERSION);
+		return 0;
+	}
+
+	/* Needs no setup: the daemon reads it when it sees the flag. */
+	if (!strcmp(cmd, "config_reload")) {
+		mesh_mkdir_p(MESH11SD_TMPDIR);
+		if (mesh_file_write(MESH11SD_RELOAD_FLAG, "1\n") != 0) {
+			fprintf(stderr, "Unable to request a configuration reload\n");
+			return 1;
+		}
+		puts("Configuration reload requested");
 		return 0;
 	}
 

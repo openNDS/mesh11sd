@@ -244,6 +244,14 @@ The **source** file (comments included) is in [§12](#12-default-configuration-f
 
 Values in the tables below are script defaults when the option is unset. Set with `uci set mesh11sd.setup.<name>='…'` (commit only if you need it across a reboot **without** auto-config rewriting it).
 
+### Applying changes
+
+`service mesh11sd reload` (the same as `mesh11sd config_reload`) asks the running daemon to read the `setup` options again. It does so at the start of its next loop, without a restart, and staged changes are kept. The init script registers a reload trigger, so a change to the `mesh11sd` config applied through ubus (LuCI Save & Apply, `reload_config`) reloads too, rather than restarting.
+
+- **Live on reload:** `debuglevel`, `enabled`, `log_mountpoint`, `max_log_entries`, `checkinterval`, `loop_interval_delta`, `channel_tracking_checkinterval`, `portal_detect_threshold`, `interface_timeout`, `mesh_path_cost`, `mesh_metric_threshold`, `mesh_node_mobility_level` (run time settings), `disable_hwmp_forwarding`, `mesh_mac_forced_forwarding`, `gateway_proxy_arp`, `reboot_on_error`, `stop_on_error`, `manage_opennds_startup`, `txpower` (set with `iw` when the reload runs, as `mesh11sd txpower` does; reverting a staged `txpower` and reloading keeps the current power, so set the old value explicitly to restore it). `watchdog_nonvolatile_log` is re-read on its own every third loop.
+- **When the configuration is built:** options that shape the wireless and network configuration (`country`, `auto_mesh_id`, `auto_mesh_key`, `auto_mesh_band`, `channel_bandwidth_2g`, `portal_channel`, `mesh_phy_index`, `auto_mesh_network`, `mesh_basename`, the SSID options including `keep_system_ssids`, gate and vtun encryption and keys, `tun_id` and the other vtun options, `portal_use_default_ipv4`, `mesh_dtim_period`, `use_default_beacon_interval`). These apply at first configuration. With `auto_config` 1 and `portal_detect` 0 or 1, a committed change to the `mesh11sd` config also rebuilds the portal configuration ([§6](#6-important-behaviour)).
+- **Restart needed:** `auto_config`, `portal_detect`, `commit_all`, `wpad_debuglevel`, `odhcpd_log_level`, `mesh_backhaul_led` and the `mesh_params` section. A reload logs a notice if one of the first four has changed.
+
 ### 7.1 Core
 
 | Option | Default | Notes |
@@ -419,6 +427,7 @@ The daemon runs as a service. CLI is for status, logs, and a few runtime knobs. 
 | Command | Purpose |
 | --- | --- |
 | `mesh11sd enable` / `disable` | Daemon flag |
+| `mesh11sd config_reload` | Running daemon re-reads the run time setup options on its next loop, no restart; also `service mesh11sd reload` ([§7](#applying-changes)) |
 | `mesh11sd auto_config test` / `enable` / `disable` | Test reverts on reboot |
 | `mesh11sd commit_changes commit` | Persist debuglevel, txpower, rssi, mobility level |
 | `mesh11sd commit_all commit` | Write auto_config result to files |
@@ -478,6 +487,25 @@ This is the **source** UCI file shipped in the package (`openwrt/mesh11sd/files/
 
 ```
 config mesh11sd 'setup'
+	###########################################################################################
+	# Applying changes
+	# "service mesh11sd reload" (or "mesh11sd config_reload") makes the running daemon
+	# read the run time options again at the start of its next loop, without a restart.
+	# A change applied through ubus, such as LuCI Save & Apply, does the same.
+	# Live on reload: debuglevel, enabled, log_mountpoint, max_log_entries, checkinterval,
+	#	loop_interval_delta, channel_tracking_checkinterval, portal_detect_threshold,
+	#	interface_timeout, mesh_path_cost, mesh_metric_threshold, mesh_node_mobility_level,
+	#	disable_hwmp_forwarding, mesh_mac_forced_forwarding, gateway_proxy_arp,
+	#	reboot_on_error, stop_on_error, manage_opennds_startup and txpower.
+	#	Reverting a staged txpower and reloading keeps the current power;
+	#	set the old value explicitly to restore it.
+	# Options used to build the wireless and network configuration (country, ssids,
+	#	encryption and keys, bands and channels, vtun options and similar) take effect
+	#	when that configuration is built (see auto_config).
+	# auto_config, portal_detect, commit_all, wpad_debuglevel, odhcpd_log_level,
+	#	mesh_backhaul_led and the mesh_params section need "service mesh11sd restart".
+	#
+
 	###########################################################################################
 	# debuglevel (optional)
 	# Sets the debuglevel

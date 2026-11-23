@@ -1,6 +1,25 @@
 
 config mesh11sd 'setup'
 	###########################################################################################
+	# Applying changes
+	# "service mesh11sd reload" (or "mesh11sd config_reload") makes the running daemon
+	# read the run time options again at the start of its next loop, without a restart.
+	# A change applied through ubus, such as LuCI Save & Apply, does the same.
+	# Live on reload: debuglevel, enabled, log_mountpoint, max_log_entries, checkinterval,
+	#	loop_interval_delta, channel_tracking_checkinterval, portal_detect_threshold,
+	#	interface_timeout, mesh_path_cost, mesh_metric_threshold, mesh_node_mobility_level,
+	#	disable_hwmp_forwarding, mesh_mac_forced_forwarding, gateway_proxy_arp,
+	#	reboot_on_error, stop_on_error, manage_opennds_startup and txpower.
+	#	Reverting a staged txpower and reloading keeps the current power;
+	#	set the old value explicitly to restore it.
+	# Options used to build the wireless and network configuration (country, ssids,
+	#	encryption and keys, bands and channels, vtun options and similar) take effect
+	#	when that configuration is built (see auto_config).
+	# auto_config, portal_detect, commit_all, wpad_debuglevel, odhcpd_log_level,
+	#	mesh_backhaul_led and the mesh_params section need "service mesh11sd restart".
+	#
+
+	###########################################################################################
 	# debuglevel (optional)
 	# Sets the debuglevel
 	# Default: 3 (debug)

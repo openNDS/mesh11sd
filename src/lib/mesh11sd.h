@@ -12,6 +12,8 @@
 
 #define MESH11SD_TMPDIR "/tmp/mesh11sd"
 #define MESH11SD_PARAMS_FILE MESH11SD_TMPDIR "/mesh_params"
+/* Written by "mesh11sd config_reload", removed by the daemon when it reloads */
+#define MESH11SD_RELOAD_FLAG MESH11SD_TMPDIR "/config_reload"
 #define MESH11SD_CONFIG "mesh11sd"
 #define MESH11SD_LOG_NAME "mesh11sd_log.log"
 #define MESH11SD_MAX_IFACES 16
@@ -178,6 +180,7 @@ int mesh_uci_show_filter(const char *package, const char *grep_pat,
 
 void mesh_ctx_init(struct mesh_ctx *ctx, int is_daemon);
 int mesh_ctx_load_setup(struct mesh_ctx *ctx);
+void mesh_ctx_reload_setup(struct mesh_ctx *ctx);
 int mesh_check_config_params(struct mesh_ctx *ctx);
 int mesh_param_get(const char *name, char *out, size_t outlen);
 void mesh_param_set(const char *name, const char *val);
@@ -222,6 +225,7 @@ int mesh_is_channel_valid(const char *band, const char *channel);
 int mesh_refresh_bridgemac(struct mesh_ctx *ctx);
 int mesh_sys_setup(struct mesh_ctx *ctx);
 int mesh_set_txpower_uci(struct mesh_ctx *ctx);
+int mesh_apply_txpower(struct mesh_ctx *ctx, int dbm);
 int mesh_cli_txpower(struct mesh_ctx *ctx, const char *arg);
 int mesh_cli_stations(struct mesh_ctx *ctx);
 int mesh_cli_country(struct mesh_ctx *ctx, const char *code);

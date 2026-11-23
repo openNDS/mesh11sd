@@ -20,6 +20,18 @@ start_service() {
 	procd_close_instance
 }
 
+# Read the setup options again without a restart: the daemon picks up the
+# request at the start of its next loop. Staged changes are not touched.
+reload_service() {
+	/usr/sbin/mesh11sd config_reload
+}
+
+# A change to the mesh11sd config applied through ubus (LuCI Save & Apply,
+# reload_config) runs reload_service above, not a restart.
+service_triggers() {
+	procd_add_reload_trigger "mesh11sd"
+}
+
 # OpenWrt calls stop_service BEFORE procd_kill. v7 (and earlier alphas) put
 # uci revert here; the still-running daemon (or an in-flight/orphan
 # network|dnsmasq restart child) can then apply the reverted stock UCI —

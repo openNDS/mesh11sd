@@ -798,6 +798,8 @@ static int capture_status(struct mesh_ctx *ctx, char *out, size_t outlen)
 		if (dup2(pipefd[1], STDOUT_FILENO) < 0)
 			_exit(1);
 		close(pipefd[1]);
+		/* as a CLI status run (v7 mutestate): no log output */
+		ctx->mute = 1;
 		mesh_cli_status(ctx);
 		fflush(stdout);
 		_exit(0);
