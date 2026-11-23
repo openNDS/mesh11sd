@@ -907,6 +907,13 @@ void mesh_ctx_reload_setup(struct mesh_ctx *ctx)
 				fresh.wpad_debuglevel);
 }
 
+/* mesh11sd config_reload: leave the request for the daemon's next loop. */
+int mesh_request_config_reload(void)
+{
+	mesh_mkdir_p(MESH11SD_TMPDIR);
+	return mesh_file_write(MESH11SD_RELOAD_FLAG, "1\n");
+}
+
 /* Defaults that changed since v7. A v7 user who never set these would
  * get the new behaviour silently, so say so once at startup. */
 static int setup_unset(const char *opt)

@@ -777,8 +777,9 @@ int mesh_cli_status(struct mesh_ctx *ctx)
 #define APMOND_REFRESH_S 30
 #define APMOND_BLOCK_MAX 16384
 
-/* Run mesh_cli_status in a child and capture what it prints. */
-static int capture_status(struct mesh_ctx *ctx, char *out, size_t outlen)
+/* Run mesh_cli_status in a child and capture what it prints. Used for
+ * the apmond block and by the ubus object. */
+int mesh_status_capture(struct mesh_ctx *ctx, char *out, size_t outlen)
 {
 	int pipefd[2], status;
 	size_t total = 0;
@@ -864,7 +865,7 @@ void mesh_status_to_apmond(struct mesh_ctx *ctx)
 		return;
 	last = now;
 
-	if (capture_status(ctx, text, sizeof(text)) != 0)
+	if (mesh_status_capture(ctx, text, sizeof(text)) != 0)
 		return;
 	obj = json_object_after(text, "\"mesh_interfaces\":", &len);
 	if (!obj)

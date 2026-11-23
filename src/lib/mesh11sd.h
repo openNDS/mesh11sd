@@ -181,6 +181,8 @@ int mesh_uci_show_filter(const char *package, const char *grep_pat,
 void mesh_ctx_init(struct mesh_ctx *ctx, int is_daemon);
 int mesh_ctx_load_setup(struct mesh_ctx *ctx);
 void mesh_ctx_reload_setup(struct mesh_ctx *ctx);
+int mesh_request_config_reload(void);
+int mesh_ubus_run(struct mesh_ctx *ctx);
 int mesh_check_config_params(struct mesh_ctx *ctx);
 int mesh_param_get(const char *name, char *out, size_t outlen);
 void mesh_param_set(const char *name, const char *val);
@@ -303,6 +305,7 @@ void mesh_check_mtu(struct mesh_ctx *ctx); /* per-pass baby-jumbo mtu */
 void mesh_check_brport_flags(struct mesh_ctx *ctx); /* per-pass mesh port flags */
 int mesh_wifi_chipset_detect(struct mesh_ctx *ctx); /* writes tmpdir/wifidetect */
 void mesh_status_to_apmond(struct mesh_ctx *ctx); /* "mesh" extension block, if apmond */
+int mesh_status_capture(struct mesh_ctx *ctx, char *out, size_t outlen);
 int mesh_probe_interface_mac(struct mesh_ctx *ctx);
 int mesh_set_iface_path_cost(struct mesh_ctx *ctx, int path_cost,
 			     const char *bridge, const char *iface);

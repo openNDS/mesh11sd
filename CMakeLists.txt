@@ -24,6 +24,7 @@ set(MESH11SD_SOURCES
 	src/mesh11sd/main.c
 	src/mesh11sd/cli.c
 	src/mesh11sd/daemon.c
+	src/mesh11sd/ubus.c
 	src/lib/config.c
 	src/lib/uci_ops.c
 	src/lib/util.c
@@ -51,4 +52,5 @@ target_include_directories(mesh11sd PRIVATE src/lib)
 target_compile_definitions(mesh11sd PRIVATE
 	MESH11SD_VERSION="${MESH11SD_PACKAGE_VERSION}"
 	MESH11SD_BUILD_COMMIT="${MESH11SD_BUILD_COMMIT}")
+target_link_libraries(mesh11sd ubus ubox blobmsg_json)
 install(TARGETS mesh11sd RUNTIME DESTINATION sbin)
