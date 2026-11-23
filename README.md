@@ -214,6 +214,23 @@ Power nodes in any order. **One** WAN to the ISP for a detect=1 portal.
 5. All nodes must share mesh id, key, and (via tracking) channel. Auto-config does this if `auto_mesh_id` / `auto_mesh_key` match.
 6. **Known interop issue:** some MediaTek Wi-Fi 7 nodes (seen on the GL-MT3600BE) may fail to peer with ath11k nodes (seen on the GL-AXT1800). The link stays in LISTEN, OPN_RCVD or BLOCKED and wpa_supplicant logs `Mesh RSN: frame verification failed`. Mesh11sd v7 behaves the same, and other node pairs are unaffected. It often clears by itself after a while; otherwise keep those two models out of direct range of each other, or give them another node that both can peer with.
 
+## Security
+
+Mesh11sd is a privileged local network manager, in the same class as netifd. It reconfigures wireless, network, DHCP, firewall and related services on the node it runs on, so the daemon runs as root by design.
+
+It opens no listening sockets and has no network-reachable control interface. You drive it from the node itself, as root, with the `mesh11sd` command (SSH or console). `uci` and the init script work as usual; they are local too.
+
+Runtime changes are staged with UCI and, in normal operation, are not written to flash. Uncommitted changes to `mesh11sd`, `wireless`, `dhcp` and `network` are reverted when the service stops. The flash writes that do happen are deliberate:
+
+- Commits to `/etc/config` when you request them (`commit_changes`, `commit_all`, or a command that saves a single option). The portal configuration is also committed before portal detection when `auto_config` is 1, as described in [§6](#6-important-behaviour), and `auto_config` 2 commits everything. The last detected role is saved so the next boot can start correctly.
+- `/etc/init.d/wpad` is rewritten when the wpad debug level changes, with the original kept as `/etc/init.d/wpad.original`.
+- `mesh11sd force_ipv4_download` replaces `/usr/bin/wget` with a wrapper that forces IPv4 and keeps the original as `/usr/bin/wget.bak`. Put it back with `mesh11sd download_revert_to_default`.
+- If you enable the optional watchdog log, it appends to `/mesh11sd_log/mesh11sd.log` on flash. That is only for debugging restarts; it wears the flash, so leave it off unless you need it.
+
+The daemon is written in C. It starts standard OpenWrt tools (`uci`, `iw`, `ip`, `nft`, `brctl`, `/sbin/service`, `wifi` and similar) with an argument list. It does not accept commands from the network.
+
+It is not run under procd-ujail. Doing its job means running `wifi` and service reload or restart, writing `/etc/config` and `/proc/sys`, and adjusting sysfs and debugfs. A jail that allowed all of that would still be equivalent to root, so confining the process would be cosmetic.
+
 ## 7. Configuration - Setup Options
 
 The UCI package `mesh11sd` has **two** stanzas:
