@@ -32,38 +32,26 @@ static int mac_looks_valid(const char *mac)
 
 static int read_link_ether(const char *dev, char *mac, size_t maclen)
 {
-	char cmd[128];
-	FILE *f;
-	char line[256];
+	char out[1024];
+	char *argv[] = { "ip", "link", "show", (char *)dev, NULL };
 	char *p;
 
 	if (!dev || !dev[0])
 		return -1;
-	snprintf(cmd, sizeof(cmd), "ip link show '%s' 2>/dev/null", dev);
-	f = popen(cmd, "r");
-	if (!f)
+	if (mesh_run_capture(argv, out, sizeof(out)) != 0)
 		return -1;
-	while (fgets(line, sizeof(line), f)) {
-		p = strstr(line, "link/ether ");
-		if (!p)
-			continue;
-		p += strlen("link/ether ");
-		sscanf(p, "%31s", mac);
-		pclose(f);
-		if (mac_looks_valid(mac))
-			return 0;
+	p = strstr(out, "link/ether ");
+	if (!p)
 		return -1;
-	}
-	pclose(f);
+	sscanf(p + strlen("link/ether "), "%31s", mac);
 	(void)maclen;
-	return -1;
+	return mac_looks_valid(mac) ? 0 : -1;
 }
 
 int mesh_get_factory_mac(struct mesh_ctx *ctx, char *mac_out, size_t mac_len)
 {
 	char mac[32];
 	char buf[64];
-	FILE *f;
 	const char *fallbacks[] = { "eth1", "eth0", "lan0", "lan1", NULL };
 	int i;
 
@@ -72,15 +60,15 @@ int mesh_get_factory_mac(struct mesh_ctx *ctx, char *mac_out, size_t mac_len)
 	mac_out[0] = '\0';
 	mac[0] = '\0';
 
-	/* 1. OpenWrt get_mac_label via system.sh */
-	f = popen(". /lib/functions/system.sh 2>/dev/null && get_mac_label 2>/dev/null", "r");
-	if (f) {
-		if (fgets(mac, sizeof(mac), f)) {
-			size_t n = strlen(mac);
-			while (n > 0 && (mac[n - 1] == '\n' || mac[n - 1] == '\r'))
-				mac[--n] = '\0';
-		}
-		pclose(f);
+	/* 1. OpenWrt get_mac_label via system.sh (fixed command, no data in the string) */
+	{
+		char *argv[] = {
+			"sh", "-c",
+			". /lib/functions/system.sh 2>/dev/null && get_mac_label 2>/dev/null",
+			NULL
+		};
+
+		mesh_run_capture(argv, mac, sizeof(mac));
 		if (mac_looks_valid(mac)) {
 			mesh_write_to_syslog(ctx, "info", "Factory MAC obtained from system function call");
 			snprintf(mac_out, mac_len, "%s", mac);
@@ -107,23 +95,25 @@ int mesh_get_factory_mac(struct mesh_ctx *ctx, char *mac_out, size_t mac_len)
 	}
 
 	/* 4. first ether */
-	f = popen("ip -o link show type ether 2>/dev/null | head -n1", "r");
-	if (f) {
-		char line[256];
+	{
+		char out[4096];
 		char dev[64];
-		if (fgets(line, sizeof(line), f)) {
+		char *nl;
+		char *argv[] = { "ip", "-o", "link", "show", "type", "ether", NULL };
+
+		if (mesh_run_capture(argv, out, sizeof(out)) == 0 && out[0]) {
+			nl = strchr(out, '\n');
+			if (nl)
+				*nl = '\0';
 			/* "2: eth0: <...> ..." */
-			if (sscanf(line, "%*d: %63[^:]", dev) == 1) {
-				if (read_link_ether(dev, mac, sizeof(mac)) == 0) {
-					pclose(f);
-					mesh_write_to_syslog(ctx, "info",
-						"Factory MAC obtained from first detected Ethernet interface");
-					snprintf(mac_out, mac_len, "%s", mac);
-					return 0;
-				}
+			if (sscanf(out, "%*d: %63[^:]", dev) == 1 &&
+			    read_link_ether(dev, mac, sizeof(mac)) == 0) {
+				mesh_write_to_syslog(ctx, "info",
+					"Factory MAC obtained from first detected Ethernet interface");
+				snprintf(mac_out, mac_len, "%s", mac);
+				return 0;
 			}
 		}
-		pclose(f);
 	}
 
 	mesh_write_to_syslog(ctx, "warn", "Could not determine factory MAC address");
