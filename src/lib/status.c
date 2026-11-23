@@ -121,20 +121,13 @@ static void emit_mesh_param_fields(const char *params_dump, int *emitted)
 
 static int read_devstatus_field(const char *iface, const char *field, char *out, size_t outlen)
 {
-	char cmd[160];
 	char buf[4096];
-	FILE *f;
+	char *argv[] = { "devstatus", (char *)iface, NULL };
 	char *p;
 
 	out[0] = '\0';
-	snprintf(cmd, sizeof(cmd), "devstatus %s 2>/dev/null", iface);
-	f = popen(cmd, "r");
-	if (!f)
+	if (mesh_run_capture(argv, buf, sizeof(buf)) != 0)
 		return 1;
-	buf[0] = '\0';
-	while (fgets(buf + strlen(buf), (int)(sizeof(buf) - strlen(buf)), f))
-		;
-	pclose(f);
 	p = strstr(buf, field);
 	if (!p)
 		return 1;
@@ -374,16 +367,11 @@ static void emit_layer2(struct mesh_ctx *ctx)
 
 static void read_procd_status(char *out, size_t outlen)
 {
-	FILE *f = popen("/etc/init.d/mesh11sd status 2>/dev/null", "r");
+	char *argv[] = { "/etc/init.d/mesh11sd", "status", NULL };
+
 	snprintf(out, outlen, "unknown");
-	if (!f)
-		return;
-	if (fgets(out, (int)outlen, f)) {
-		size_t n = strlen(out);
-		while (n && (out[n - 1] == '\n' || out[n - 1] == '\r'))
-			out[--n] = '\0';
-	}
-	pclose(f);
+	if (mesh_run_capture(argv, out, outlen) != 0 && !out[0])
+		snprintf(out, outlen, "unknown");
 }
 
 static void read_txpower(struct mesh_ctx *ctx, char *out, size_t outlen)

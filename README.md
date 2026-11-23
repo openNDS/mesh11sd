@@ -227,7 +227,7 @@ Runtime changes are staged with UCI and, in normal operation, are not written to
 - `mesh11sd force_ipv4_download` replaces `/usr/bin/wget` with a wrapper that forces IPv4 and keeps the original as `/usr/bin/wget.bak`. Put it back with `mesh11sd download_revert_to_default`.
 - If you enable the optional watchdog log, it appends to `/mesh11sd_log/mesh11sd.log` on flash. That is only for debugging restarts; it wears the flash, so leave it off unless you need it.
 
-The daemon is written in C. It starts standard OpenWrt tools (`uci`, `iw`, `ip`, `nft`, `brctl`, `/sbin/service`, `wifi` and similar) with an argument list. It does not accept commands from the network.
+The daemon is written in C. It starts standard OpenWrt tools (`uci`, `iw`, `ip`, `nft`, `brctl`, `/sbin/service`, `wifi` and similar) with an argument list. Log messages are written to the mesh11sd log file and, for notices and above, to syslog, without building a shell command from the text. It does not accept commands from the network.
 
 It is not run under procd-ujail. Doing its job means running `wifi` and service reload or restart, writing `/etc/config` and `/proc/sys`, and adjusting sysfs and debugfs. A jail that allowed all of that would still be equivalent to root, so confining the process would be cosmetic.
 

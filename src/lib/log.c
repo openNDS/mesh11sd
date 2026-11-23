@@ -1,10 +1,12 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "mesh11sd.h"
 
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <syslog.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -28,6 +30,83 @@ static int level_num(const char *debugtype, const char **stderr_flag)
 	if (!strcmp(debugtype, "debug"))
 		return 3;
 	return 1;
+}
+
+static int syslog_prio(const char *dtype)
+{
+	if (!strcmp(dtype, "emerg"))
+		return LOG_EMERG;
+	if (!strcmp(dtype, "err"))
+		return LOG_ERR;
+	if (!strcmp(dtype, "warn"))
+		return LOG_WARNING;
+	if (!strcmp(dtype, "notice"))
+		return LOG_NOTICE;
+	if (!strcmp(dtype, "info"))
+		return LOG_INFO;
+	if (!strcmp(dtype, "debug"))
+		return LOG_DEBUG;
+	return LOG_NOTICE;
+}
+
+/* Same tag, facility and priority as the old logger -p daemon.<type> -t call.
+ * pid is already in the tag, so LOG_PID is not set. LOG_PERROR is logger -s. */
+static void mesh_syslog(int pid, const char *dtype, int to_stderr,
+			const char *tag_extra, const char *msg)
+{
+	char tag[32];
+	int opts = LOG_NDELAY;
+
+	if (to_stderr)
+		opts |= LOG_PERROR;
+	if (tag_extra && tag_extra[0])
+		snprintf(tag, sizeof(tag), "mesh11sd[%d]%s", pid, tag_extra);
+	else
+		snprintf(tag, sizeof(tag), "mesh11sd[%d]", pid);
+	openlog(tag, opts, LOG_DAEMON);
+	syslog(syslog_prio(dtype), "%s", msg);
+	closelog();
+}
+
+/* Keep the last max_lines of logfile, without a shell. */
+static void mesh_trim_logfile(const char *logfile, int max_lines)
+{
+	FILE *lf, *out;
+	char buf[1024];
+	char tmp[256];
+	long lines = 0, skip;
+	int c;
+
+	if (max_lines < 1)
+		return;
+	lf = fopen(logfile, "r");
+	if (!lf)
+		return;
+	while ((c = fgetc(lf)) != EOF)
+		if (c == '\n')
+			lines++;
+	if (lines <= max_lines) {
+		fclose(lf);
+		return;
+	}
+	rewind(lf);
+	skip = lines - max_lines;
+	while (skip > 0 && fgets(buf, sizeof(buf), lf)) {
+		if (strchr(buf, '\n'))
+			skip--;
+	}
+	snprintf(tmp, sizeof(tmp), "%s.cut", logfile);
+	out = fopen(tmp, "w");
+	if (!out) {
+		fclose(lf);
+		return;
+	}
+	while (fgets(buf, sizeof(buf), lf))
+		fputs(buf, out);
+	fclose(lf);
+	fclose(out);
+	if (rename(tmp, logfile) != 0)
+		unlink(tmp);
 }
 
 int mesh_is_mountpoint(const char *path)
@@ -70,22 +149,19 @@ void mesh_write_log(struct mesh_ctx *ctx, const char *debugtype, const char *msg
 {
 	char logdir[192];
 	char logfile[220];
-	char cmd[1536];
 	FILE *f;
 	time_t now;
 	char timestr[64];
 	long available = 0, filesize = 1, sizeratio;
-	FILE *df;
+	char dfout[8192];
+	char *dfargv[] = { "df", NULL };
 
 	if (!ctx || !msg)
 		return;
 
 	if (!mesh_is_mountpoint(ctx->log_mountpoint)) {
-		snprintf(cmd, sizeof(cmd),
-			 "logger -p daemon.err -s -t 'mesh11sd[%d]:' "
-			 "'Log location is NOT a mountpoint - logs would fill storage space - logging disabled'",
-			 (int)ctx->pid);
-		system(cmd);
+		mesh_syslog((int)ctx->pid, "err", 1, ":",
+			    "Log location is NOT a mountpoint - logs would fill storage space - logging disabled");
 		return;
 	}
 
@@ -93,34 +169,18 @@ void mesh_write_log(struct mesh_ctx *ctx, const char *debugtype, const char *msg
 	snprintf(logfile, sizeof(logfile), "%s/%s", logdir, MESH11SD_LOG_NAME);
 	mkdir(logdir, 0755);
 
-	/* truncate if over max_log_entries */
-	{
-		FILE *lf = fopen(logfile, "r");
-		long lines = 0;
-		int c;
-		if (lf) {
-			while ((c = fgetc(lf)) != EOF)
-				if (c == '\n')
-					lines++;
-			fclose(lf);
-		}
-		if (lines > ctx->max_log_entries) {
-			snprintf(cmd, sizeof(cmd),
-				 "mv '%s' '%s.cut' 2>/dev/null; "
-				 "tail -n %d '%s.cut' 2>/dev/null >> '%s'; "
-				 "rm -f '%s.cut'",
-				 logfile, logfile, ctx->max_log_entries,
-				 logfile, logfile, logfile);
-			system(cmd);
-		}
-	}
+	mesh_trim_logfile(logfile, ctx->max_log_entries);
 
-	df = popen("df", "r");
-	if (df) {
-		char line[256];
-		while (fgets(line, sizeof(line), df)) {
+	if (mesh_run_capture(dfargv, dfout, sizeof(dfout)) == 0) {
+		char *line, *next;
+
+		for (line = dfout; line && *line; line = next) {
 			char fs[64], mp[128];
 			long blocks, used, avail;
+
+			next = strchr(line, '\n');
+			if (next)
+				*next++ = '\0';
 			if (sscanf(line, "%63s %ld %ld %ld %*s %127s",
 				   fs, &blocks, &used, &avail, mp) >= 5) {
 				if (!strcmp(mp, ctx->log_mountpoint)) {
@@ -129,7 +189,6 @@ void mesh_write_log(struct mesh_ctx *ctx, const char *debugtype, const char *msg
 				}
 			}
 		}
-		pclose(df);
 	}
 
 	{
@@ -142,11 +201,8 @@ void mesh_write_log(struct mesh_ctx *ctx, const char *debugtype, const char *msg
 
 	sizeratio = available / filesize;
 	if (sizeratio < 10) {
-		snprintf(cmd, sizeof(cmd),
-			 "logger -p daemon.err -s -t 'mesh11sd[%d]:' "
-			 "'Log file too big, please archive contents and reduce max_log_entries'",
-			 (int)ctx->pid);
-		system(cmd);
+		mesh_syslog((int)ctx->pid, "err", 1, ":",
+			    "Log file too big, please archive contents and reduce max_log_entries");
 		return;
 	}
 
@@ -166,7 +222,6 @@ void mesh_write_to_syslog(struct mesh_ctx *ctx, const char *debugtype, const cha
 	const char *stderr_flag;
 	int debugnum;
 	char prefixed[640];
-	char cmd[768];
 	const char *dtype = debugtype ? debugtype : "notice";
 
 	if (!ctx || !msg || !msg[0])
@@ -195,11 +250,8 @@ void mesh_write_to_syslog(struct mesh_ctx *ctx, const char *debugtype, const cha
 
 	if (!strcmp(dtype, "emerg") || !strcmp(dtype, "err") ||
 	    !strcmp(dtype, "notice") || !strcmp(dtype, "warn")) {
-		snprintf(cmd, sizeof(cmd),
-			 "logger -p 'daemon.%s' %s -t 'mesh11sd[%d]' '%s'",
-			 dtype, stderr_flag, (int)ctx->pid, prefixed);
-		/* escape single quotes poorly — use safer write via popen later; for now replace */
-		system(cmd);
+		mesh_syslog((int)ctx->pid, dtype, stderr_flag[0] != '\0', NULL,
+			    prefixed);
 	}
 
 	mesh_write_log(ctx, dtype, prefixed);
@@ -209,7 +261,6 @@ void mesh_write_to_syslog(struct mesh_ctx *ctx, const char *debugtype, const cha
 int mesh_read_log(struct mesh_ctx *ctx, int follow)
 {
 	char logfile[220];
-	char cmd[320];
 	FILE *f;
 	char line[1024];
 
@@ -241,8 +292,17 @@ int mesh_read_log(struct mesh_ctx *ctx, int follow)
 	f = fopen(logfile, "w");
 	if (f)
 		fclose(f);
-	snprintf(cmd, sizeof(cmd), "tail -F '%s' 2>/dev/null", logfile);
-	return system(cmd) == 0 ? 0 : 1;
+	fflush(stdout);
+	{
+		int devnull = open("/dev/null", O_WRONLY);
+
+		if (devnull >= 0) {
+			dup2(devnull, STDERR_FILENO);
+			close(devnull);
+		}
+		execlp("tail", "tail", "-F", logfile, (char *)NULL);
+	}
+	return 1;
 }
 
 #include <stdarg.h>
