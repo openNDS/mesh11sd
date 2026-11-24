@@ -16,7 +16,9 @@ config mesh11sd 'setup'
 	#	encryption and keys, bands and channels, vtun options and similar) take effect
 	#	when that configuration is built (see auto_config).
 	# auto_config, portal_detect, commit_all, wpad_debuglevel, odhcpd_log_level,
-	#	mesh_backhaul_led and the mesh_params section need "service mesh11sd restart".
+	#	mesh_backhaul_led, mesh_multi_interfaces, swconfig_mac_skip, cpe_mode,
+	#	move_ethernet_to_vxlan_bridge and the mesh_params section are read only when
+	#	mesh11sd starts: commit the change and reboot the node.
 	#
 
 	###########################################################################################

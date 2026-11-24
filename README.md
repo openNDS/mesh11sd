@@ -252,7 +252,7 @@ Values in the tables below are script defaults when the option is unset. Set wit
 
 - **Live on reload:** `debuglevel`, `enabled`, `log_mountpoint`, `max_log_entries`, `checkinterval`, `loop_interval_delta`, `channel_tracking_checkinterval`, `portal_detect_threshold`, `interface_timeout`, `mesh_path_cost`, `mesh_metric_threshold`, `mesh_node_mobility_level` (run time settings), `disable_hwmp_forwarding`, `mesh_mac_forced_forwarding`, `gateway_proxy_arp`, `reboot_on_error`, `stop_on_error`, `manage_opennds_startup`, `txpower` (set with `iw` when the reload runs, as `mesh11sd txpower` does; reverting a staged `txpower` and reloading keeps the current power, so set the old value explicitly to restore it). `watchdog_nonvolatile_log` is re-read on its own every third loop.
 - **When the configuration is built:** options that shape the wireless and network configuration (`country`, `auto_mesh_id`, `auto_mesh_key`, `auto_mesh_band`, `channel_bandwidth_2g`, `portal_channel`, `mesh_phy_index`, `auto_mesh_network`, `mesh_basename`, the SSID options including `keep_system_ssids`, gate and vtun encryption and keys, `tun_id` and the other vtun options, `portal_use_default_ipv4`, `mesh_dtim_period`, `use_default_beacon_interval`). These apply at first configuration. With `auto_config` 1 and `portal_detect` 0 or 1, a committed change to the `mesh11sd` config also rebuilds the portal configuration ([§6](#6-important-behaviour)).
-- **Restart needed:** `auto_config`, `portal_detect`, `commit_all`, `wpad_debuglevel`, `odhcpd_log_level`, `mesh_backhaul_led` and the `mesh_params` section. A reload logs a notice if one of the first four has changed.
+- **Reboot needed:** `auto_config`, `portal_detect`, `commit_all`, `wpad_debuglevel`, `odhcpd_log_level`, `mesh_backhaul_led`, `mesh_multi_interfaces`, `swconfig_mac_skip`, `cpe_mode`, `move_ethernet_to_vxlan_bridge` and the `mesh_params` section are read only when mesh11sd starts. Commit the change and reboot the node: `service mesh11sd restart` reverts the staged network, wireless and dhcp changes without reloading them, so the running network keeps the old setup, while a reboot starts clean from the committed configuration. A reload logs a notice if one of the first four has changed.
 
 ### 7.1 Core
 
@@ -463,7 +463,7 @@ The init script runs `mesh11sd ubus` as a second service instance. It registers 
 | `auto_config_test` | `{"started": true}`; as `mesh11sd auto_config test` ([§5.1](#51-confidence-test)) without the question. While `auto_config` is not 0, saved or in the running daemon, or a test is already running, nothing is started and the reply is `{"started": false, "message": "…"}`. `status` shows a running test as `auto_config_test` 1. |
 | `version` | `{"version": "…", "build_commit": "…"}` |
 
-While the daemon runs, `status` also shows `running_auto_config` (the daemon's own value; `auto_config` is the saved one), `restart_needed` (1 when an option that only applies on a restart is saved differently from the running daemon) and `restart_options` (those options). The restart-only options are `auto_config`, `portal_detect`, `commit_all`, `wpad_debuglevel`, `odhcpd_log_level`, `mesh_backhaul_led`, `mesh_multi_interfaces`, `swconfig_mac_skip`, `cpe_mode` and `move_ethernet_to_vxlan_bridge`.
+While the daemon runs, `status` also shows `running_auto_config` (the daemon's own value; `auto_config` is the saved one), `restart_needed` (1 when an option that is read only when mesh11sd starts is saved differently from the running daemon; reboot the node to apply it, [§7](#applying-changes)) and `restart_options` (those options). The restart-only options are `auto_config`, `portal_detect`, `commit_all`, `wpad_debuglevel`, `odhcpd_log_level`, `mesh_backhaul_led`, `mesh_multi_interfaces`, `swconfig_mac_skip`, `cpe_mode` and `move_ethernet_to_vxlan_bridge`.
 
 Example: `ubus call mesh11sd status`. Nothing is committed, reverted or restored over ubus. The auto_config test changes the node's network and IPv4 address live, uncommitted, so a reboot reverts it.
 
@@ -521,7 +521,9 @@ config mesh11sd 'setup'
 	#	encryption and keys, bands and channels, vtun options and similar) take effect
 	#	when that configuration is built (see auto_config).
 	# auto_config, portal_detect, commit_all, wpad_debuglevel, odhcpd_log_level,
-	#	mesh_backhaul_led and the mesh_params section need "service mesh11sd restart".
+	#	mesh_backhaul_led, mesh_multi_interfaces, swconfig_mac_skip, cpe_mode,
+	#	move_ethernet_to_vxlan_bridge and the mesh_params section are read only when
+	#	mesh11sd starts: commit the change and reboot the node.
 	#
 
 	###########################################################################################
