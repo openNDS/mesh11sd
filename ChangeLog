@@ -17,6 +17,7 @@ mesh11sd (8.0.0~beta1)
   * Fix - write beacon_int only on the mesh radio and apply the full set of configured mesh_params [bluewavenet]
   * Fix - set bridge port priorities (ethernet 16, mesh 32) every loop [bluewavenet]
   * Change - default channel_tracking_checkinterval is checkinterval * 8 / 3 [bluewavenet]
+  * Fix - portal_detect_threshold 0 turns the portal watchdog off (no network restart, reboot or stop), as documented [bluewavenet]
 
  -- Rob White <rob@blue-wave.net>  Tue, 10 Nov 2026 19:30:00 +0000
 

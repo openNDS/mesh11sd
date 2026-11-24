@@ -265,7 +265,7 @@ Values in the tables below are script defaults when the option is unset. Set wit
 | `interface_timeout` | 10 | Wait for an interface to come up. |
 | `auto_config` | 0 | 0 off, 1 on (portal config committed, LuCI usable in modes 0 and 1), 2 on + `commit_all` + LuCI (locks first role). |
 | `portal_detect` | 1 | See [§4](#4-node-types). Ignored if auto_config is 0. |
-| `portal_detect_threshold` | 5 | Watchdog: checkintervals without a portal before action. 0 = never. |
+| `portal_detect_threshold` | 5 | Watchdog: checkintervals without a portal before action. 0 turns the watchdog off (no network restart, reboot or stop). |
 | `portal_use_default_ipv4` | 0 | Portal: 1 = keep `/etc/config/network` IPv4; 0 = hash from label MAC. |
 | `portal_channel` | default | Portal 2.4 GHz: `auto`, `default`, or channel 1–13. Peers track it. |
 | `channel_tracking_checkinterval` | checkinterval×8/3 | Minimum seconds between peer channel scans. Unset is 26 when `checkinterval` is 10. The wait scales by `loop_interval` / `checkinterval`. |

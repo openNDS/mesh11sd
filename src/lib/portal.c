@@ -1155,6 +1155,14 @@ int mesh_portal_watchdog(struct mesh_ctx *ctx)
 {
 	int auto_detect = (ctx->portal_detect == 1 || ctx->portal_detect == 3);
 
+	/* portal_detect_threshold 0 turns the watchdog off: no network
+	 * restart, reboot or stop because a portal is missing. */
+	if (ctx->portal_detect_threshold <= 0) {
+		ctx->failcount = 0;
+		ctx->network_restart = 0;
+		return 0;
+	}
+
 	if (strcmp(ctx->detected_state, "portal") != 0 && auto_detect) {
 		if (ctx->portal_detect_threshold > ctx->failcount) {
 			mesh_log_debug(ctx, "Portal Watchdog countdown [ %d ] ",
