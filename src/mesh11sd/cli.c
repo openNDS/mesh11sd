@@ -697,10 +697,17 @@ int mesh_cli_dispatch(struct mesh_ctx *ctx, int argc, char **argv)
 			puts("");
 			return 1;
 		}
-		if (!strcmp(arg, "test") &&
-		    mesh_auto_config_test_check(ctx) == MESH_AUTO_CONFIG_TEST_ON) {
-			puts("auto_config is already enabled, no need to test");
-			return 0;
+		if (!strcmp(arg, "test")) {
+			int check = mesh_auto_config_test_check(ctx);
+
+			if (check == MESH_AUTO_CONFIG_TEST_ON) {
+				puts("auto_config is already enabled, no need to test");
+				return 0;
+			}
+			if (check == MESH_AUTO_CONFIG_TEST_RESTART) {
+				puts("mesh11sd is running with auto_config on, restart mesh11sd first");
+				return 1;
+			}
 		}
 		if (ctx->auto_config != 0 && !strcmp(arg, "enable")) {
 			unlink(testflag);

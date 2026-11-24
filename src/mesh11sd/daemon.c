@@ -131,6 +131,7 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 	ctx->daemon_startup = 1;
 	snprintf(ctx->last_state, sizeof(ctx->last_state), "initial");
 	mesh_ctx_load_setup(ctx);
+	mesh_write_running_setup(ctx);
 	mesh_run_capture(nft_argv, NULL, 0);
 	ensure_factory_mac(ctx);
 	unlink(MESH11SD_TMPDIR "/last_mac_indexed");

@@ -56,5 +56,6 @@ service_stopped() {
 	/sbin/uci revert dhcp
 	/sbin/uci revert network
 	/usr/sbin/nft delete table bridge mesh11s 2> /dev/null
+	rm -f /tmp/mesh11sd/running_setup
 	/usr/sbin/mesh11sd "write_to_syslog" "Mesh11sd is shutting down" "notice"
 }

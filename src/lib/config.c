@@ -922,10 +922,17 @@ int mesh_request_config_reload(void)
  */
 int mesh_auto_config_test_check(struct mesh_ctx *ctx)
 {
+	char running[16];
+
 	if (ctx->auto_config != 0) {
 		unlink(MESH11SD_AUTO_CONFIG_TEST_FLAG);
 		return MESH_AUTO_CONFIG_TEST_ON;
 	}
+	/* auto_config only changes on a restart: a daemon still running
+	 * with it on must not see the test flag */
+	if (mesh_running_setup_get("auto_config", running, sizeof(running)) == 0 &&
+	    strcmp(running, "0") != 0)
+		return MESH_AUTO_CONFIG_TEST_RESTART;
 	if (mesh_auto_config_test_running())
 		return MESH_AUTO_CONFIG_TEST_RUNNING;
 	return MESH_AUTO_CONFIG_TEST_OK;
@@ -940,6 +947,110 @@ int mesh_auto_config_test_start(void)
 {
 	mesh_mkdir_p(MESH11SD_TMPDIR);
 	return mesh_file_write(MESH11SD_AUTO_CONFIG_TEST_FLAG, "");
+}
+
+/*
+ * The options that config_reload does not apply, as "name=value" lines.
+ * The daemon writes its own values to MESH11SD_RUNNING_SETUP at startup,
+ * so status can tell when the saved configuration needs a restart.
+ */
+static void restart_options_format(struct mesh_ctx *ctx, char *out, size_t outlen)
+{
+	snprintf(out, outlen,
+		 "auto_config=%d\n"
+		 "portal_detect=%d\n"
+		 "commit_all=%d\n"
+		 "wpad_debuglevel=%d\n"
+		 "odhcpd_log_level=%d\n"
+		 "mesh_backhaul_led=%s\n"
+		 "mesh_multi_interfaces=%d\n"
+		 "swconfig_mac_skip=%d\n"
+		 "cpe_mode=%s\n"
+		 "move_ethernet_to_vxlan_bridge=%d\n",
+		 ctx->auto_config, ctx->portal_detect, ctx->commit_all,
+		 ctx->wpad_debuglevel, ctx->odhcpd_log_level, ctx->mesh_backhaul_led,
+		 ctx->mesh_multi_interfaces_enabled, ctx->swconfig_mac_skip,
+		 ctx->cpe_mode, ctx->move_ethernet_to_vxlan_bridge);
+}
+
+int mesh_write_running_setup(struct mesh_ctx *ctx)
+{
+	char buf[512];
+
+	restart_options_format(ctx, buf, sizeof(buf));
+	mesh_mkdir_p(MESH11SD_TMPDIR);
+	return mesh_file_write(MESH11SD_RUNNING_SETUP, buf);
+}
+
+/* One "name=value" from text; 0 if found. */
+static int option_from_lines(const char *text, const char *name, char *out, size_t outlen)
+{
+	size_t n = strlen(name);
+	const char *p = text;
+
+	while (p && *p) {
+		if (!strncmp(p, name, n) && p[n] == '=') {
+			const char *v = p + n + 1;
+			size_t len = strcspn(v, "\n");
+
+			if (len >= outlen)
+				len = outlen - 1;
+			memcpy(out, v, len);
+			out[len] = '\0';
+			return 0;
+		}
+		p = strchr(p, '\n');
+		if (p)
+			p++;
+	}
+	return 1;
+}
+
+/* The running daemon's value of a restart option; 0 if known. */
+int mesh_running_setup_get(const char *name, char *out, size_t outlen)
+{
+	char buf[512];
+	size_t n;
+	FILE *f = fopen(MESH11SD_RUNNING_SETUP, "r");
+
+	if (!f)
+		return 1;
+	n = fread(buf, 1, sizeof(buf) - 1, f);
+	fclose(f);
+	buf[n] = '\0';
+	return option_from_lines(buf, name, out, outlen);
+}
+
+/*
+ * Compare the restart options of ctx (the saved configuration) with the
+ * running daemon's. names gets the changed ones, separated by spaces.
+ * Returns how many differ, or -1 if the running values are not known.
+ */
+int mesh_restart_options_changed(struct mesh_ctx *ctx, char *names, size_t namelen)
+{
+	char saved[512], *line, *p;
+	int changed = 0;
+
+	names[0] = '\0';
+	if (access(MESH11SD_RUNNING_SETUP, R_OK) != 0)
+		return -1;
+	restart_options_format(ctx, saved, sizeof(saved));
+	p = saved;
+	while ((line = strsep(&p, "\n")) != NULL) {
+		char *eq = strchr(line, '=');
+		char running[96];
+
+		if (!eq)
+			continue;
+		*eq = '\0';
+		if (mesh_running_setup_get(line, running, sizeof(running)) == 0 &&
+		    !strcmp(running, eq + 1))
+			continue;
+		snprintf(names + strlen(names), namelen - strlen(names), "%s%s",
+			 changed ? " " : "", line);
+		changed++;
+	}
+	return changed;
 }
 
 /* Defaults that changed since v7. A v7 user who never set these would

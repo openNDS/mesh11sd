@@ -460,8 +460,10 @@ The init script runs `mesh11sd ubus` as a second service instance. It registers 
 | `status` | The same JSON as `mesh11sd status` |
 | `stations` | `{"interfaces": {"<ifname>": [{"mac": "…", "<iw field>": "…", …}]}}` from `iw dev <ifname> station dump` for each mesh interface |
 | `config_reload` | `{"requested": true}`; as `mesh11sd config_reload` |
-| `auto_config_test` | `{"started": true}`; as `mesh11sd auto_config test` ([§5.1](#51-confidence-test)) without the question. While `auto_config` is not 0, or a test is already running, nothing is started and the reply is `{"started": false, "message": "…"}`. `status` shows a running test as `auto_config_test` 1. |
+| `auto_config_test` | `{"started": true}`; as `mesh11sd auto_config test` ([§5.1](#51-confidence-test)) without the question. While `auto_config` is not 0, saved or in the running daemon, or a test is already running, nothing is started and the reply is `{"started": false, "message": "…"}`. `status` shows a running test as `auto_config_test` 1. |
 | `version` | `{"version": "…", "build_commit": "…"}` |
+
+While the daemon runs, `status` also shows `running_auto_config` (the daemon's own value; `auto_config` is the saved one), `restart_needed` (1 when an option that only applies on a restart is saved differently from the running daemon) and `restart_options` (those options). The restart-only options are `auto_config`, `portal_detect`, `commit_all`, `wpad_debuglevel`, `odhcpd_log_level`, `mesh_backhaul_led`, `mesh_multi_interfaces`, `swconfig_mac_skip`, `cpe_mode` and `move_ethernet_to_vxlan_bridge`.
 
 Example: `ubus call mesh11sd status`. Nothing is committed, reverted or restored over ubus. The auto_config test changes the node's network and IPv4 address live, uncommitted, so a reboot reverts it.
 

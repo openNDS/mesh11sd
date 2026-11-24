@@ -522,6 +522,19 @@ int mesh_cli_status(struct mesh_ctx *ctx)
 	mesh_json_field("    ", "mesh_basename", ctx->mesh_basename, 0);
 	mesh_json_field_int("    ", "auto_config", ctx->auto_config, 0);
 	mesh_json_field_int("    ", "auto_config_test", mesh_auto_config_test_running(), 0);
+	/* the daemon's own value, and the restart options saved differently */
+	if (!strcmp(procd, "running")) {
+		char running[16], changed[256];
+		int n;
+
+		if (mesh_running_setup_get("auto_config", running, sizeof(running)) == 0)
+			mesh_json_field("    ", "running_auto_config", running, 0);
+		n = mesh_restart_options_changed(ctx, changed, sizeof(changed));
+		if (n >= 0) {
+			mesh_json_field_int("    ", "restart_needed", n > 0, 0);
+			mesh_json_field("    ", "restart_options", changed, 0);
+		}
+	}
 	mesh_json_field("    ", "auto_mesh_network", ctx->auto_mesh_network, 0);
 	mesh_json_field("    ", "auto_mesh_band", ctx->auto_mesh_band, 0);
 	mesh_json_field_int("    ", "channel_bandwidth_2g", ctx->channel_bandwidth_2g, 0);

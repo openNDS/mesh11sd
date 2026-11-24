@@ -19,6 +19,7 @@ mesh11sd (8.0.0~beta1)
   * Change - default channel_tracking_checkinterval is checkinterval * 8 / 3 [bluewavenet]
   * Fix - portal_detect_threshold 0 turns the portal watchdog off (no network restart, reboot or stop), as documented [bluewavenet]
   * Add - ubus method auto_config_test, the same as mesh11sd auto_config test without the question, and auto_config_test in status [bluewavenet]
+  * Add - running_auto_config, restart_needed and restart_options in status; auto_config test is refused while the running daemon still has auto_config on [bluewavenet]
 
  -- Rob White <rob@blue-wave.net>  Tue, 10 Nov 2026 19:30:00 +0000
 
