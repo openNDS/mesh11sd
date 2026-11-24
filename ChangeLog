@@ -24,6 +24,7 @@ mesh11sd (8.0.0~beta1)
   * Fix - an auto_config test never commits the remembered role (last_role) [bluewavenet]
   * Change - notices for options read only at start say reboot to apply, not restart mesh11sd [bluewavenet]
   * Change - log "auto_config is disabled" every third checkinterval instead of every one [bluewavenet]
+  * Fix - stage the wireless MAC addresses before the auto_config wifi, so no second wifi reload is needed and the ath11k 5g AP keeps beaconing [bluewavenet]
 
  -- Rob White <rob@blue-wave.net>  Tue, 10 Nov 2026 19:30:00 +0000
 

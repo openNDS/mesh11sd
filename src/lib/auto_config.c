@@ -871,6 +871,12 @@ int mesh_auto_config(struct mesh_ctx *ctx)
 	 * (flag created after daemon start) still gets portal IPv4 before wifi. */
 	if (ctx->portal_detect != 5)
 		mesh_apply_portal_ipv4(ctx);
+	/* Stage the walk MACs now that the wifi-ifaces exist, so the wifi
+	 * below brings every vif up on its final MAC and the first loop
+	 * pass has nothing left to change. A second wifi reload onto new
+	 * MACs leaves the ath11k 5g AP without beacons. */
+	mesh_reserve_bridge_macs(ctx);
+	mesh_fixup_wireless_macaddrs(ctx);
 	/* mobility config (incl. MLO/driver beacon override) before wifi */
 	mesh_mobility_settings(ctx, "config");
 	mesh_restart_mesh(ctx);
