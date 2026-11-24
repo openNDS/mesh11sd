@@ -705,7 +705,7 @@ int mesh_cli_dispatch(struct mesh_ctx *ctx, int argc, char **argv)
 				return 0;
 			}
 			if (check == MESH_AUTO_CONFIG_TEST_RESTART) {
-				puts("mesh11sd is running with auto_config on, restart mesh11sd first");
+				puts("mesh11sd is running with auto_config on, reboot first");
 				return 1;
 			}
 		}

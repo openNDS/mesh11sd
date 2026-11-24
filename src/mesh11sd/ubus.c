@@ -156,7 +156,7 @@ static int ubus_auto_config_test(struct ubus_context *ctx, struct ubus_object *o
 		refused = "Auto config test mode is already running";
 		break;
 	case MESH_AUTO_CONFIG_TEST_RESTART:
-		refused = "mesh11sd is running with auto_config on, restart mesh11sd first";
+		refused = "mesh11sd is running with auto_config on, reboot first";
 		break;
 	default:
 		if (mesh_auto_config_test_start() != 0) {

@@ -894,16 +894,16 @@ void mesh_ctx_reload_setup(struct mesh_ctx *ctx)
 		ctx->portal_detect_threshold = fresh.portal_detect_threshold;
 
 	if (fresh.auto_config != ctx->auto_config)
-		mesh_log_notice(ctx, "option auto_config changed to [ %d ] - restart mesh11sd to apply",
+		mesh_log_notice(ctx, "option auto_config changed to [ %d ] - reboot to apply",
 				fresh.auto_config);
 	if (fresh.portal_detect != ctx->portal_detect)
-		mesh_log_notice(ctx, "option portal_detect changed to [ %d ] - restart mesh11sd to apply",
+		mesh_log_notice(ctx, "option portal_detect changed to [ %d ] - reboot to apply",
 				fresh.portal_detect);
 	if (fresh.commit_all != ctx->commit_all)
-		mesh_log_notice(ctx, "option commit_all changed to [ %d ] - restart mesh11sd to apply",
+		mesh_log_notice(ctx, "option commit_all changed to [ %d ] - reboot to apply",
 				fresh.commit_all);
 	if (fresh.wpad_debuglevel != ctx->wpad_debuglevel)
-		mesh_log_notice(ctx, "option wpad_debuglevel changed to [ %d ] - restart mesh11sd to apply",
+		mesh_log_notice(ctx, "option wpad_debuglevel changed to [ %d ] - reboot to apply",
 				fresh.wpad_debuglevel);
 }
 

@@ -635,6 +635,9 @@ static void note_role(struct mesh_ctx *ctx, const char *role)
 
 	if (ctx->portal_detect != 1)
 		return;
+	/* a confidence test commits nothing; a reboot reverts it */
+	if (mesh_auto_config_test_running())
+		return;
 	if (!strcmp(was, role))
 		return;
 	if (mesh_uci_commit_option("mesh11sd", "mesh11sd.setup.last_role", role) == 0) {

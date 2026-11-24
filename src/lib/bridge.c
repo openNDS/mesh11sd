@@ -1253,7 +1253,8 @@ int mesh_network_preconfigure(struct mesh_ctx *ctx)
 	    !mesh_predicted_peer(ctx))
 		mesh_set_ula_prefix(ctx, "set");
 
-	if (ctx->auto_config && !(swconfig_bridge() && ctx->swconfig_mac_skip)) {
+	if ((ctx->auto_config || mesh_auto_config_test_running()) &&
+	    !(swconfig_bridge() && ctx->swconfig_mac_skip)) {
 		snprintf(mesh_bridge, sizeof(mesh_bridge), "br-%s", ctx->auto_mesh_network);
 		snprintf(key, sizeof(key), "network.%s.macaddr", ctx->auto_mesh_network);
 		if (mesh_get_indexed_mac(ctx, mesh_bridge, want, sizeof(want)) != -1 && want[0]) {
