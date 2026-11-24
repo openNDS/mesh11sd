@@ -14,6 +14,8 @@
 #define MESH11SD_PARAMS_FILE MESH11SD_TMPDIR "/mesh_params"
 /* Written by "mesh11sd config_reload", removed by the daemon when it reloads */
 #define MESH11SD_RELOAD_FLAG MESH11SD_TMPDIR "/config_reload"
+#define MESH11SD_AUTO_CONFIG_TEST_FLAG MESH11SD_TMPDIR "/auto_config_test"
+#define MESH11SD_RUNNING_SETUP MESH11SD_TMPDIR "/running_setup"
 #define MESH11SD_CONFIG "mesh11sd"
 #define MESH11SD_LOG_NAME "mesh11sd_log.log"
 #define MESH11SD_MAX_IFACES 16
@@ -182,6 +184,20 @@ void mesh_ctx_init(struct mesh_ctx *ctx, int is_daemon);
 int mesh_ctx_load_setup(struct mesh_ctx *ctx);
 void mesh_ctx_reload_setup(struct mesh_ctx *ctx);
 int mesh_request_config_reload(void);
+
+/* mesh11sd auto_config test (CLI and ubus) */
+#define MESH_AUTO_CONFIG_TEST_OK	0	/* the test can be started */
+#define MESH_AUTO_CONFIG_TEST_ON	1	/* auto_config is already on */
+#define MESH_AUTO_CONFIG_TEST_RUNNING	2	/* a test is already running */
+#define MESH_AUTO_CONFIG_TEST_RESTART	3	/* saved 0, but the daemon runs with it on */
+int mesh_auto_config_test_check(struct mesh_ctx *ctx);
+int mesh_auto_config_test_running(void);
+int mesh_auto_config_test_start(void);
+
+/* options applied only when the daemon starts, as the daemon runs them */
+int mesh_write_running_setup(struct mesh_ctx *ctx);
+int mesh_running_setup_get(const char *name, char *out, size_t outlen);
+int mesh_restart_options_changed(struct mesh_ctx *ctx, char *names, size_t namelen);
 int mesh_ubus_run(struct mesh_ctx *ctx);
 int mesh_check_config_params(struct mesh_ctx *ctx);
 int mesh_param_get(const char *name, char *out, size_t outlen);

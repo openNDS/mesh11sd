@@ -11,6 +11,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <time.h>
 
 static void write_is_portal(struct mesh_ctx *ctx)
 {
@@ -635,6 +636,9 @@ static void note_role(struct mesh_ctx *ctx, const char *role)
 
 	if (ctx->portal_detect != 1)
 		return;
+	/* a confidence test commits nothing; a reboot reverts it */
+	if (mesh_auto_config_test_running())
+		return;
 	if (!strcmp(was, role))
 		return;
 	if (mesh_uci_commit_option("mesh11sd", "mesh11sd.setup.last_role", role) == 0) {
@@ -1120,7 +1124,7 @@ int mesh_check_portal(struct mesh_ctx *ctx)
 		return 0;
 	}
 	if (ctx->portal_detect == 5) {
-		/* TPN special-cased earlier in v7; peer-like */
+		/* TPE special-cased earlier in v7; peer-like */
 		return 0;
 	}
 	if (ctx->portal_detect == 4) {
@@ -1154,6 +1158,14 @@ int mesh_check_portal(struct mesh_ctx *ctx)
 int mesh_portal_watchdog(struct mesh_ctx *ctx)
 {
 	int auto_detect = (ctx->portal_detect == 1 || ctx->portal_detect == 3);
+
+	/* portal_detect_threshold 0 turns the watchdog off: no network
+	 * restart, reboot or stop because a portal is missing. */
+	if (ctx->portal_detect_threshold <= 0) {
+		ctx->failcount = 0;
+		ctx->network_restart = 0;
+		return 0;
+	}
 
 	if (strcmp(ctx->detected_state, "portal") != 0 && auto_detect) {
 		if (ctx->portal_detect_threshold > ctx->failcount) {
@@ -1814,6 +1826,114 @@ static void ensure_sticky_onlink_route(struct mesh_ctx *ctx, const char *dev,
 		mesh_log_err(ctx, "Failed to add fallback route on %s", dev);
 }
 
+/* ---- L2 loop check: a portal's own prefix seen on another device ---- */
+
+#define LOOP_IFUP_SECS	600	/* restart the wan IPv6 at most this often */
+
+/* The dhcpv6 interface (usually wan6) on device dev, if there is one. */
+static int dhcpv6_iface_for_dev(const char *dev, char *iface, size_t len)
+{
+	char show[8192];
+	char *argv[] = { "uci", "-q", "show", "network", NULL };
+	char *p, *line;
+
+	if (mesh_run_capture(argv, show, sizeof(show)) != 0)
+		return -1;
+	p = show;
+	while ((line = strsep(&p, "\n")) != NULL) {
+		char sect[64], key[96], device[64] = "";
+		char *dot = strstr(line, ".proto='dhcpv6'");
+
+		if (strncmp(line, "network.", 8) != 0 || !dot)
+			continue;
+		snprintf(sect, sizeof(sect), "%.*s", (int)(dot - line - 8), line + 8);
+		snprintf(key, sizeof(key), "network.%s.device", sect);
+		if (mesh_uci_get(key, device, sizeof(device)) != 0)
+			continue;
+		if (device[0] == '@') {
+			/* alias: wan6 on "@wan" uses wan's device */
+			snprintf(key, sizeof(key), "network.%s.device", device + 1);
+			if (mesh_uci_get(key, device, sizeof(device)) != 0)
+				continue;
+		}
+		if (!strcmp(device, dev)) {
+			snprintf(iface, len, "%s", sect);
+			return 0;
+		}
+	}
+	return -1;
+}
+
+/*
+ * A portal's own lan and vtun prefixes belong on its own bridges only.
+ * If a route for one turns up on another device, the portal's own router
+ * advertisement has come back to it on that device (normally its wan):
+ * the mesh and the upstream network are joined at layer 2. The wan6
+ * client then holds routes for the prefix that beat the mesh bridge
+ * route, and the mesh can no longer reach the portal ULA.
+ *
+ * Warn once per occurrence and restart that device's dhcpv6 interface,
+ * at most every LOOP_IFUP_SECS. The routes are owned by netifd and the
+ * dhcpv6 client, which put deleted routes back from the client's state
+ * on its next update, so a restart of the interface is what clears them.
+ * If the loop is still there the prefix comes back and is reported again.
+ */
+static void check_own_prefix_loop(struct mesh_ctx *ctx, int slot,
+				  const char *subnet, const char *lan_dev,
+				  const char *tun_dev)
+{
+	static int warned[2];
+	static time_t last_ifup;
+	char pfx[96], out[2048], dev[32], iface[64];
+	char *argv[] = { "ip", "-6", "route", "show", pfx, NULL };
+	char *p, *line;
+	int found = 0;
+
+	if (!subnet || !subnet[0] || !ctx->ula_base[0])
+		return;
+	snprintf(pfx, sizeof(pfx), "%s:%s::/64", ctx->ula_base, subnet);
+	if (mesh_run_capture(argv, out, sizeof(out)) != 0)
+		return;
+	p = out;
+	while ((line = strsep(&p, "\n")) != NULL) {
+		/* "ip -6 route show <prefix>" leaves the prefix out, so a
+		 * line can start with "dev" */
+		char *d = !strncmp(line, "dev ", 4) ? line : strstr(line, " dev ");
+
+		if (!d || sscanf(strstr(d, "dev ") + 4, "%31s", dev) != 1)
+			continue;
+		if (!strcmp(dev, "lo") || !strcmp(dev, lan_dev) ||
+		    !strcmp(dev, tun_dev))
+			continue;
+		found = 1;
+		break;
+	}
+	if (!found) {
+		warned[slot] = 0;
+		return;
+	}
+	if (!warned[slot]) {
+		mesh_log_warn(ctx, "Loop detected: own prefix %s seen on %s - check cabling",
+			      pfx, dev);
+		mesh_watchdog_log(ctx);
+		warned[slot] = 1;
+	}
+	if (last_ifup && time(NULL) - last_ifup < LOOP_IFUP_SECS)
+		return;
+	if (dhcpv6_iface_for_dev(dev, iface, sizeof(iface)) != 0)
+		return;
+	{
+		char *ifup[] = { "/sbin/ifup", iface, NULL };
+
+		mesh_log_notice(ctx, "Restarting interface %s to drop own prefix %s from %s",
+				iface, pfx, dev);
+		mesh_run_capture(ifup, NULL, 0);
+		last_ifup = time(NULL);
+		/* report it again if it comes back after the restart */
+		warned[slot] = 0;
+	}
+}
+
 int mesh_manage_fallback_ula_route(struct mesh_ctx *ctx)
 {
 	const char *lan_dev;
@@ -1870,6 +1990,18 @@ int mesh_manage_fallback_ula_route(struct mesh_ctx *ctx)
 			rdev = "br-wan";
 		if (lan_sub[0])
 			ensure_sticky_onlink_route(ctx, rdev, lan_sub);
+	}
+
+	/* A portal (not an MBP or TPE, whose lan is the router's) checks
+	 * that its own prefixes have not come back to it on its wan. */
+	if (is_portal && ctx->portal_detect != 4 && ctx->portal_detect != 5) {
+		char tun[32];
+
+		snprintf(tun, sizeof(tun), "br-tun%s",
+			 ctx->tun_id[0] ? ctx->tun_id : "69");
+		check_own_prefix_loop(ctx, 0, own_sub, lan_dev, tun);
+		if (ctx->vtun_enable)
+			check_own_prefix_loop(ctx, 1, own_vxsub, lan_dev, tun);
 	}
 
 	/* br-tun: same two ULAs using vtunlan ip6hint (ula_vxsubnet) */

@@ -895,7 +895,7 @@ static void rebuild_portal(struct mesh_ctx *ctx, const char *reason,
 		if (!mesh_managed_mode(ctx)) {
 			const char *const mine[] = { "mesh11sd", NULL };
 
-			mesh_log_notice(ctx, "auto_config or portal_detect changed - restart mesh11sd to apply");
+			mesh_log_notice(ctx, "auto_config or portal_detect changed - reboot to apply");
 			mesh_write_portal_copies(ctx, mine);
 			return;
 		}

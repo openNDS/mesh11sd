@@ -62,7 +62,7 @@ The other modes need further consideration:
 | 2 | — | Unused; treated as 1 (`config.c`) |
 | 3 | CPE | Customer premises: backhaul is WAN, LAN is a private NAT network |
 | 4 | MBP | Bridge portal (today's silent `commit_all` is already skipped here) |
-| 5 | TPE | Trunk peer (documentation also calls this TPN) |
+| 5 | TPE | Trunk peer |
 
 For the first release, the simplest path is to keep LuCI disabled in
 modes other than 1. That is only a fallback. As those modes are

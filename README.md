@@ -33,7 +33,7 @@ If the image uses **ath10k-ct**, switch to non-ct ath10k packages; otherwise the
 2. **Mesh Routed Portal (MRP)** — IPv4 NAT and IPv6 routing; optional VXLAN trunk
 3. **Auto detect (`portal_detect=1`)** — WAN up → MRP; WAN down → Mesh Peer (MPE)
 4. **Mesh Bridge Portal (MBP)** — bridged to the existing LAN/ISP (no IPv4 NAT); WAN is the vxlan trunk
-5. **Trunk Peer (TPN)** — WAN is a vxlan trunk endpoint (VLANs); LAN is the mesh (no VLANs)
+5. **Trunk Peer (TPE)** — WAN is a vxlan trunk endpoint (VLANs); LAN is the mesh (no VLANs)
 6. **CPE** — mesh is the WAN; LAN is a private NAT network (IPv4 + NAT66 or PD)
 7. **OWE** on mesh gates by default (optional WPA2/WPA3)
 8. **Guest / vxtunnel** SSIDs over VXLAN without configuring 802.1Q on the mesh
@@ -53,7 +53,7 @@ If the image uses **ath10k-ct**, switch to non-ct ath10k packages; otherwise the
 | **0** | MRP | Always routed portal. |
 | **3** | CPE | Mesh is upstream WAN. LAN is a NAT subnet (`cpe_mode`: `nat66` default, or `prefix_delegation`). |
 | **4** | MBP | Bridged portal. **LAN** to ISP/existing LAN. **WAN** is vxlan trunk (`br-tun$tun_id`). |
-| **5** | TPN | Peer. **LAN** = mesh (no VLANs). **WAN** = vxlan trunk (VLANs OK). Works with portal 0, 1, or 4. |
+| **5** | TPE | Peer. **LAN** = mesh (no VLANs). **WAN** = vxlan trunk (VLANs OK). Works with portal 0, 1, or 4. |
 | **2** | — | Unused (use 5). |
 
 A node can also be a **gate** (hosts APs). A peer with `disable_hwmp_forwarding=1` serves its own APs and clients but does not forward for other nodes; it is ignored on a portal.
@@ -139,7 +139,7 @@ uci commit mesh11sd
 
 ### 5.3 Accessing a node
 
-Portal IPv4 is hashed from the label MAC; it is not `192.168.1.1`. Use **IPv6 link-local**.
+Portal IPv4 is derived from the mesh ID (a CPE uses its label MAC); it is not `192.168.1.1`. Use **IPv6 link-local**.
 
 Note the last two octets of the label MAC, e.g. `94:83:c4:a2:8e:c9` → remember `8ec`. Connect a PC to a LAN port of the node.
 
@@ -220,7 +220,7 @@ Mesh11sd is a privileged local network manager, in the same class as netifd. It 
 
 It opens no listening sockets and has no network-reachable control interface. You drive it from the node itself, as root, with the `mesh11sd` command (SSH or console). `uci` and the init script work as usual; they are local too.
 
-The `mesh11sd` ubus object ([§9](#ubus)) is local only, on the system bus, and is served by a separate process that runs no daemon logic. Its methods are read-only apart from `config_reload`, which only asks the daemon to re-read its configuration. Access from LuCI is limited by the rpcd ACL.
+The `mesh11sd` ubus object ([§9](#ubus)) is local only, on the system bus, and is served by a separate process that runs no daemon logic. Its methods are read-only apart from `config_reload`, which only asks the daemon to re-read its configuration, and `auto_config_test`, which starts the uncommitted auto_config confidence test while `auto_config` is 0. Access from LuCI is limited by the rpcd ACL.
 
 Runtime changes are staged with UCI and, in normal operation, are not written to flash. Uncommitted changes to `mesh11sd`, `wireless`, `dhcp` and `network` are reverted when the service stops. The flash writes that do happen are deliberate:
 
@@ -252,7 +252,7 @@ Values in the tables below are script defaults when the option is unset. Set wit
 
 - **Live on reload:** `debuglevel`, `enabled`, `log_mountpoint`, `max_log_entries`, `checkinterval`, `loop_interval_delta`, `channel_tracking_checkinterval`, `portal_detect_threshold`, `interface_timeout`, `mesh_path_cost`, `mesh_metric_threshold`, `mesh_node_mobility_level` (run time settings), `disable_hwmp_forwarding`, `mesh_mac_forced_forwarding`, `gateway_proxy_arp`, `reboot_on_error`, `stop_on_error`, `manage_opennds_startup`, `txpower` (set with `iw` when the reload runs, as `mesh11sd txpower` does; reverting a staged `txpower` and reloading keeps the current power, so set the old value explicitly to restore it). `watchdog_nonvolatile_log` is re-read on its own every third loop.
 - **When the configuration is built:** options that shape the wireless and network configuration (`country`, `auto_mesh_id`, `auto_mesh_key`, `auto_mesh_band`, `channel_bandwidth_2g`, `portal_channel`, `mesh_phy_index`, `auto_mesh_network`, `mesh_basename`, the SSID options including `keep_system_ssids`, gate and vtun encryption and keys, `tun_id` and the other vtun options, `portal_use_default_ipv4`, `mesh_dtim_period`, `use_default_beacon_interval`). These apply at first configuration. With `auto_config` 1 and `portal_detect` 0 or 1, a committed change to the `mesh11sd` config also rebuilds the portal configuration ([§6](#6-important-behaviour)).
-- **Restart needed:** `auto_config`, `portal_detect`, `commit_all`, `wpad_debuglevel`, `odhcpd_log_level`, `mesh_backhaul_led` and the `mesh_params` section. A reload logs a notice if one of the first four has changed.
+- **Reboot needed:** `auto_config`, `portal_detect`, `commit_all`, `wpad_debuglevel`, `odhcpd_log_level`, `mesh_backhaul_led`, `mesh_multi_interfaces`, `swconfig_mac_skip`, `cpe_mode`, `move_ethernet_to_vxlan_bridge` and the `mesh_params` section are read only when mesh11sd starts. Commit the change and reboot the node: `service mesh11sd restart` reverts the staged network, wireless and dhcp changes without reloading them, so the running network keeps the old setup, while a reboot starts clean from the committed configuration. A reload logs a notice if one of the first four has changed.
 
 ### 7.1 Core
 
@@ -265,7 +265,7 @@ Values in the tables below are script defaults when the option is unset. Set wit
 | `interface_timeout` | 10 | Wait for an interface to come up. |
 | `auto_config` | 0 | 0 off, 1 on (portal config committed, LuCI usable in modes 0 and 1), 2 on + `commit_all` + LuCI (locks first role). |
 | `portal_detect` | 1 | See [§4](#4-node-types). Ignored if auto_config is 0. |
-| `portal_detect_threshold` | 5 | Watchdog: checkintervals without a portal before action. 0 = never. |
+| `portal_detect_threshold` | 5 | Watchdog: checkintervals without a portal before action. 0 turns the watchdog off (no network restart, reboot or stop). |
 | `portal_use_default_ipv4` | 0 | Portal: 1 = keep `/etc/config/network` IPv4; 0 = hash from label MAC. |
 | `portal_channel` | default | Portal 2.4 GHz: `auto`, `default`, or channel 1–13. Peers track it. |
 | `channel_tracking_checkinterval` | checkinterval×8/3 | Minimum seconds between peer channel scans. Unset is 26 when `checkinterval` is 10. The wait scales by `loop_interval` / `checkinterval`. |
@@ -312,7 +312,7 @@ Values in the tables below are script defaults when the option is unset. Set wit
 | `vtun_isolate` | 0 | 1 = no forwarding between mesh/lan and vxtunnel (guest isolation). |
 | `move_ethernet_to_vxlan_bridge` | 0 | Move LAN Ethernet onto `br-tun`. Not used in CPE. |
 
-MBP/TPN: WAN is added to `br-tun$tun_id`. MRP portal may serve DHCPv4/RA on vtunlan; MBP/CPE/TPN/peers do not.
+MBP/TPE: WAN is added to `br-tun$tun_id`. MRP portal may serve DHCPv4/RA on vtunlan; MBP/CPE/TPE/peers do not.
 
 ### 7.5 Path, watchdog, logging, CPE
 
@@ -407,7 +407,7 @@ The daemon runs as a service. CLI is for status, logs, and a few runtime knobs. 
 | `mesh11sd stations` | One-hop mesh STAs |
 | `mesh11sd read_log` / `read_log -f` | Internal log (`-f` truncates then follows) |
 | `mesh11sd debuglevel [0-3]` | Get/set |
-| `mesh11sd get_portal_type` | MBP, MRP, MPE, CPE, TPN |
+| `mesh11sd get_portal_type` | MBP, MRP, MPE, CPE, TPE |
 | `mesh11sd get_portal_ula [get\|discover]` | Current or best portal ULA |
 | `mesh11sd get_node_type_code` | Same codes as get_portal_type |
 | `mesh11sd active_nodecount` | Peers in mpath |
@@ -460,9 +460,12 @@ The init script runs `mesh11sd ubus` as a second service instance. It registers 
 | `status` | The same JSON as `mesh11sd status` |
 | `stations` | `{"interfaces": {"<ifname>": [{"mac": "…", "<iw field>": "…", …}]}}` from `iw dev <ifname> station dump` for each mesh interface |
 | `config_reload` | `{"requested": true}`; as `mesh11sd config_reload` |
+| `auto_config_test` | `{"started": true}`; as `mesh11sd auto_config test` ([§5.1](#51-confidence-test)) without the question. While `auto_config` is not 0, saved or in the running daemon, or a test is already running, nothing is started and the reply is `{"started": false, "message": "…"}`. `status` shows a running test as `auto_config_test` 1. |
 | `version` | `{"version": "…", "build_commit": "…"}` |
 
-Example: `ubus call mesh11sd status`. Nothing is committed, reverted or restored over ubus.
+While the daemon runs, `status` also shows `running_auto_config` (the daemon's own value; `auto_config` is the saved one), `restart_needed` (1 when an option that is read only when mesh11sd starts is saved differently from the running daemon; reboot the node to apply it, [§7](#applying-changes)) and `restart_options` (those options). The restart-only options are `auto_config`, `portal_detect`, `commit_all`, `wpad_debuglevel`, `odhcpd_log_level`, `mesh_backhaul_led`, `mesh_multi_interfaces`, `swconfig_mac_skip`, `cpe_mode` and `move_ethernet_to_vxlan_bridge`.
+
+Example: `ubus call mesh11sd status`. Nothing is committed, reverted or restored over ubus. The auto_config test changes the node's network and IPv4 address live, uncommitted, so a reboot reverts it.
 
 ## 10. HWMP peer status and MP_FLAGS
 
@@ -518,7 +521,9 @@ config mesh11sd 'setup'
 	#	encryption and keys, bands and channels, vtun options and similar) take effect
 	#	when that configuration is built (see auto_config).
 	# auto_config, portal_detect, commit_all, wpad_debuglevel, odhcpd_log_level,
-	#	mesh_backhaul_led and the mesh_params section need "service mesh11sd restart".
+	#	mesh_backhaul_led, mesh_multi_interfaces, swconfig_mac_skip, cpe_mode,
+	#	move_ethernet_to_vxlan_bridge and the mesh_params section are read only when
+	#	mesh11sd starts: commit the change and reboot the node.
 	#
 
 	###########################################################################################
@@ -600,7 +605,7 @@ config mesh11sd 'setup'
 	#	In normal use, the lan port could be patched to the upstream router. The wan port is the ethernet entry point of the vxlan tunnel.
 	#	The vxlan tunnel an be used as if it was a port on a managed switch, supporting vlan tagging if required.
 	#
-	#  5  - Trunk Peer Node (TPN)
+	#  5  - Trunk Peer (TPE)
 	#	This is a special case of a peer node where its wan port is an endpoint of the multi-peer vxlan.
 	#	Compatible with portal nodes configured with portal_detect 0, 1 or 4.
 	#
@@ -1345,7 +1350,7 @@ Upstream: [openwrt/openwrt#20967](https://github.com/openwrt/openwrt/issues/2096
 
 ## 14. Acronyms
 
-**STA** station · **PREQ** path request · **HWMP** Hybrid Wireless Mesh Protocol · **RANN** root announcement · **RSSI** signal · **ULA** unique local IPv6 · **3dRV** three-dimensional relative velocity · **MBP** Mesh Bridge Portal · **MRP** Mesh Routed Portal · **MPE** Mesh Peer · **CPE** Client Premises Equipment · **TPN** Trunk Peer Node · **OWE** Opportunistic Wireless Encryption
+**STA** station · **PREQ** path request · **HWMP** Hybrid Wireless Mesh Protocol · **RANN** root announcement · **RSSI** signal · **ULA** unique local IPv6 · **3dRV** three-dimensional relative velocity · **MBP** Mesh Bridge Portal · **MRP** Mesh Routed Portal · **MPE** Mesh Peer · **CPE** Client Premises Equipment · **TPE** Trunk Peer · **OWE** Opportunistic Wireless Encryption
 
 ![mesh11sd](https://github.com/openNDS/mesh11sd/blob/master/docs/images/avatarsmall.png)
 

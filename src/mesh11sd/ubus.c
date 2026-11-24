@@ -3,8 +3,9 @@
  * mesh11sd ubus object, run as "mesh11sd ubus" in its own procd instance.
  *
  * It answers local ubus calls with the same functions the command line
- * uses and never touches the daemon's loop. The only change it can make
- * is to ask the daemon to reload its configuration (config_reload).
+ * uses and never touches the daemon's loop. The only changes it can make
+ * are to ask the daemon to reload its configuration (config_reload) and to
+ * start the auto_config confidence test (auto_config_test).
  * Logging is muted, as for the command line, except for errors.
  */
 #include "mesh11sd.h"
@@ -134,6 +135,43 @@ static int ubus_config_reload(struct ubus_context *ctx, struct ubus_object *obj,
 	return 0;
 }
 
+/*
+ * ubus call mesh11sd auto_config_test: start the auto_config confidence
+ * test, as "mesh11sd auto_config test" does after its yes/no question.
+ * Refused (with a message) while auto_config is on or a test is running.
+ */
+static int ubus_auto_config_test(struct ubus_context *ctx, struct ubus_object *obj,
+				 struct ubus_request_data *req, const char *method,
+				 struct blob_attr *msg)
+{
+	const char *refused = NULL;
+
+	(void)obj; (void)method; (void)msg;
+	mesh_ctx_load_setup(mctx);
+	switch (mesh_auto_config_test_check(mctx)) {
+	case MESH_AUTO_CONFIG_TEST_ON:
+		refused = "auto_config is already enabled, no need to test";
+		break;
+	case MESH_AUTO_CONFIG_TEST_RUNNING:
+		refused = "Auto config test mode is already running";
+		break;
+	case MESH_AUTO_CONFIG_TEST_RESTART:
+		refused = "mesh11sd is running with auto_config on, reboot first";
+		break;
+	default:
+		if (mesh_auto_config_test_start() != 0) {
+			ubus_log_err("unable to start the auto_config test");
+			return UBUS_STATUS_UNKNOWN_ERROR;
+		}
+	}
+	blob_buf_init(&bb, 0);
+	blobmsg_add_u8(&bb, "started", refused == NULL);
+	if (refused)
+		blobmsg_add_string(&bb, "message", refused);
+	ubus_send_reply(ctx, req, bb.head);
+	return 0;
+}
+
 static int ubus_version(struct ubus_context *ctx, struct ubus_object *obj,
 			struct ubus_request_data *req, const char *method,
 			struct blob_attr *msg)
@@ -150,6 +188,7 @@ static const struct ubus_method mesh11sd_methods[] = {
 	UBUS_METHOD_NOARG("status", ubus_status),
 	UBUS_METHOD_NOARG("stations", ubus_stations),
 	UBUS_METHOD_NOARG("config_reload", ubus_config_reload),
+	UBUS_METHOD_NOARG("auto_config_test", ubus_auto_config_test),
 	UBUS_METHOD_NOARG("version", ubus_version),
 };
 

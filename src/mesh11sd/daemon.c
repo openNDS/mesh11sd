@@ -113,11 +113,96 @@ static void mesh_loop_sleep_interval(struct mesh_ctx *ctx)
 			     (ctx->loop_interval_factor - 1) * ctx->loop_interval_delta;
 }
 
+/*
+ * v7 autostartup: the auto configuration steps run once per daemon run,
+ * before the first auto_config pass of the main loop. Startup runs it
+ * when auto_config is on or a test flag is already there; the main loop
+ * runs it when a confidence test is started while the daemon is idling,
+ * so the test gets the same (uncommitted) setup a start would give,
+ * including the CPE br-wan, wan and NAT settings.
+ */
+static void mesh_daemon_autostartup(struct mesh_ctx *ctx)
+{
+	/* v7 autostartup: revert+backup, dhcp defaults, then network apply */
+	mesh_backup_defaults(ctx);
+	/* v7 clean sheet: no committed MACs from an earlier run */
+	mesh_clear_own_macaddrs(ctx);
+	mesh_apply_autostartup_uci(ctx);
+	if (has_mesh_uci()) {
+		char show[4096];
+		char *p, *line;
+		mesh_uci_show_filter("wireless", "mode='mesh'", show, sizeof(show));
+		p = show;
+		while ((line = strsep(&p, " \n")) != NULL) {
+			char sect[96], *eq, dis[128], ifn[128];
+			/* line is "wireless.<section>.mode='mesh'"; keep "wireless.<section>" */
+			eq = strstr(line, ".mode=");
+			if (!eq)
+				continue;
+			snprintf(sect, sizeof(sect), "%s", line);
+			sect[eq - line] = '\0';
+			snprintf(dis, sizeof(dis), "%s.disabled", sect);
+			if (mesh_uci_get(dis, dis, sizeof(dis)) == 0 && atoi(dis) == 0) {
+				snprintf(ifn, sizeof(ifn), "%s.ifname", sect);
+				if (mesh_uci_get(ifn, ctx->active_mesh_ifname,
+						 sizeof(ctx->active_mesh_ifname)) == 0) {
+					char content[128];
+					snprintf(content, sizeof(content),
+						 "active_mesh_ifname=\"%s\"\n",
+						 ctx->active_mesh_ifname);
+					mesh_file_write(MESH11SD_TMPDIR "/active_mesh_ifname",
+							content);
+					break;
+				}
+			}
+		}
+	}
+	/* Stage the walk MACs in the wireless UCI too, so the restart
+	 * brings the vifs up on them and the live MAC walk after it
+	 * changes nothing (ath11k loses 5g beacons when an AP MAC moves
+	 * under a running hostapd). The first loop then has no reload. */
+	if (has_mesh_uci()) {
+		mesh_reserve_bridge_macs(ctx);
+		mesh_fixup_wireless_macaddrs(ctx);
+	}
+	/* portal-side network UCI first, so this one restart covers it */
+	mesh_network_preconfigure(ctx);
+	/* modes 4|5: wan joins the trunk in this same restart */
+	mesh_ensure_wan_on_vxlan_bridge(ctx, 0);
+	/* v7 ~11100: network restart, bridge mac, dnsmasq, firewall, probe */
+	{
+		char *nr[] = { "/sbin/service", "network", "restart", NULL };
+		mesh_run_capture(nr, NULL, 0);
+		mesh_network_mark_applied();
+	}
+	/* CPE: br-wan exists only after the restart; use it from now on */
+	if (ctx->portal_detect == 3)
+		mesh_refresh_bridgemac(ctx);
+	/* v7 restore_ipv4: ensure calculated portal address is on the bridge.
+	 * Not on a CPE: its mesh bridge is wan, which uses DHCP. Not on
+	 * an MBP: its lan is a DHCP client of the router. */
+	if (ctx->portal_detect != 3 && ctx->portal_detect != 4 &&
+	    ctx->portal_detect != 5 &&
+	    ctx->portal_use_default_ipv4 == 0 && !mesh_predicted_peer(ctx))
+		mesh_restore_ipv4(ctx);
+	mesh_move_ethernet_to_vxlan_bridge(ctx);
+	mesh_set_bridge_mac_addresses(ctx);
+	{
+		char *dns[] = { "/sbin/service", "dnsmasq", "restart", NULL };
+		char *fw[] = { "/sbin/service", "firewall", "restart", NULL };
+		mesh_run_capture(dns, NULL, 0);
+		mesh_run_capture(fw, NULL, 0);
+	}
+	sleep(5);
+	mesh_probe_interface_mac(ctx);
+}
+
 int mesh_daemon_run(struct mesh_ctx *ctx)
 {
 	char *nft_argv[] = { "nft", "destroy", "table", "bridge", "mesh11s", NULL };
 	struct sigaction sa;
 	int reqs_ok;
+	int autostartup_done = 0;
 
 	memset(&sa, 0, sizeof(sa));
 	sa.sa_handler = mesh_daemon_on_signal;
@@ -131,6 +216,7 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 	ctx->daemon_startup = 1;
 	snprintf(ctx->last_state, sizeof(ctx->last_state), "initial");
 	mesh_ctx_load_setup(ctx);
+	mesh_write_running_setup(ctx);
 	mesh_run_capture(nft_argv, NULL, 0);
 	ensure_factory_mac(ctx);
 	unlink(MESH11SD_TMPDIR "/last_mac_indexed");
@@ -162,80 +248,9 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 	/* Backups for revert_all, taken on any start if missing */
 	mesh_backup_configs(ctx);
 
-	if (reqs_ok && (ctx->auto_config > 0 ||
-	    access(MESH11SD_TMPDIR "/auto_config_test", F_OK) == 0)) {
-		/* v7 autostartup: revert+backup, dhcp defaults, then network apply */
-		mesh_backup_defaults(ctx);
-		/* v7 clean sheet: no committed MACs from an earlier run */
-		mesh_clear_own_macaddrs(ctx);
-		mesh_apply_autostartup_uci(ctx);
-		if (has_mesh_uci()) {
-			char show[4096];
-			char *p, *line;
-			mesh_uci_show_filter("wireless", "mode='mesh'", show, sizeof(show));
-			p = show;
-			while ((line = strsep(&p, " \n")) != NULL) {
-				char sect[96], *eq, dis[128], ifn[128];
-				/* line is "wireless.<section>.mode='mesh'"; keep "wireless.<section>" */
-				eq = strstr(line, ".mode=");
-				if (!eq)
-					continue;
-				snprintf(sect, sizeof(sect), "%s", line);
-				sect[eq - line] = '\0';
-				snprintf(dis, sizeof(dis), "%s.disabled", sect);
-				if (mesh_uci_get(dis, dis, sizeof(dis)) == 0 && atoi(dis) == 0) {
-					snprintf(ifn, sizeof(ifn), "%s.ifname", sect);
-					if (mesh_uci_get(ifn, ctx->active_mesh_ifname,
-							 sizeof(ctx->active_mesh_ifname)) == 0) {
-						char content[128];
-						snprintf(content, sizeof(content),
-							 "active_mesh_ifname=\"%s\"\n",
-							 ctx->active_mesh_ifname);
-						mesh_file_write(MESH11SD_TMPDIR "/active_mesh_ifname",
-								content);
-						break;
-					}
-				}
-			}
-		}
-		/* Stage the walk MACs in the wireless UCI too, so the restart
-		 * brings the vifs up on them and the live MAC walk after it
-		 * changes nothing (ath11k loses 5g beacons when an AP MAC moves
-		 * under a running hostapd). The first loop then has no reload. */
-		if (has_mesh_uci()) {
-			mesh_reserve_bridge_macs(ctx);
-			mesh_fixup_wireless_macaddrs(ctx);
-		}
-		/* portal-side network UCI first, so this one restart covers it */
-		mesh_network_preconfigure(ctx);
-		/* modes 4|5: wan joins the trunk in this same restart */
-		mesh_ensure_wan_on_vxlan_bridge(ctx, 0);
-		/* v7 ~11100: network restart, bridge mac, dnsmasq, firewall, probe */
-		{
-			char *nr[] = { "/sbin/service", "network", "restart", NULL };
-			mesh_run_capture(nr, NULL, 0);
-			mesh_network_mark_applied();
-		}
-		/* CPE: br-wan exists only after the restart; use it from now on */
-		if (ctx->portal_detect == 3)
-			mesh_refresh_bridgemac(ctx);
-		/* v7 restore_ipv4: ensure calculated portal address is on the bridge.
-		 * Not on a CPE: its mesh bridge is wan, which uses DHCP. Not on
-		 * an MBP: its lan is a DHCP client of the router. */
-		if (ctx->portal_detect != 3 && ctx->portal_detect != 4 &&
-		    ctx->portal_detect != 5 &&
-		    ctx->portal_use_default_ipv4 == 0 && !mesh_predicted_peer(ctx))
-			mesh_restore_ipv4(ctx);
-		mesh_move_ethernet_to_vxlan_bridge(ctx);
-		mesh_set_bridge_mac_addresses(ctx);
-		{
-			char *dns[] = { "/sbin/service", "dnsmasq", "restart", NULL };
-			char *fw[] = { "/sbin/service", "firewall", "restart", NULL };
-			mesh_run_capture(dns, NULL, 0);
-			mesh_run_capture(fw, NULL, 0);
-		}
-		sleep(5);
-		mesh_probe_interface_mac(ctx);
+	if (reqs_ok && (ctx->auto_config > 0 || mesh_auto_config_test_running())) {
+		mesh_daemon_autostartup(ctx);
+		autostartup_done = 1;
 	}
 
 	/* v7 ~11124: drop the previous-run rssi lock before the main loop */
@@ -300,6 +315,19 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 			continue;
 		}
 
+		/* A confidence test started while idling: do the startup
+		 * auto configuration now, then carry on as a first pass. */
+		if (!autostartup_done && mesh_auto_config_test_running()) {
+			mesh_log_notice(ctx, "Auto Config TEST started - applying the startup configuration");
+			mesh_daemon_autostartup(ctx);
+			autostartup_done = 1;
+			/* what startup does after its autostartup block */
+			unlink(MESH11SD_TMPDIR "/mesh_rssi_threshold");
+			mesh_sys_setup(ctx);
+			mesh_get_portal_ula(ctx, "discover");
+			ctx->firstloop = 1;
+		}
+
 		auto_config_done = 0;
 		if (!has_mesh_uci()) {
 			mesh_log_info(ctx, "No mesh interfaces detected yet.... Attempting auto configure");
@@ -328,7 +356,12 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 					mesh_probe_interface_mac(ctx);
 				}
 			} else {
-				mesh_log_err(ctx, "auto_config is disabled. Please configure a mesh interface or enable auto_config....");
+				/* Keep repeating it so it stays in the log, but
+				 * only every third pass (the first one now). */
+				static unsigned int disabled_calls;
+
+				if (disabled_calls++ % 3 == 0)
+					mesh_log_err(ctx, "auto_config is disabled. Please configure a mesh interface or enable auto_config....");
 				mesh_log_info(ctx, "Checkinterval [%d]", ctx->checkinterval);
 				sleep((unsigned)ctx->checkinterval);
 				continue;

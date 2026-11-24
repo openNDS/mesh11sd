@@ -17,6 +17,15 @@ mesh11sd (8.0.0~beta1)
   * Fix - write beacon_int only on the mesh radio and apply the full set of configured mesh_params [bluewavenet]
   * Fix - set bridge port priorities (ethernet 16, mesh 32) every loop [bluewavenet]
   * Change - default channel_tracking_checkinterval is checkinterval * 8 / 3 [bluewavenet]
+  * Fix - portal_detect_threshold 0 turns the portal watchdog off (no network restart, reboot or stop), as documented [bluewavenet]
+  * Add - ubus method auto_config_test, the same as mesh11sd auto_config test without the question, and auto_config_test in status [bluewavenet]
+  * Add - running_auto_config, restart_needed and restart_options in status; auto_config test is refused while the running daemon still has auto_config on [bluewavenet]
+  * Fix - an auto_config test started while the daemon is running now gets the full startup configuration, so a CPE gets br-wan, wan DHCP, wan6 and NAT/NAT66 [bluewavenet]
+  * Fix - an auto_config test never commits the remembered role (last_role) [bluewavenet]
+  * Change - notices for options read only at start say reboot to apply, not restart mesh11sd [bluewavenet]
+  * Change - log "auto_config is disabled" every third checkinterval instead of every one [bluewavenet]
+  * Fix - stage the wireless MAC addresses before the auto_config wifi, so no second wifi reload is needed and the ath11k 5g AP keeps beaconing [bluewavenet]
+  * Fix - a portal that sees its own lan or vtun prefix on its wan logs a loop warning and restarts that dhcpv6 interface (at most every 10 minutes), so the mesh can reach the portal ULA again once the loop is gone [bluewavenet]
 
  -- Rob White <rob@blue-wave.net>  Tue, 10 Nov 2026 19:30:00 +0000
 
