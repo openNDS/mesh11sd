@@ -914,6 +914,34 @@ int mesh_request_config_reload(void)
 	return mesh_file_write(MESH11SD_RELOAD_FLAG, "1\n");
 }
 
+/*
+ * The auto_config confidence test: the daemon applies the auto
+ * configuration without committing it while the test flag exists, so a
+ * reboot reverts it. It can only be started while auto_config is 0 and no
+ * test is running. With auto_config on, a leftover flag is removed.
+ */
+int mesh_auto_config_test_check(struct mesh_ctx *ctx)
+{
+	if (ctx->auto_config != 0) {
+		unlink(MESH11SD_AUTO_CONFIG_TEST_FLAG);
+		return MESH_AUTO_CONFIG_TEST_ON;
+	}
+	if (mesh_auto_config_test_running())
+		return MESH_AUTO_CONFIG_TEST_RUNNING;
+	return MESH_AUTO_CONFIG_TEST_OK;
+}
+
+int mesh_auto_config_test_running(void)
+{
+	return access(MESH11SD_AUTO_CONFIG_TEST_FLAG, F_OK) == 0;
+}
+
+int mesh_auto_config_test_start(void)
+{
+	mesh_mkdir_p(MESH11SD_TMPDIR);
+	return mesh_file_write(MESH11SD_AUTO_CONFIG_TEST_FLAG, "");
+}
+
 /* Defaults that changed since v7. A v7 user who never set these would
  * get the new behaviour silently, so say so once at startup. */
 static int setup_unset(const char *opt)

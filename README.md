@@ -139,7 +139,7 @@ uci commit mesh11sd
 
 ### 5.3 Accessing a node
 
-Portal IPv4 is hashed from the label MAC; it is not `192.168.1.1`. Use **IPv6 link-local**.
+Portal IPv4 is derived from the mesh ID (a CPE uses its label MAC); it is not `192.168.1.1`. Use **IPv6 link-local**.
 
 Note the last two octets of the label MAC, e.g. `94:83:c4:a2:8e:c9` → remember `8ec`. Connect a PC to a LAN port of the node.
 
@@ -220,7 +220,7 @@ Mesh11sd is a privileged local network manager, in the same class as netifd. It 
 
 It opens no listening sockets and has no network-reachable control interface. You drive it from the node itself, as root, with the `mesh11sd` command (SSH or console). `uci` and the init script work as usual; they are local too.
 
-The `mesh11sd` ubus object ([§9](#ubus)) is local only, on the system bus, and is served by a separate process that runs no daemon logic. Its methods are read-only apart from `config_reload`, which only asks the daemon to re-read its configuration. Access from LuCI is limited by the rpcd ACL.
+The `mesh11sd` ubus object ([§9](#ubus)) is local only, on the system bus, and is served by a separate process that runs no daemon logic. Its methods are read-only apart from `config_reload`, which only asks the daemon to re-read its configuration, and `auto_config_test`, which starts the uncommitted auto_config confidence test while `auto_config` is 0. Access from LuCI is limited by the rpcd ACL.
 
 Runtime changes are staged with UCI and, in normal operation, are not written to flash. Uncommitted changes to `mesh11sd`, `wireless`, `dhcp` and `network` are reverted when the service stops. The flash writes that do happen are deliberate:
 
@@ -460,9 +460,10 @@ The init script runs `mesh11sd ubus` as a second service instance. It registers 
 | `status` | The same JSON as `mesh11sd status` |
 | `stations` | `{"interfaces": {"<ifname>": [{"mac": "…", "<iw field>": "…", …}]}}` from `iw dev <ifname> station dump` for each mesh interface |
 | `config_reload` | `{"requested": true}`; as `mesh11sd config_reload` |
+| `auto_config_test` | `{"started": true}`; as `mesh11sd auto_config test` ([§5.1](#51-confidence-test)) without the question. While `auto_config` is not 0, or a test is already running, nothing is started and the reply is `{"started": false, "message": "…"}`. `status` shows a running test as `auto_config_test` 1. |
 | `version` | `{"version": "…", "build_commit": "…"}` |
 
-Example: `ubus call mesh11sd status`. Nothing is committed, reverted or restored over ubus.
+Example: `ubus call mesh11sd status`. Nothing is committed, reverted or restored over ubus. The auto_config test changes the node's network and IPv4 address live, uncommitted, so a reboot reverts it.
 
 ## 10. HWMP peer status and MP_FLAGS
 

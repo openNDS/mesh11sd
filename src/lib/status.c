@@ -521,6 +521,7 @@ int mesh_cli_status(struct mesh_ctx *ctx)
 			    ctx->watchdog_nonvolatile_log, 0);
 	mesh_json_field("    ", "mesh_basename", ctx->mesh_basename, 0);
 	mesh_json_field_int("    ", "auto_config", ctx->auto_config, 0);
+	mesh_json_field_int("    ", "auto_config_test", mesh_auto_config_test_running(), 0);
 	mesh_json_field("    ", "auto_mesh_network", ctx->auto_mesh_network, 0);
 	mesh_json_field("    ", "auto_mesh_band", ctx->auto_mesh_band, 0);
 	mesh_json_field_int("    ", "channel_bandwidth_2g", ctx->channel_bandwidth_2g, 0);

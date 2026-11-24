@@ -686,7 +686,7 @@ int mesh_cli_dispatch(struct mesh_ctx *ctx, int argc, char **argv)
 		char reply[64] = "";
 		char changes[8192] = "";
 		char *p, *line;
-		const char *testflag = MESH11SD_TMPDIR "/auto_config_test";
+		const char *testflag = MESH11SD_AUTO_CONFIG_TEST_FLAG;
 
 		if (!arg || !arg[0]) {
 			puts("");
@@ -697,9 +697,9 @@ int mesh_cli_dispatch(struct mesh_ctx *ctx, int argc, char **argv)
 			puts("");
 			return 1;
 		}
-		if (ctx->auto_config != 0 && !strcmp(arg, "test")) {
+		if (!strcmp(arg, "test") &&
+		    mesh_auto_config_test_check(ctx) == MESH_AUTO_CONFIG_TEST_ON) {
 			puts("auto_config is already enabled, no need to test");
-			unlink(testflag);
 			return 0;
 		}
 		if (ctx->auto_config != 0 && !strcmp(arg, "enable")) {
@@ -718,7 +718,7 @@ int mesh_cli_dispatch(struct mesh_ctx *ctx, int argc, char **argv)
 			return 1;
 		}
 		if (!strcmp(arg, "test")) {
-			if (access(testflag, F_OK) == 0) {
+			if (mesh_auto_config_test_check(ctx) == MESH_AUTO_CONFIG_TEST_RUNNING) {
 				puts("Auto config test mode is already running!");
 				return 1;
 			}
@@ -736,7 +736,7 @@ int mesh_cli_dispatch(struct mesh_ctx *ctx, int argc, char **argv)
 					reply[--n] = '\0';
 			}
 			if (!strcmp(reply, "yes"))
-				mesh_file_write(testflag, "");
+				mesh_auto_config_test_start();
 			return 0;
 		}
 		if (!strcmp(arg, "enable") || !strcmp(arg, "disable")) {
