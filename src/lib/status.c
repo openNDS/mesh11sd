@@ -365,6 +365,47 @@ static void emit_layer2(struct mesh_ctx *ctx)
 	fputs("  }\n", stdout);
 }
 
+/*
+ * The packages whose live configuration differs from the saved one:
+ * those with uncommitted changes in /tmp/.uci, the overlay mesh11sd
+ * stages instead of writing flash. LuCI pages show only the saved
+ * configuration. Changes to macaddr alone are left out: mesh11sd never
+ * commits its MACs, even when the rest is saved.
+ */
+static void unsaved_config(char *out, size_t outlen)
+{
+	static const char *const pkgs[] = { "wireless", "network", "dhcp", "firewall", NULL };
+	char path[64], line[512];
+	int i;
+
+	out[0] = '\0';
+	for (i = 0; pkgs[i]; i++) {
+		FILE *f;
+		int found = 0;
+
+		snprintf(path, sizeof(path), "/tmp/.uci/%s", pkgs[i]);
+		f = fopen(path, "r");
+		if (!f)
+			continue;
+		while (!found && fgets(line, sizeof(line), f)) {
+			/* "[op]pkg.section[.option][=value]", op one of +-@^|~ */
+			char *p = line + strspn(line, "+-@^|~");
+			char *opt = strchr(p, '.');
+
+			if (opt)
+				opt = strchr(opt + 1, '.');
+			if (opt && !strncmp(opt + 1, "macaddr", 7) &&
+			    (opt[8] == '=' || opt[8] == '\n' || opt[8] == '\0'))
+				continue;
+			found = (*p != '\n' && *p != '\0');
+		}
+		fclose(f);
+		if (found)
+			snprintf(out + strlen(out), outlen - strlen(out), "%s%s",
+				 out[0] ? " " : "", pkgs[i]);
+	}
+}
+
 static void read_procd_status(char *out, size_t outlen)
 {
 	char *argv[] = { "/etc/init.d/mesh11sd", "status", NULL };
@@ -534,6 +575,12 @@ int mesh_cli_status(struct mesh_ctx *ctx)
 			mesh_json_field_int("    ", "restart_needed", n > 0, 0);
 			mesh_json_field("    ", "restart_options", changed, 0);
 		}
+	}
+	{
+		char unsaved[64];
+
+		unsaved_config(unsaved, sizeof(unsaved));
+		mesh_json_field("    ", "unsaved_config", unsaved, 0);
 	}
 	mesh_json_field("    ", "auto_mesh_network", ctx->auto_mesh_network, 0);
 	mesh_json_field("    ", "auto_mesh_band", ctx->auto_mesh_band, 0);
