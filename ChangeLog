@@ -27,6 +27,7 @@ mesh11sd (8.0.0~beta1)
   * Fix - stage the wireless MAC addresses before the auto_config wifi, so no second wifi reload is needed and the ath11k 5g AP keeps beaconing [bluewavenet]
   * Fix - a portal that sees its own lan or vtun prefix on its wan logs a loop warning and restarts that dhcpv6 interface (at most every 10 minutes), so the mesh can reach the portal ULA again once the loop is gone [bluewavenet]
   * Add - unsaved_config in status: the packages (wireless, network, dhcp, firewall) whose live configuration is not saved, MAC-only changes left out [bluewavenet]
+  * Add - node_ula and node_mac on each mesh path in status when the node's bridge MAC is known from the connect list and the mpp dump, the same ULA as mesh11sd connect [bluewavenet]
 
  -- Rob White <rob@blue-wave.net>  Tue, 10 Nov 2026 19:30:00 +0000
 

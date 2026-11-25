@@ -401,7 +401,7 @@ The daemon runs as a service. CLI is for status, logs, and a few runtime knobs. 
 
 | Command | Purpose |
 | --- | --- |
-| `mesh11sd status` | JSON setup, interfaces, peers, metrics. Setup includes `mesh_driver`. While the daemon is running it also includes the live `loop_interval`. |
+| `mesh11sd status` | JSON setup, interfaces, peers, metrics. Setup includes `mesh_driver`. While the daemon is running it also includes the live `loop_interval`. Mesh path entries include `node_ula` and `node_mac` when the node's address is known. |
 | `mesh11sd connect` / `connect filter_list` / `connect [Node ID]` | List or SSH to a node (label MAC) |
 | `mesh11sd copy` / `copy filter_list` / `copy [Node ID] [file]` | Copy file to `$tmpdir/` on a node |
 | `mesh11sd stations` | One-hop mesh STAs |

@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <unistd.h>
 
 #define NDP_RESPONSE_MAX 32768
@@ -234,6 +235,138 @@ static void build_node_ula(struct mesh_ctx *ctx, const char *ndpmac,
 		 eui[4], eui[5], eui[6], eui[7],
 		 eui[8], eui[9], eui[10], eui[11],
 		 eui[12], eui[13], eui[14], eui[15]);
+}
+
+/*
+ * Map connectlist bridge MACs (ndpmac) to mesh path destinations (mpp
+ * column 2) and build each node's mesh11sd ULA. Used by status; no pings.
+ * A node can proxy several MACs, so only the node's own bridge MAC is
+ * kept: the same check_if_peer filter as connect, or octets 2, 3 and 5
+ * against the mpp proxy (mesh) MACs when the peerlist is empty.
+ */
+int mesh_lookup_path_ulas(struct mesh_ctx *ctx, const char *mesh_ifname,
+			  struct mesh_path_ula *out, int max)
+{
+	char entries[64][96];
+	char dump[16384];
+	char peers[MESH11SD_MAX_PEERS][32];
+	char *argv[6];
+	char *p, *line;
+	int nlist, nmpp = 0, npeers = 0, n = 0, i, j;
+	struct {
+		char dest[32];
+		char proxy[32];
+	} mpp[128];
+
+	if (!ctx || !out || max <= 0)
+		return 0;
+
+	/* Prefer the portal /64 already in ctx (status reads active_portal).
+	 * Do not call mesh_get_portal_ula: that may ping the portal. */
+	if ((!ctx->ula_base[0] || !ctx->ula_subnet[0]) && ctx->portal_ula[0])
+		mesh_ula_parts_from_addr(ctx->portal_ula, ctx->ula_base,
+					 sizeof(ctx->ula_base),
+					 ctx->ula_subnet, sizeof(ctx->ula_subnet));
+	if (!ctx->ula_base[0] || !ctx->ula_subnet[0])
+		return 0;
+
+	if (!mesh_ifname || !mesh_ifname[0])
+		mesh_ifname = ctx->active_mesh_ifname;
+	if (!mesh_ifname || !mesh_ifname[0])
+		return 0;
+
+	nlist = load_connectlist(entries, 64);
+	if (!nlist)
+		return 0;
+
+	argv[0] = "iw";
+	argv[1] = "dev";
+	argv[2] = (char *)mesh_ifname;
+	argv[3] = "mpp";
+	argv[4] = "dump";
+	argv[5] = NULL;
+	if (mesh_run_capture(argv, dump, sizeof(dump)) != 0)
+		return 0;
+
+	p = dump;
+	while ((line = strsep(&p, "\n")) != NULL) {
+		char c1[32], c2[32];
+
+		if (!line[0] || strstr(line, "DEST") || strstr(line, "dest"))
+			continue;
+		if (sscanf(line, "%31s %31s", c1, c2) < 2)
+			continue;
+		if (nmpp < 128) {
+			snprintf(mpp[nmpp].dest, sizeof(mpp[nmpp].dest), "%s", c1);
+			snprintf(mpp[nmpp].proxy, sizeof(mpp[nmpp].proxy), "%s", c2);
+			nmpp++;
+		}
+		if (npeers < MESH11SD_MAX_PEERS)
+			snprintf(peers[npeers++], sizeof(peers[0]), "%s", c2);
+	}
+
+	if (ctx->peerlist_count) {
+		npeers = 0;
+		for (i = 0; i < ctx->peerlist_count && npeers < MESH11SD_MAX_PEERS; i++)
+			snprintf(peers[npeers++], sizeof(peers[0]), "%s",
+				 ctx->peerlist[i]);
+	}
+
+	for (i = 0; i < nlist && n < max; i++) {
+		char ndpmac[32] = "", label_mac[64] = "";
+		char *comma = strchr(entries[i], ',');
+		int is_peer = 0;
+
+		if (!comma)
+			continue;
+		snprintf(ndpmac, sizeof(ndpmac), "%s", comma + 1);
+		if (!ndpmac[0])
+			continue;
+
+		for (j = 0; j < npeers; j++) {
+			unsigned nmac[6], pmac[6];
+
+			if (sscanf(ndpmac, "%x:%x:%x:%x:%x:%x",
+				   &nmac[0], &nmac[1], &nmac[2],
+				   &nmac[3], &nmac[4], &nmac[5]) != 6)
+				break;
+			if (sscanf(peers[j], "%x:%x:%x:%x:%x:%x",
+				   &pmac[0], &pmac[1], &pmac[2],
+				   &pmac[3], &pmac[4], &pmac[5]) != 6)
+				continue;
+			/* check_if_peer: octets 2, 3 and 5 */
+			if (nmac[1] == pmac[1] && nmac[2] == pmac[2] &&
+			    nmac[4] == pmac[4]) {
+				is_peer = 1;
+				break;
+			}
+		}
+		if (npeers && !is_peer)
+			continue;
+
+		for (j = 0; j < nmpp; j++) {
+			if (strcasecmp(mpp[j].dest, ndpmac) == 0) {
+				snprintf(label_mac, sizeof(label_mac), "%s",
+					 mpp[j].proxy);
+				break;
+			}
+		}
+		if (!label_mac[0])
+			continue;
+
+		maybe_rewrite_label_mac(ndpmac, label_mac, sizeof(label_mac));
+		/* A rewritten xx:xx:... label is not an mpath destination. */
+		if (!strncmp(label_mac, "xx:", 3))
+			continue;
+
+		snprintf(out[n].mesh_mac, sizeof(out[n].mesh_mac), "%s", label_mac);
+		snprintf(out[n].node_mac, sizeof(out[n].node_mac), "%s", ndpmac);
+		build_node_ula(ctx, ndpmac, out[n].node_ula, sizeof(out[n].node_ula));
+		if (!out[n].node_ula[0])
+			continue;
+		n++;
+	}
+	return n;
 }
 
 /* ssh/scp must inherit the terminal; mesh_run_capture swallows stdout. */

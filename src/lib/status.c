@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
@@ -151,6 +152,10 @@ static void emit_peers(struct mesh_ctx *ctx, const char *iface)
 	int n = 0, i;
 	char buf[8192];
 	char *p, *line;
+	struct mesh_path_ula nodes[MESH11SD_MAX_PATH_ULAS];
+	int nn;
+
+	nn = mesh_lookup_path_ulas(ctx, iface, nodes, MESH11SD_MAX_PATH_ULAS);
 
 	fputs("      \"peers\": {\n", stdout);
 	if (mesh_run_capture(argv, out, sizeof(out)) != 0) {
@@ -202,12 +207,27 @@ static void emit_peers(struct mesh_ctx *ctx, const char *iface)
 		mesh_json_field_int("          ", "sequence_number", seq, 0);
 		{
 			long lifetime = 0;
+			int k;
+			const char *node_ula = NULL, *node_mac = NULL;
 
 			mesh_path_lookup_lifetime(peermac, &lifetime);
 			mesh_json_field_int("          ", "hwmp_sequence_lifetime_ms",
 					    lifetime, 0);
+			for (k = 0; k < nn; k++) {
+				if (strcasecmp(nodes[k].mesh_mac, peermac) == 0) {
+					node_mac = nodes[k].node_mac;
+					node_ula = nodes[k].node_ula;
+					break;
+				}
+			}
+			mesh_json_field("          ", "hwmp_flags_bitmask", flags,
+					node_ula ? 0 : 1);
+			if (node_ula) {
+				if (node_mac && node_mac[0])
+					mesh_json_field("          ", "node_mac", node_mac, 0);
+				mesh_json_field("          ", "node_ula", node_ula, 1);
+			}
 		}
-		mesh_json_field("          ", "hwmp_flags_bitmask", flags, 1);
 		printf("        }%s\n", (i + 1 < n) ? "," : "");
 	}
 	fputs("      }", stdout);
