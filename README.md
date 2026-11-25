@@ -401,7 +401,7 @@ The daemon runs as a service. CLI is for status, logs, and a few runtime knobs. 
 
 | Command | Purpose |
 | --- | --- |
-| `mesh11sd status` | JSON setup, interfaces, peers, metrics. Setup includes `mesh_driver`. While the daemon is running it also includes the live `loop_interval`. |
+| `mesh11sd status` | JSON setup, interfaces, peers, metrics. Setup includes `mesh_driver`. While the daemon is running it also includes the live `loop_interval`. Mesh path entries include `node_ula` and `node_mac` when the node's address is known. |
 | `mesh11sd connect` / `connect filter_list` / `connect [Node ID]` | List or SSH to a node (label MAC) |
 | `mesh11sd copy` / `copy filter_list` / `copy [Node ID] [file]` | Copy file to `$tmpdir/` on a node |
 | `mesh11sd stations` | One-hop mesh STAs |
@@ -463,7 +463,7 @@ The init script runs `mesh11sd ubus` as a second service instance. It registers 
 | `auto_config_test` | `{"started": true}`; as `mesh11sd auto_config test` ([§5.1](#51-confidence-test)) without the question. While `auto_config` is not 0, saved or in the running daemon, or a test is already running, nothing is started and the reply is `{"started": false, "message": "…"}`. `status` shows a running test as `auto_config_test` 1. |
 | `version` | `{"version": "…", "build_commit": "…"}` |
 
-While the daemon runs, `status` also shows `running_auto_config` (the daemon's own value; `auto_config` is the saved one), `restart_needed` (1 when an option that is read only when mesh11sd starts is saved differently from the running daemon; reboot the node to apply it, [§7](#applying-changes)) and `restart_options` (those options). The restart-only options are `auto_config`, `portal_detect`, `commit_all`, `wpad_debuglevel`, `odhcpd_log_level`, `mesh_backhaul_led`, `mesh_multi_interfaces`, `swconfig_mac_skip`, `cpe_mode` and `move_ethernet_to_vxlan_bridge`.
+While the daemon runs, `status` also shows `running_auto_config` (the daemon's own value; `auto_config` is the saved one), `restart_needed` (1 when an option that is read only when mesh11sd starts is saved differently from the running daemon; reboot the node to apply it, [§7](#applying-changes)) and `restart_options` (those options). `unsaved_config` lists the packages (`wireless`, `network`, `dhcp`, `firewall`) whose live configuration is not saved to flash, because mesh11sd staged it as uncommitted changes; MAC-only changes are left out. LuCI's own pages show the saved configuration only. The restart-only options are `auto_config`, `portal_detect`, `commit_all`, `wpad_debuglevel`, `odhcpd_log_level`, `mesh_backhaul_led`, `mesh_multi_interfaces`, `swconfig_mac_skip`, `cpe_mode` and `move_ethernet_to_vxlan_bridge`.
 
 Example: `ubus call mesh11sd status`. Nothing is committed, reverted or restored over ubus. The auto_config test changes the node's network and IPv4 address live, uncommitted, so a reboot reverts it.
 

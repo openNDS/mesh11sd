@@ -96,7 +96,7 @@ Use the **same** `auto_mesh_id` (and `auto_mesh_key` if you set one) on every ha
 
 When you are confident, set `auto_config='1'` in the image or with `mesh11sd auto_config enable`.
 
-`auto_config='2'` is the same as 1 **and** runs `commit_all` and enables LuCI. It **locks** the first-boot portal/peer role. Reverse with `mesh11sd revert_all revert`.
+`auto_config='2'` is the same as 1 **and** runs `commit_all`, so the whole configuration is saved to flash. It **locks** the first-boot portal/peer role. Reverse with `mesh11sd revert_all revert`.
 
 ## CPE image (community / WISP)
 
@@ -177,7 +177,7 @@ Once at least one mesh peer is up, the power or status LED on most hardware show
 
 - Power cycle a node that was only in `auto_config test`.
 - Portal IPv4 is not `192.168.1.1`; use link-local IPv6 or `mesh11sd connect` from another node.
-- LuCI is disabled while auto-config is running unless `auto_config=2`.
+- LuCI stays enabled. While auto-config runs a configuration that is not saved to flash, LuCI's own Network and Wireless pages show only the saved configuration. With `luci-app-mesh11sd` installed, a banner on every LuCI page says so, and Status > Overview has a Mesh11sd section with the live state (node type, portal, mesh interfaces and the access points that are really up). `mesh11sd status` shows the same; its `unsaved_config` lists the packages that are not saved.
 - After changing `portal_detect` (or another option read only at start, see Applying changes in [README.md](README.md)), commit it and reboot the node, then wait a few `checkinterval`s (default 10s).
 - Heavy packet loss on a 2.5G port linked at 1 Gbit/s may be a known OpenWrt PHY issue; see Known issues in [README.md](README.md).
 - Watchdog: if a peer cannot see a portal, it may DHCP-renew, restart the network, then reboot (`reboot_on_error=1`). Set `portal_detect_threshold=0` to disable the watchdog.

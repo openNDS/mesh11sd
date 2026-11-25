@@ -1446,12 +1446,16 @@ static int ipv6_addr_del(const char *dev, const char *addr_with_pfx)
 	return mesh_run_capture(argv, NULL, 0);
 }
 
-/* v7: no U/L bit flip — insert fffe into bare MAC */
+/* RFC 4291 EUI-64: xor the U/L bit and insert fffe. v7 connect and the
+ * original manage_fallback_ula_route did this; a later v7 edit commented
+ * the xor out and v8 copied that, so the portal never got the address
+ * the connect web_ui URL uses. */
 static int eui64_from_mac(const char *mac, char *out, size_t outlen)
 {
 	char bare[32];
 	char eui[20];
 	size_t i, j = 0;
+	unsigned first;
 
 	if (!mac || !mac[0])
 		return -1;
@@ -1463,8 +1467,10 @@ static int eui64_from_mac(const char *mac, char *out, size_t outlen)
 	bare[j] = '\0';
 	if (j != 12)
 		return -1;
-	/* v7: no U/L flip — insert fffe into bare MAC */
-	snprintf(eui, sizeof(eui), "%.6sfffe%.6s", bare, bare + 6);
+	if (sscanf(bare, "%2x", &first) != 1)
+		return -1;
+	first ^= 0x02;
+	snprintf(eui, sizeof(eui), "%02x%.4sfffe%.6s", first, bare + 2, bare + 6);
 	snprintf(out, outlen, "%.4s:%.4s:%.4s:%.4s",
 		 eui, eui + 4, eui + 8, eui + 12);
 	return 0;

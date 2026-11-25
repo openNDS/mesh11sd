@@ -21,6 +21,14 @@
 #define MESH11SD_MAX_IFACES 16
 #define MESH11SD_MAX_RADIOS 8
 #define MESH11SD_MAX_PEERS 128
+#define MESH11SD_MAX_PATH_ULAS 64
+
+/* A mesh path destination whose node ULA is known (connectlist + mpp dump). */
+struct mesh_path_ula {
+	char mesh_mac[32];	/* mpath dest / label mac */
+	char node_mac[32];	/* bridge / ndpmac */
+	char node_ula[80];
+};
 
 struct mesh_ctx {
 	int debuglevel;
@@ -284,6 +292,10 @@ int mesh_restore_ipv4(struct mesh_ctx *ctx);
 int mesh_check_odhcpd(struct mesh_ctx *ctx);
 int mesh_ccpy_setup(struct mesh_ctx *ctx);
 int mesh_get_peers(struct mesh_ctx *ctx);
+/* node_ula and node_mac for mesh path destinations, from the connectlist
+ * and one mpp dump. No pings. Returns the number of known entries. */
+int mesh_lookup_path_ulas(struct mesh_ctx *ctx, const char *mesh_ifname,
+			  struct mesh_path_ula *out, int max);
 int mesh_detect_mbp_upstream(struct mesh_ctx *ctx);
 int mesh_detect_cpe_upstream(struct mesh_ctx *ctx);
 /* cpe.c: portal_detect 3 */
