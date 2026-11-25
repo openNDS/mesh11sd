@@ -7,7 +7,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=mesh11sd
 PKG_VERSION:=8.0.0_beta1
-PKG_RELEASE:=78
+PKG_RELEASE:=79
 
 PKG_MAINTAINER:=Rob White <rob@blue-wave.net>
 PKG_LICENSE:=GPL-2.0-or-later
@@ -49,6 +49,20 @@ define Package/mesh11sd/install
 	$(INSTALL_CONF) ./files/etc/config/mesh11sd $(1)/etc/config/
 	$(INSTALL_DIR) $(1)/etc/init.d
 	$(INSTALL_BIN) ./files/etc/init.d/mesh11sd $(1)/etc/init.d/
+endef
+
+define Package/mesh11sd/postinst
+#!/bin/sh
+# v7 with auto_config moved the luci-base cgi to luci.original (mode 444)
+# and replaced it with a "LuCI is currently DISABLED" page. Undo that once
+# on install or upgrade: put the original script back and drop the backup.
+[ -n "$${IPKG_INSTROOT}" ] && exit 0
+if [ -f /www/cgi-bin/luci.original ]; then
+	mv /www/cgi-bin/luci.original /www/cgi-bin/luci
+	chmod 755 /www/cgi-bin/luci
+	rm -rf /tmp/luci-*
+fi
+exit 0
 endef
 
 $(eval $(call BuildPackage,mesh11sd))
