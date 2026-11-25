@@ -30,6 +30,7 @@ mesh11sd (8.0.0~beta1)
   * Add - node_ula and node_mac on each mesh path in status when the node's bridge MAC is known from the connect list and the mpp dump, the same ULA as mesh11sd connect [bluewavenet]
   * Fix - assign the portal and peer EUI-64 ULA with the U/L bit flipped, so it matches mesh11sd connect and the original v7 address [bluewavenet]
   * Fix - on install or upgrade, restore /www/cgi-bin/luci from luci.original when v7 left that backup, so LuCI is no longer the "currently DISABLED" page [bluewavenet]
+  * Fix - compare portal and peer ULA addresses with inet_pton, so a compressed address already on the bridge is recognised and not added again [bluewavenet]
 
  -- Rob White <rob@blue-wave.net>  Tue, 10 Nov 2026 19:30:00 +0000
 
