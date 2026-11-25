@@ -5,6 +5,8 @@
 #include "mesh11sd.h"
 #include <ctype.h>
 
+#include <arpa/inet.h>
+#include <netinet/in.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -1418,14 +1420,53 @@ int mesh_check_odhcpd(struct mesh_ctx *ctx)
  * Do NOT touch kernel_ra / RA-derived addresses — only mesh11sd-owned ::1
  * and EUI-64 IIDs (and stale ones with wrong subnet).
  */
+/* Compare parsed addresses, not text: ip compresses fda3:01d5:... to
+ * fda3:1d5:..., so a strstr for the form we would add never matches and
+ * the address is added again every pass.
+ */
 static int ipv6_addr_present(const char *dev, const char *addr_with_pfx)
 {
 	char out[4096];
+	char want_txt[128];
+	char *slash, *end, *line, *save, *p;
+	unsigned want_pfx = 128, have_pfx;
+	struct in6_addr want, have;
 	char *argv[] = { "ip", "-6", "addr", "show", "dev", (char *)dev, NULL };
 
+	if (!addr_with_pfx || !addr_with_pfx[0])
+		return 0;
+	snprintf(want_txt, sizeof(want_txt), "%s", addr_with_pfx);
+	slash = strchr(want_txt, '/');
+	if (slash) {
+		*slash = '\0';
+		want_pfx = (unsigned)strtoul(slash + 1, &end, 10);
+		if (end == slash + 1)
+			want_pfx = 128;
+	}
+	if (inet_pton(AF_INET6, want_txt, &want) != 1)
+		return 0;
 	if (mesh_run_capture(argv, out, sizeof(out)) != 0)
 		return 0;
-	return strstr(out, addr_with_pfx) != NULL;
+
+	for (line = strtok_r(out, "\n", &save); line; line = strtok_r(NULL, "\n", &save)) {
+		p = strstr(line, "inet6 ");
+		if (!p)
+			continue;
+		p += 6;
+		while (*p == ' ')
+			p++;
+		slash = strchr(p, '/');
+		if (!slash)
+			continue;
+		*slash = '\0';
+		if (inet_pton(AF_INET6, p, &have) != 1)
+			continue;
+		have_pfx = (unsigned)strtoul(slash + 1, &end, 10);
+		if (end != slash + 1 && have_pfx == want_pfx &&
+		    memcmp(&want, &have, sizeof(want)) == 0)
+			return 1;
+	}
+	return 0;
 }
 
 static int ipv6_addr_add(const char *dev, const char *addr_with_pfx)
