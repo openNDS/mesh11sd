@@ -365,12 +365,14 @@ int mesh_cli_commit_changes(struct mesh_ctx *ctx, int argc, char **argv);
 int mesh_cli_commit_all(struct mesh_ctx *ctx, int argc, char **argv);
 int mesh_cli_revert_all(struct mesh_ctx *ctx, int argc, char **argv);
 int mesh_cli_restore_all(struct mesh_ctx *ctx, int argc, char **argv);
+void mesh_restore_defaults(int keep_own);     /* stock configs back, portal copies gone */
 int mesh_maybe_silent_commit_all(struct mesh_ctx *ctx);
 int mesh_commit_portal_config(struct mesh_ctx *ctx); /* auto_config=1, before detection */
 
 /* managed: keep LuCI usable (docs/LUCI-DESIGN.md) */
 int mesh_managed_mode(struct mesh_ctx *ctx);
 int mesh_managed_pass(struct mesh_ctx *ctx, int auto_config_done);
+void mesh_managed_startup(struct mesh_ctx *ctx);
 int mesh_write_portal_copies(struct mesh_ctx *ctx, const char *const *pkgs);
 void mesh_apply_autostartup_uci(struct mesh_ctx *ctx);
 

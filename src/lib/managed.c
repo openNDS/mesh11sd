@@ -1,10 +1,17 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later
  * Keeping LuCI usable (docs/LUCI-DESIGN.md, decisions 1 to 4).
  *
- * With auto_config=1 and portal_detect 0 or 1, the portal configuration
- * is committed before portal detection runs, and a copy of each
- * committed file is kept as /etc/config/<pkg>_mesh11sd_portal. A peer
- * is an uncommitted overlay on top of it.
+ * With auto_config=1, the portal configuration is committed before
+ * portal detection runs, and a copy of each committed file is kept as
+ * /etc/config/<pkg>_mesh11sd_portal. In modes 0 and 1 a peer is an
+ * uncommitted overlay on top of it. In the fixed roles (portal_detect
+ * 3, 4 and 5) the committed configuration is the role's own (CPE, MBP
+ * or trunk peer), so LuCI shows the real state.
+ *
+ * Modes 0 and 1 share one committed base; each fixed role has its own.
+ * If portal_detect moves to another base, the old one is not reused: at
+ * the next start the stock configs are put back first (as restore_all
+ * does) and the new role is built from them.
  *
  * Each loop pass then:
  *  - rebuilds and commits the portal configuration if the mesh11sd
@@ -57,6 +64,7 @@ static char warned[MAX_BACKOFF][160];
 static int warned_count;
 
 static int portal_ready;
+static int role_change_logged;
 
 static const char *const MANAGED_PKGS[] = {
 	"wireless", "network", "dhcp", "firewall", NULL
@@ -68,7 +76,15 @@ int mesh_managed_mode(struct mesh_ctx *ctx)
 		return 0;
 	if (access(MESH11SD_TMPDIR "/auto_config_test", F_OK) == 0)
 		return 0;
-	return ctx->portal_detect == 0 || ctx->portal_detect == 1;
+	return ctx->portal_detect == 0 || ctx->portal_detect == 1 ||
+	       ctx->portal_detect == 3 || ctx->portal_detect == 4 ||
+	       ctx->portal_detect == 5;
+}
+
+/* Modes 0 and 1 share the committed base; each fixed role has its own. */
+static int role_base(int portal_detect)
+{
+	return portal_detect == 0 ? 1 : portal_detect;
 }
 
 /* ---- small file helpers ---- */
@@ -307,6 +323,43 @@ static int mesh11sd_config_changed(void)
 	fclose(fa);
 	fclose(fb);
 	return changed;
+}
+
+/* portal_detect as written in a mesh11sd config file, -1 if unreadable.
+ * Not set means 1, and 2 is read as 1 (config.c). */
+static int file_portal_detect(const char *path)
+{
+	static const char opt[] = "option portal_detect '";
+	char line[256];
+	FILE *f;
+	int pd = 1;
+
+	f = fopen(path, "r");
+	if (!f)
+		return -1;
+	while (fgets(line, sizeof(line), f)) {
+		char *p = strstr(line, opt);
+
+		if (p)
+			pd = atoi(p + strlen(opt));
+	}
+	fclose(f);
+	return pd == 2 ? 1 : pd;
+}
+
+/* 1 if the committed base was built for a different role base than the
+ * one now in /etc/config/mesh11sd. */
+static int role_changed(void)
+{
+	char copy[128];
+	int was, now;
+
+	portal_copy_path("mesh11sd", copy, sizeof(copy));
+	was = file_portal_detect(copy);
+	now = file_portal_detect("/etc/config/mesh11sd");
+	if (was < 0 || now < 0)
+		return 0;
+	return role_base(was) != role_base(now);
 }
 
 /* ---- which options mesh11sd owns (docs/UCI-OWNERSHIP.md) ---- */
@@ -886,7 +939,7 @@ void mesh_apply_autostartup_uci(struct mesh_ctx *ctx)
 static void rebuild_portal(struct mesh_ctx *ctx, const char *reason,
 			   int in_loop, int auto_config_done)
 {
-	int i, restage_peer = 0;
+	int i, restage_peer = 0, auto_role;
 
 	mesh_log_notice(ctx, "Portal configuration: %s - building and committing it", reason);
 
@@ -940,9 +993,11 @@ static void rebuild_portal(struct mesh_ctx *ctx, const char *reason,
 	if (!in_loop && auto_config_done)
 		return;		/* the caller has just reloaded */
 
-	if (in_loop && !strcmp(ctx->detected_state, "peer")) {
+	/* Peer and portal settings on top of the base: modes 0 and 1 only */
+	auto_role = ctx->portal_detect == 0 || ctx->portal_detect == 1;
+	if (in_loop && auto_role && !strcmp(ctx->detected_state, "peer")) {
 		mesh_peer_reapply(ctx);
-	} else if (in_loop && !strcmp(ctx->detected_state, "portal")) {
+	} else if (in_loop && auto_role && !strcmp(ctx->detected_state, "portal")) {
 		mesh_portal_reapply(ctx);
 	} else {
 		char *nr[] = { "/sbin/service", "network", "reload", NULL };
@@ -962,6 +1017,8 @@ static void check_peer_overlay(struct mesh_ctx *ctx)
 {
 	char key[96], proto[32] = "";
 
+	if (ctx->portal_detect != 0 && ctx->portal_detect != 1)
+		return;		/* a fixed role has no peer overlay */
 	if (strcmp(ctx->detected_state, "peer") || strcmp(ctx->last_state, "peer"))
 		return;
 	snprintf(key, sizeof(key), "network.%s.proto", ctx->auto_mesh_network);
@@ -1011,8 +1068,15 @@ int mesh_managed_pass(struct mesh_ctx *ctx, int auto_config_done)
 		}
 		settled = file_age("/etc/config/mesh11sd") >= SETTLE_SECS;
 		if (mesh11sd_config_changed() && settled && !luci_apply_pending()) {
-			rebuild_portal(ctx, "mesh11sd config changed", 1, 0);
-			return 0;
+			if (!role_changed()) {
+				rebuild_portal(ctx, "mesh11sd config changed", 1, 0);
+				return 0;
+			}
+			/* mesh_managed_startup builds the new role */
+			if (!role_change_logged) {
+				mesh_log_notice(ctx, "option portal_detect changed to another role - reboot to apply");
+				role_change_logged = 1;
+			}
 		}
 	}
 
@@ -1024,4 +1088,17 @@ int mesh_managed_pass(struct mesh_ctx *ctx, int auto_config_done)
 		check_package(ctx, MANAGED_PKGS[i]);
 	check_peer_overlay(ctx);
 	return 0;
+}
+
+/* Daemon startup, before anything is staged. If portal_detect moved to
+ * another role since the configuration was committed, the committed
+ * files belong to the old role: put the stock configs back (keeping the
+ * mesh11sd config, as restore_all does) so the new role is built from
+ * them and committed by the first managed pass. */
+void mesh_managed_startup(struct mesh_ctx *ctx)
+{
+	if (!mesh_managed_mode(ctx) || !role_changed())
+		return;
+	mesh_log_notice(ctx, "option portal_detect changed to another role - restoring the stock configuration to build it");
+	mesh_restore_defaults(1);
 }
