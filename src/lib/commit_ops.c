@@ -173,7 +173,7 @@ static int confirm_yes(void)
  * forget the committed portal copies so they are rebuilt. With keep_own,
  * /etc/config/mesh11sd itself is left as it is.
  */
-static void restore_defaults_and_reboot(int keep_own)
+void mesh_restore_defaults(int keep_own)
 {
 	int i;
 
@@ -195,6 +195,13 @@ static void restore_defaults_and_reboot(int keep_own)
 			 COMMIT_PKGS[i]);
 		unlink(src);
 	}
+}
+
+static void restore_defaults_and_reboot(int keep_own)
+{
+	int i;
+
+	mesh_restore_defaults(keep_own);
 	puts("Restore complete, auto configuration will rebuild - restarting......");
 	for (i = 0; i < 5; i++) {
 		sleep(1);

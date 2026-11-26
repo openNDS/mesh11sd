@@ -125,6 +125,8 @@ static void mesh_daemon_autostartup(struct mesh_ctx *ctx)
 {
 	/* v7 autostartup: revert+backup, dhcp defaults, then network apply */
 	mesh_backup_defaults(ctx);
+	/* a role change starts again from the stock configs (managed.c) */
+	mesh_managed_startup(ctx);
 	/* v7 clean sheet: no committed MACs from an earlier run */
 	mesh_clear_own_macaddrs(ctx);
 	mesh_apply_autostartup_uci(ctx);
@@ -380,7 +382,7 @@ int mesh_daemon_run(struct mesh_ctx *ctx)
 			}
 		}
 
-		/* auto_config=1, portal_detect 0/1: commit the portal config
+		/* auto_config=1: commit the portal or fixed-role config
 		 * before detection, keep LuCI usable, and put back managed
 		 * options changed outside mesh11sd (docs/LUCI-DESIGN.md). */
 		if (has_mesh_uci() && mesh_managed_mode(ctx))

@@ -841,7 +841,7 @@ int mesh_ctx_load_setup(struct mesh_ctx *ctx)
  * the other vtun options, portal_use_default_ipv4, mesh_dtim_period,
  * use_default_beacon_interval) only take effect when that configuration
  * is built: at first configuration (no mesh interface yet), or, with
- * auto_config 1 and portal_detect 0 or 1, when a committed change to the
+ * auto_config 1, when a committed change to the
  * mesh11sd config rebuilds the portal configuration (managed.c).
  * auto_config, portal_detect, commit_all, wpad_debuglevel, odhcpd_log_level,
  * mesh_backhaul_led and the mesh_params section need a restart.
